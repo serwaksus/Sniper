@@ -1,11 +1,9 @@
-```gitignore
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
-python/
 pip-log.txt
 pip-delete-this-directory.txt
 .pytest_cache/
@@ -35,8 +33,6 @@ ENV/
 .venv/
 
 # Project specific
-dotm-sniper/__pycache__/
-dotm-sniper/src/__pycache__/
-dotm-sniper/tests/__pycache__/
-dotm-sniper/current_status.json
-```
+*.json
+*.backup_*
+sniper.pid
