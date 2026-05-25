@@ -59,6 +59,8 @@ _last_alert_status = {}
 _last_notified_at = {}
 _status_hold_counts = {}
 
+_alert_state_lock = threading.RLock()
+
 NOTIFY_SEVERITIES = {"DIVERGENCE", "RED"}
 STATUS_HOLD_SECONDS = 1800
 STATUS_HOLD_COUNT = 2
@@ -71,12 +73,13 @@ def _load_alert_state():
     _status_hold_counts = state.get("hold_counts", {})
 
 def _save_alert_state():
-    save_json(ALERT_STATE_FILE, {
-        "position_status": _last_alert_status,
-        "last_notified_at": _last_notified_at,
-        "hold_counts": _status_hold_counts,
-        "updated_at": datetime.now().isoformat()
-    })
+    with _alert_state_lock:
+        save_json(ALERT_STATE_FILE, {
+            "position_status": _last_alert_status,
+            "last_notified_at": _last_notified_at,
+            "hold_counts": _status_hold_counts,
+            "updated_at": datetime.now().isoformat()
+        })
 
 def _should_send_telegram(slug, trigger_exit, current_status):
     if trigger_exit:
@@ -100,34 +103,35 @@ def _should_send_telegram(slug, trigger_exit, current_status):
 
 def _update_and_check_status(slug, trigger_exit, current_status):
     global _last_alert_status, _last_notified_at, _status_hold_counts
-    normalized = str(current_status).upper().strip()
-    last_status = _last_alert_status.get(slug)
-    last_normalized = str(last_status).upper().strip() if last_status else None
+    with _alert_state_lock:
+        normalized = str(current_status).upper().strip()
+        last_status = _last_alert_status.get(slug)
+        last_normalized = str(last_status).upper().strip() if last_status else None
 
-    if last_normalized and normalized != last_normalized:
-        if last_normalized == "DIVERGENCE" and normalized in ("GREEN", "YELLOW"):
+        if last_normalized and normalized != last_normalized:
+            if last_normalized == "DIVERGENCE" and normalized in ("GREEN", "YELLOW"):
+                hold_key = f"{slug}:{normalized}"
+                count = _status_hold_counts.get(hold_key, 0) + 1
+                _status_hold_counts[hold_key] = count
+                if count < STATUS_HOLD_COUNT:
+                    logger.info(f"[HERMES] Hysteresis: {slug[:40]}... {last_normalized}→{normalized} hold {count}/{STATUS_HOLD_COUNT}")
+                    _save_alert_state()
+                    return False
+                else:
+                    del _status_hold_counts[hold_key]
+            for k in list(_status_hold_counts.keys()):
+                if k.startswith(f"{slug}:") and k != f"{slug}:{normalized}":
+                    del _status_hold_counts[k]
+        else:
             hold_key = f"{slug}:{normalized}"
-            count = _status_hold_counts.get(hold_key, 0) + 1
-            _status_hold_counts[hold_key] = count
-            if count < STATUS_HOLD_COUNT:
-                logger.info(f"[HERMES] Hysteresis: {slug[:40]}... {last_normalized}→{normalized} hold {count}/{STATUS_HOLD_COUNT}")
-                _save_alert_state()
-                return False
-            else:
-                del _status_hold_counts[hold_key]
-        for k in list(_status_hold_counts.keys()):
-            if k.startswith(f"{slug}:") and k != f"{slug}:{normalized}":
-                del _status_hold_counts[k]
-    else:
-        hold_key = f"{slug}:{normalized}"
-        _status_hold_counts.pop(hold_key, None)
+            _status_hold_counts.pop(hold_key, None)
 
-    should_send = _should_send_telegram(slug, trigger_exit, normalized)
-    _last_alert_status[slug] = normalized
-    if should_send:
-        _last_notified_at[slug] = datetime.now().isoformat()
-    _save_alert_state()
-    return should_send
+        should_send = _should_send_telegram(slug, trigger_exit, normalized)
+        _last_alert_status[slug] = normalized
+        if should_send:
+            _last_notified_at[slug] = datetime.now().isoformat()
+        _save_alert_state()
+        return should_send
 
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -308,7 +312,7 @@ def reconcile_positions():
             
             logger.info(f"[HERMES] Position {slug[:40]}... not in portfolio, checking if fully closed")
             
-            tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and o.get("price") >= TP_LIMIT_PRICE - 0.01), None)
+            tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in (0.75, 0.85))), None)
             
             if not tp_order:
                 logger.info(f"[HERMES] No open TP for {slug[:40]}..., marking as closed")
@@ -334,7 +338,7 @@ def reconcile_positions():
             pos_data["entry_price"] = entry_price
             modified = True
         
-        tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and o.get("price") >= TP_LIMIT_PRICE - 0.01), None)
+        tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in (0.75, 0.85))), None)
         
         if tp_order:
             filled = tp_order.get("filled", 0)
@@ -557,22 +561,14 @@ Return ONLY JSON:
 def _execute_emergency_exit(slug, pos_data, reason):
     logger.info(f"[HERMES] Executing emergency exit for {slug[:40]}...")
     
-    fd = os.open(POSITIONS_FILE, os.O_RDWR)
-    try:
-        _lock_file(fd, exclusive=True)
-        
-        positions = load_json(POSITIONS_FILE, {})
-        
-        if slug not in positions:
-            logger.warning(f"[HERMES] {slug} not found in positions, aborting emergency")
-            return
-        
-        positions[slug]["in_emergency_exit"] = True
-        save_json(POSITIONS_FILE, positions)
-        
-    finally:
-        _unlock_file(fd)
-        os.close(fd)
+    positions = load_json(POSITIONS_FILE, {})
+    
+    if slug not in positions:
+        logger.warning(f"[HERMES] {slug} not found in positions, aborting emergency")
+        return
+    
+    positions[slug]["in_emergency_exit"] = True
+    save_json(POSITIONS_FILE, positions)
     
     for attempt in range(MAX_EMERGENCY_RETRIES):
         logger.info(f"[HERMES] Cancel attempt {attempt + 1}/{MAX_EMERGENCY_RETRIES} for {slug[:40]}...")
@@ -607,30 +603,18 @@ def _execute_emergency_exit(slug, pos_data, reason):
     else:
         logger.error(f"[HERMES] Market sell FAILED for {slug[:40]}...")
         
-        fd = os.open(POSITIONS_FILE, os.O_RDWR)
-        try:
-            _lock_file(fd, exclusive=True)
-            positions = load_json(POSITIONS_FILE, {})
-            if slug in positions:
-                positions[slug]["emergency_exit_failed"] = True
-                positions[slug]["last_emergency_attempt"] = datetime.now().isoformat()
-            save_json(POSITIONS_FILE, positions)
-        finally:
-            _unlock_file(fd)
-            os.close(fd)
-
-def _remove_position_safe(slug):
-    fd = os.open(POSITIONS_FILE, os.O_RDWR)
-    try:
-        _lock_file(fd, exclusive=True)
         positions = load_json(POSITIONS_FILE, {})
         if slug in positions:
-            del positions[slug]
-            save_json(POSITIONS_FILE, positions)
-            logger.info(f"[HERMES] Removed position {slug[:40]}... from file")
-    finally:
-        _unlock_file(fd)
-        os.close(fd)
+            positions[slug]["emergency_exit_failed"] = True
+            positions[slug]["last_emergency_attempt"] = datetime.now().isoformat()
+        save_json(POSITIONS_FILE, positions)
+
+def _remove_position_safe(slug):
+    positions = load_json(POSITIONS_FILE, {})
+    if slug in positions:
+        del positions[slug]
+        save_json(POSITIONS_FILE, positions)
+        logger.info(f"[HERMES] Removed position {slug[:40]}... from file")
 
 def _log_emergency_exit(slug, pos_data, reason):
     log_entry = {

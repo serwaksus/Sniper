@@ -78,7 +78,7 @@ MIN_POSITION_CHECK_INTERVAL_HOURS = 3
 # v5.1.0: Smart Exit - automatic TP limit orders at $0.85
 SMART_EXIT_PRICE = 0.85
 SMART_EXIT_SLIPPAGE = 0.015  # $0.015 slippage penalty for backtesting
-ALLOWED_CLUSTERS = {"ai_tech", "russia_ukraine", "usa_politics", "fed_fomc"}
+ALLOWED_CLUSTERS = {"ai_tech", "russia_ukraine", "usa_politics", "fed_fomc", "sports_nba", "sports_ufc"}
 BANNED_CLUSTERS = {"crypto"}
 
 HYPOTHESIS_DB = "/root/dotm-sniper/hypothesis_db.json"
@@ -658,7 +658,7 @@ def detect_clusters(question):
                     found.add(cluster)
                     break
             else:
-                if re.search(r'\b' + re.escape(kw) + r'\b', question_lower):
+                if re.search(r'(?:^|\s)' + re.escape(kw) + r'(?:\s|$|[^a-z])', question_lower):
                     found.add(cluster)
                     break
     return list(found) if found else ["other"]
@@ -718,7 +718,7 @@ def get_category_exposure(balance, portfolio=None):
                         detected_categories.add(cluster)
                         break
                 else:
-                    if re.search(r'\b' + re.escape(kw) + r'\b', slug_lower) or re.search(r'\b' + re.escape(kw) + r'\b', question_lower):
+                    if re.search(r'(?:^|\s)' + re.escape(kw) + r'(?:\s|$|[^a-z])', slug_lower) or re.search(r'(?:^|\s)' + re.escape(kw) + r'(?:\s|$|[^a-z])', question_lower):
                         detected_categories.add(cluster)
                         break
 
@@ -1063,6 +1063,8 @@ def fetch_markets():
                     if any(c in BANNED_CLUSTERS for c in clusters):
                         continue
                     is_allowed = any(c in ALLOWED_CLUSTERS for c in clusters)
+                    if any(c in ("sports_nba", "sports_ufc") for c in clusters):
+                        if vol < 250_000 or ttl_hours < 48: continue
                     is_other_high_vol = clusters == ["other"] and vol >= PRE_FILTER_OTHER_MIN_VOLUME
                     if not is_allowed and not is_other_high_vol:
                         continue
@@ -1139,14 +1141,10 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
     # (1-P) for each P wagered. E.g., at $0.05 price, you risk $0.05 to win $0.95
     b = (1 - effective_price) / effective_price if effective_price > 0 else 0
 
-    p = p_model
-    q = 1 - p
-
-    if b <= 0:
-        logger.warning(f"[KELLY] b={b:.2f} <= 0 (price={effective_price:.4f}), minimum $5")
+    p = p_model; q = 1 - p
+    if b <= 1e-9:
+        logger.warning(f"[KELLY] b={b:.6f} too small (price={effective_price:.4f}), minimum $5")
         return 5
-
-    # Full (non-fractional) Kelly
     kelly_full = (b * p - q) / b
 
     logger.info(f"[KELLY] p={p:.3f}, b={b:.2f}, q={q:.3f}, kelly_full={kelly_full:.4f}")
@@ -1206,6 +1204,7 @@ def resolve_hypothesis_immediately(slug, current_price, entry_price):
     db = load_hypothesis_db()
     for h in db["hypotheses"]:
         if h["slug"] == slug and not h.get("resolved"):
+            _cancel_all_tp_orders(slug)
             h["resolved"] = True
             h["resolved_at"] = datetime.now().isoformat()
             h["exit_price"] = current_price
@@ -1253,9 +1252,9 @@ def _place_limit_sell(slug, outcome, shares, limit_price):
     return False, "limit_unsupported"
 
 
-def _place_tp_limit_order(slug, outcome, shares):
+def _place_tp_limit_order_single(slug, outcome, shares, price):
     """
-    v5.1.0: Place an unconditional Take-Profit limit sell order at $0.85.
+    v5.1.0: Place an unconditional Take-Profit limit sell order.
     This is called immediately after a successful BUY execution.
     The TP is placed regardless of time to expiration.
 
@@ -1264,14 +1263,14 @@ def _place_tp_limit_order(slug, outcome, shares):
     try:
         res = subprocess.run(
             ["pm-trader", "sell", slug, outcome, str(shares),
-             "--limit", "--price", f"{SMART_EXIT_PRICE:.4f}"],
+             "--limit", "--price", f"{price:.4f}"],
             capture_output=True, text=True, timeout=20
         )
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             logger.info(
                 f"[SMART-EXIT] TP limit placed for {slug[:40]}... "
-                f"@{SMART_EXIT_PRICE:.2f} (shares={shares})"
+                f"@{price:.2f} (shares={shares})"
             )
             return True, "tp_limit_placed"
         else:
@@ -1282,6 +1281,31 @@ def _place_tp_limit_order(slug, outcome, shares):
     except Exception as e:
         logger.warning(f"[SMART-EXIT] Exception placing TP for {slug[:40]}...: {e}")
     return False, "tp_limit_failed"
+
+
+def _place_tp_ladder(slug, outcome, total_shares):
+    """v5.3.0 TP Ladder: 50% @$0.75, 30% @$0.85, 20% hold to expiry"""
+    ladder = [(0.50, 0.75), (0.30, 0.85)]
+    results = []; allocated = 0
+    for pct, price in ladder:
+        shares = max(1, int(total_shares * pct))
+        if allocated + shares > total_shares: shares = total_shares - allocated
+        if shares <= 0: continue
+        ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
+        results.append((price, shares, ok, m)); allocated += shares
+    logger.info(f"[TP-LADDER] {slug[:40]}... placed {len(results)} rungs, {total_shares - allocated} held to expiry")
+    return results
+
+
+def _cancel_all_tp_orders(slug):
+    try:
+        res = subprocess.run(["pm-trader", "orders", "--status", "open"], capture_output=True, text=True, timeout=30)
+        for line in res.stdout.strip().split('\n')[1:]:
+            if not line.strip() or '---' in line: continue
+            parts = [p.strip() for p in line.split('|')]
+            if len(parts)>=3 and parts[0]==slug and parts[2]=='sell':
+                subprocess.run(["pm-trader", "orders", "cancel", slug, parts[1]], timeout=20)
+    except Exception as e: logger.warning(f"[TP-CANCEL] {slug}: {e}")
 
 
 def _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=False):
@@ -1539,6 +1563,7 @@ def trailing_stop_check():
                 pass
 
         if sold:
+            _cancel_all_tp_orders(slug)
             resolve_hypothesis_immediately(slug, current_price, entry_price)
             positions = load_json(POSITIONS_FILE, {})
             if slug in positions:
@@ -1849,7 +1874,7 @@ def _check_price_delta(slug, current_price):
     if entry:
         last_price = entry.get("last_price", 0)
         cached_p_model = entry.get("p_model")
-        if cached_p_model is not None and abs(current_price - last_price) < PRICE_DELTA_THRESHOLD:
+        if cached_p_model is not None and abs(current_price - last_price) < max(PRICE_DELTA_THRESHOLD, current_price * 0.10):
             logger.info(
                 f"[DELTA-SKIP] {slug[:40]}... price delta "
                 f"${abs(current_price - last_price):.4f} < ${PRICE_DELTA_THRESHOLD}, reusing p_model={cached_p_model:.1%}"
@@ -2136,6 +2161,15 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         high_weight = [f for f in supporting if f.get("weight") == "high"]
 
         ratio_score = min(prob_ratio / 3.0, 1.0) * 30
+
+        metaculus_prob = metaculus_cache.get(slug) if metaculus_cache else None
+        metaculus_alignment = 0
+        if metaculus_prob is not None:
+            diff_model_meta = abs(p_model - metaculus_prob)
+            diff_meta_pm = abs(metaculus_prob - market_price)
+            if diff_model_meta < 0.05: metaculus_alignment = 10
+            elif p_model > metaculus_prob + 0.10 and diff_meta_pm < 0.03: metaculus_alignment = -20
+
         factor_score = min((len(supporting) + len(high_weight)) / 4, 1.0) * 20
         vol_score = min(bi.get("volume", 0) / 1_000_000, 1.0) * 20
         ttl_hours = bi.get("ttl_hours", 999)
@@ -2149,7 +2183,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         else:
             time_score = 0
 
-        signal_score = ratio_score + factor_score + vol_score + time_score + _cluster_score_adjustment(cluster)
+        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster)
 
         base_threshold = settings.get("signal_threshold", 55)
         if ttl_days > 90:
@@ -2325,17 +2359,10 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
         print(f"   ❌ Buy failed for {market['slug']}")
         return False
 
-    # v5.1.0: Immediately place unconditional TP limit order at $0.85
-    # Calculate shares (approximate: amount / price)
+    # v5.3.3: TP Ladder replacing single TP limit
     shares = int(estimated_size / market["price"]) if market["price"] > 0 else 0
     if shares > 0:
-        tp_ok, tp_method = _place_tp_limit_order(
-            market["slug"], market["outcome"], shares
-        )
-        if tp_ok:
-            print(f"   📋 TP limit placed @${SMART_EXIT_PRICE:.2f} ({shares} shares)")
-        else:
-            print(f"   ⚠️ TP limit placement failed, will rely on trailing_stop_check()")
+        _place_tp_ladder(market["slug"], market["outcome"], shares)
     else:
         logger.warning(f"[SMART-EXIT] Zero shares for {market['slug']}, skipping TP")
 
