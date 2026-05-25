@@ -78,10 +78,83 @@ SMART_EXIT_PRICE = 0.85
 SMART_EXIT_SLIPPAGE = 0.015
 SMART_EXIT_NET = SMART_EXIT_PRICE - SMART_EXIT_SLIPPAGE  # 0.835
 
+
+def _simulate_tp_ladder(entry_price, high_price, resolution):
+    """
+    Симулирует TP Ladder из v5.3.0:
+    - 50% объема продается по $0.75 (если high_price >= 0.75)
+    - 30% объема продается по $0.85 (если high_price >= 0.85)
+    - 20% остается до резолюции:
+      * YES resolution → продается по $1.0
+      * NO resolution → продается по $0.0
+    Возвращает (weighted_upside_pct, ladder_details_dict)
+    """
+    LADDER_RUNGS = [
+        (0.50, 0.75),
+        (0.30, 0.85),
+        (0.20, None),
+    ]
+    slippage = SMART_EXIT_SLIPPAGE
+    weighted_pnl = 0.0
+    details = []
+
+    for pct, tp_price in LADDER_RUNGS:
+        if tp_price is None:
+            if resolution == "YES":
+                exit_price = 1.0
+                rung_label = "hold_yes"
+            else:
+                exit_price = 0.0
+                rung_label = "hold_no"
+            triggered = True
+        elif high_price >= tp_price:
+            exit_price = tp_price - slippage
+            rung_label = f"tp_{tp_price:.2f}"
+            triggered = True
+        else:
+            if resolution == "YES":
+                exit_price = 1.0
+                rung_label = f"fallback_yes_from_{tp_price:.2f}"
+            else:
+                exit_price = 0.0
+                rung_label = f"fallback_no_from_{tp_price:.2f}"
+            triggered = False
+
+        if entry_price > 0:
+            rung_pnl = (exit_price - entry_price) / entry_price
+        else:
+            rung_pnl = 0.0
+
+        weighted_pnl += rung_pnl * pct
+        details.append({
+            "pct": pct,
+            "tp_price": tp_price,
+            "exit_price": exit_price,
+            "triggered": triggered,
+            "pnl": rung_pnl,
+            "label": rung_label,
+        })
+
+    return weighted_pnl, details
+
 BACKTEST_MAX_WORKERS = 10
 API_RATE_LIMIT_RPS = 5
 _api_rate_lock = threading.Lock()
 _last_api_ts = 0.0
+
+
+def _normalize_keys(obj):
+    """Recursively strip whitespace from dict keys and string values."""
+    if isinstance(obj, dict):
+        return {
+            (k.strip() if isinstance(k, str) else k): _normalize_keys(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_normalize_keys(item) for item in obj]
+    if isinstance(obj, str):
+        return obj.strip()
+    return obj
 
 
 def _rate_limit_acquire():
@@ -318,17 +391,38 @@ def _fetch_resolved_dotm_markets(limit=150):
             if "crypto" in clusters:
                 continue
 
-            sim_price = round(random.uniform(DOTM_PRICE_MIN, DOTM_PRICE_MAX), 4)
+            try:
+                historical_yes_price = float(outcome_prices[0]) if outcome_prices else None
+            except (ValueError, IndexError, TypeError):
+                historical_yes_price = None
+
+            if historical_yes_price is not None and DOTM_PRICE_MIN <= historical_yes_price <= DOTM_PRICE_MAX:
+                sim_price = historical_yes_price
+                simulated_price = False
+            elif historical_yes_price is not None and historical_yes_price < DOTM_PRICE_MIN:
+                sim_price = DOTM_PRICE_MIN
+                simulated_price = True
+            else:
+                sim_price = round(random.uniform(0.03, 0.10), 4)
+                simulated_price = True
+
+            logger.debug(f"[BACKTEST-PRICE] {slug[:40]}... sim_price=${sim_price:.4f} (hist={historical_yes_price})")
 
             created_at = m.get("createdAt", "") or m.get("created_at", "")
             end_date = m.get("endDate", "") or m.get("end_date", "")
 
             if resolution == "YES":
+                if random.random() < 0.70:
+                    high_price = min(1.0, max(0.85, random.betavariate(5, 2)))
+                else:
+                    high_price = random.uniform(sim_price * 1.5, 0.84)
                 yes_final = 1.0
             else:
+                if random.random() < 0.15:
+                    high_price = random.uniform(0.85, 0.95)
+                else:
+                    high_price = random.uniform(sim_price, min(0.84, sim_price * 3))
                 yes_final = 0.0
-
-            high_price = yes_final if resolution == "YES" else sim_price
 
             markets.append({
                 "slug": slug,
@@ -342,7 +436,7 @@ def _fetch_resolved_dotm_markets(limit=150):
                 "ttl_hours": 9999,
                 "clusters": clusters,
                 "resolution": resolution,
-                "simulated_price": True,
+                "simulated_price": simulated_price,
             })
 
         offset += GAMMA_API_MAX_PAGE
@@ -726,36 +820,43 @@ def run_backtest_live(count=100, skip_advisor=False):
         is_win = (final_action == "BUY" and m["resolution"] == "YES")
         is_loss = (final_action == "BUY" and m["resolution"] == "NO")
 
-        # v5.1.0: Smart Exit TP check
         high_price = m.get("high_price")
         if high_price is None:
             if m["resolution"] == "YES":
                 high_price = 1.0
             else:
                 high_price = m.get("yes_final", m["yes_price"])
-        tp_hit = final_action == "BUY" and high_price >= SMART_EXIT_PRICE
 
+        ladder_pnl = 0
         if final_action == "SKIP":
             skips += 1
-        elif tp_hit:
-            wins += 1
-            upside = (SMART_EXIT_NET - m["yes_price"]) / m["yes_price"] if m["yes_price"] > 0 else 0
-            upside_sum += upside
-            upside_count += 1
-            logger.info(f"[BACKTEST-TP] {m['slug'][:40]}... TP hit @${SMART_EXIT_PRICE:.2f} net=${SMART_EXIT_NET:.3f} upside={upside:.2f}x")
-        elif is_win:
-            wins += 1
-            upside = (1 - m["yes_price"]) / m["yes_price"] if m["yes_price"] > 0 else 0
-            upside_sum += upside
-            upside_count += 1
-        elif is_loss:
-            losses += 1
+        elif final_action == "BUY":
+            ladder_pnl, ladder_details = _simulate_tp_ladder(
+                entry_price=m["yes_price"],
+                high_price=high_price,
+                resolution=m["resolution"]
+            )
+            if ladder_pnl > 0:
+                wins += 1
+                upside_sum += ladder_pnl
+                upside_count += 1
+                logger.info(
+                    f"[BACKTEST-LADDER] {m['slug'][:40]}... "
+                    f"weighted_pnl={ladder_pnl:+.2%} "
+                    f"rungs={[d['label'] for d in ladder_details]}"
+                )
+            else:
+                losses += 1
+                logger.info(
+                    f"[BACKTEST-LADDER-LOSS] {m['slug'][:40]}... "
+                    f"weighted_pnl={ladder_pnl:+.2%}"
+                )
 
         for c in m.get("clusters", []):
             cluster_stats[c]["total"] += 1
-            if tp_hit or is_win:
+            if final_action == "BUY" and ladder_pnl > 0:
                 cluster_stats[c]["wins"] += 1
-            elif is_loss:
+            elif final_action == "BUY":
                 cluster_stats[c]["losses"] += 1
             else:
                 cluster_stats[c]["skips"] += 1
@@ -861,7 +962,7 @@ def run_backtest_live(count=100, skip_advisor=False):
 
     print("=" * 60)
 
-    return load_json(BACKTEST_OUTPUT, {})
+    return _normalize_keys(load_json(BACKTEST_OUTPUT, {}))
 
 
 def run_backtest_live_active(count=100, skip_advisor=False):
@@ -1044,36 +1145,43 @@ def run_backtest_sim(count=50, skip_advisor=False):
         is_win = (final_action == "BUY" and m["resolution"] == "YES")
         is_loss = (final_action == "BUY" and m["resolution"] == "NO")
 
-        # v5.1.0: Smart Exit TP check
         high_price = m.get("high_price")
         if high_price is None:
             if m["resolution"] == "YES":
                 high_price = 1.0
             else:
                 high_price = m.get("yes_final", m["yes_price"])
-        tp_hit = final_action == "BUY" and high_price >= SMART_EXIT_PRICE
 
+        ladder_pnl = 0
         if final_action == "SKIP":
             skips += 1
-        elif tp_hit:
-            wins += 1
-            upside = (SMART_EXIT_NET - m["yes_price"]) / m["yes_price"] if m["yes_price"] > 0 else 0
-            upside_sum += upside
-            upside_count += 1
-            logger.info(f"[BACKTEST-TP] {m['slug'][:40]}... TP hit @${SMART_EXIT_PRICE:.2f} net=${SMART_EXIT_NET:.3f} upside={upside:.2f}x")
-        elif is_win:
-            wins += 1
-            upside = (1 - m["yes_price"]) / m["yes_price"] if m["yes_price"] > 0 else 0
-            upside_sum += upside
-            upside_count += 1
-        elif is_loss:
-            losses += 1
+        elif final_action == "BUY":
+            ladder_pnl, ladder_details = _simulate_tp_ladder(
+                entry_price=m["yes_price"],
+                high_price=high_price,
+                resolution=m["resolution"]
+            )
+            if ladder_pnl > 0:
+                wins += 1
+                upside_sum += ladder_pnl
+                upside_count += 1
+                logger.info(
+                    f"[BACKTEST-LADDER] {m['slug'][:40]}... "
+                    f"weighted_pnl={ladder_pnl:+.2%} "
+                    f"rungs={[d['label'] for d in ladder_details]}"
+                )
+            else:
+                losses += 1
+                logger.info(
+                    f"[BACKTEST-LADDER-LOSS] {m['slug'][:40]}... "
+                    f"weighted_pnl={ladder_pnl:+.2%}"
+                )
 
         for c in m.get("clusters", []):
             cluster_stats[c]["total"] += 1
-            if tp_hit or is_win:
+            if final_action == "BUY" and ladder_pnl > 0:
                 cluster_stats[c]["wins"] += 1
-            elif is_loss:
+            elif final_action == "BUY":
                 cluster_stats[c]["losses"] += 1
 
         results.append({
@@ -1146,7 +1254,7 @@ def run_backtest_sim(count=50, skip_advisor=False):
 
 
 def check_pending():
-    stats = load_json(BACKTEST_OUTPUT, {})
+    stats = _normalize_keys(load_json(BACKTEST_OUTPUT, {}))
     if not stats or stats.get("mode") != "live":
         print("No pending live backtest found. Run --mode live first.")
         return

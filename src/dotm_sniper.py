@@ -98,6 +98,10 @@ CALIBRATION_DOTM_THRESHOLD = 0.10
 CALIBRATION_AGGRESSIVE_PMODEL = 0.20
 CALIBRATION_METACULUS_LOW = 0.10
 
+MIN_TRADES_FOR_WEIGHT_ADJUSTMENT = 20
+BAYESIAN_PRIOR_STRENGTH = 10
+BACKTEST_COOLDOWN_SECONDS = 24 * 3600
+
 CLUSTER_SCORE_ADJUSTMENTS = {
     "other": 15,
     "crypto": -25,
@@ -806,10 +810,14 @@ def calculate_brier_score(db):
             save_settings(settings)
             logger.info(f"[CALIBRATE] Brier {brier:.3f} < 0.03, winrate {winrate:.0%}, lowering signal_threshold to {settings['signal_threshold']}")
 
-    if winrate == 0 and len(resolved) >= 10 and settings.get("signal_threshold", 55) > 55:
-        settings["signal_threshold"] = max(55, settings.get("signal_threshold", 55) - 2)
+    if winrate == 0 and len(resolved) >= 10 and settings.get("signal_threshold", 55) < 80:
+        settings["signal_threshold"] = min(80, settings.get("signal_threshold", 55) + 5)
         save_settings(settings)
-        logger.info(f"[CALIBRATE] 0% winrate ({len(resolved)} resolved), lowering signal_threshold to {settings['signal_threshold']}")
+        logger.warning(f"[CALIBRATE] 0% winrate ({len(resolved)} resolved), RAISING signal_threshold to {settings['signal_threshold']} (defensive mode)")
+    elif winrate < 0.30 and len(resolved) >= 20 and settings.get("signal_threshold", 55) < 75:
+        settings["signal_threshold"] = min(75, settings.get("signal_threshold", 55) + 3)
+        save_settings(settings)
+        logger.info(f"[CALIBRATE] Low winrate ({winrate:.0%}, {len(resolved)} resolved), raising signal_threshold to {settings['signal_threshold']}")
 
     settings["calibration_brier"] = brier
     save_settings(settings)
@@ -854,11 +862,32 @@ def learn_from_results(db):
     cluster_weights = {}
     for cluster, stats in cluster_stats.items():
         total = stats["wins"] + stats["losses"]
-        if total >= 3:
+        if total >= MIN_TRADES_FOR_WEIGHT_ADJUSTMENT:
             winrate = stats["wins"] / total
-            base = {"venezuela": 0.3, "russia_ukraine": 0.25, "usa_politics": 0.2, "ai_tech": 0.1}.get(cluster, 0.05)
-            cluster_weights[cluster] = base * (1 + (winrate - 0.5))
-            logger.info(f"📊 Cluster {cluster}: winrate={winrate:.1%}, adjusted weight={cluster_weights[cluster]:.3f}")
+            base_weight = {
+                "venezuela": 0.30,
+                "russia_ukraine": 0.25,
+                "usa_politics": 0.20,
+                "fed_fomc": 0.25,
+                "ai_tech": 0.10,
+                "sports_nba": 0.15,
+                "sports_ufc": 0.15,
+            }.get(cluster, 0.15)
+            posterior_weight = (
+                (base_weight * BAYESIAN_PRIOR_STRENGTH + winrate * total)
+                / (BAYESIAN_PRIOR_STRENGTH + total)
+            )
+            posterior_weight = max(0.05, min(0.50, posterior_weight))
+            cluster_weights[cluster] = posterior_weight
+            logger.info(
+                f"[LEARN] Cluster {cluster}: winrate={winrate:.1%} ({total} trades), "
+                f"base={base_weight:.2f} → posterior={posterior_weight:.3f}"
+            )
+        else:
+            logger.debug(
+                f"[LEARN] Cluster {cluster}: insufficient data ({total}/{MIN_TRADES_FOR_WEIGHT_ADJUSTMENT} trades), "
+                f"keeping base weight"
+            )
 
     metaculus_bonus = 0.4
     geopol_bonus = 0.3
@@ -2429,15 +2458,22 @@ def main():
 
     repair_positions_file()
 
-    # Run backtest to check strategy performance
-    bt = backtest_recent(n=20)
-    if "error" not in bt:
-        print(f"📊 Backtest: winrate={bt['winrate']:.1%}, brier={bt['avg_brier']:.3f}, pnl={bt['avg_pnl']:.2f}")
-        if bt.get("recommendations"):
-            for r in bt["recommendations"]:
-                print(f"   ⚠️ {r['issue']}: {r['suggestion']}")
-
     settings = get_settings()
+    last_backtest = settings.get("last_backtest_timestamp", 0)
+    import time as _time
+    now_ts = _time.time()
+    if now_ts - last_backtest >= BACKTEST_COOLDOWN_SECONDS:
+        bt = backtest_recent(n=20)
+        if "error" not in bt:
+            print(f"🧪 Backtest: winrate={bt['winrate']:.1%}, brier={bt['avg_brier']:.3f}, pnl={bt['avg_pnl']:.2f}")
+            if bt.get("recommendations"):
+                for r in bt["recommendations"]:
+                    print(f"   ⚠️  {r['issue']}: {r['suggestion']}")
+        settings["last_backtest_timestamp"] = now_ts
+        save_settings(settings)
+    else:
+        hours_ago = (now_ts - last_backtest) / 3600
+        logger.info(f"[BACKTEST-COOLDOWN] Skipping, last run {hours_ago:.1f}h ago (cooldown={BACKTEST_COOLDOWN_SECONDS/3600:.0f}h)")
     # Read max positions from settings, fallback to hardcoded default
     max_positions = settings.get("MAX_CONCURRENT_TRADES", MAX_POSITIONS)
     print(f"⚙️ Thresholds: signal={settings.get('signal_threshold', 55)}, min_p_model={settings.get('min_p_model', 0.05):.0%}, confidence={settings['min_confidence']:.2f}, max_pos={max_positions}")
