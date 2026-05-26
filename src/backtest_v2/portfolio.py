@@ -21,6 +21,21 @@ TAKE_PROFIT = 1.50
 CONVERGENCE_TP = 0.85
 
 
+def get_tier(balance: float) -> dict:
+    if balance < 2000:
+        return {"kelly": 0.25, "base_pct": 0.03, "other_pct": 0.045,
+                "max_pct": 0.10, "max_positions": 12, "tier": "micro"}
+    elif balance < 10000:
+        return {"kelly": 0.30, "base_pct": 0.04, "other_pct": 0.05,
+                "max_pct": 0.12, "max_positions": 20, "tier": "growth"}
+    elif balance < 50000:
+        return {"kelly": 0.35, "base_pct": 0.04, "other_pct": 0.06,
+                "max_pct": 0.15, "max_positions": 25, "tier": "established"}
+    else:
+        return {"kelly": 0.40, "base_pct": 0.05, "other_pct": 0.07,
+                "max_pct": 0.15, "max_positions": 30, "tier": "scale"}
+
+
 class Position:
     def __init__(self, slug, question, outcome, entry_price, shares, cost,
                  liquidity, cluster="other", p_model=0.0, created_at=""):
@@ -87,8 +102,9 @@ class PortfolioTracker:
         })
 
     def can_open_position(self, cluster: str, amount: float) -> Tuple[bool, str]:
-        if len(self.positions) >= MAX_POSITIONS:
-            return False, f"max_positions={MAX_POSITIONS}"
+        tier = get_tier(self.balance + sum(p.cost for p in self.positions.values()))
+        if len(self.positions) >= tier["max_positions"]:
+            return False, f"max_positions={tier['max_positions']}"
         
         cluster_exposure = self.cluster_exposure.get(cluster, 0) + amount
         total_equity = self.balance + sum(
@@ -143,7 +159,7 @@ class PortfolioTracker:
 
     def position_size(self, p_model: float, market_price: float, cluster: str = "other",
                       best_ask: float = None) -> float:
-        """Kelly position sizing matching live logic."""
+        tier = get_tier(self.balance)
         effective_price = best_ask if best_ask is not None else market_price
         if effective_price <= 0.001:
             return 0
@@ -156,11 +172,9 @@ class PortfolioTracker:
         if kelly_full <= 0:
             return 0
         
-        kelly_with_conf = kelly_full * FRACTIONAL_KELLY
+        kelly_with_conf = kelly_full * tier["kelly"]
         
-        cap = MAX_POS_PCT
-        if cluster == "other":
-            cap = 0.035
+        cap = tier["other_pct"] if cluster == "other" else tier["base_pct"]
         
         size_pct = min(kelly_with_conf, cap)
         kelly_dollars = round(self.balance * size_pct)
@@ -168,7 +182,7 @@ class PortfolioTracker:
         if kelly_dollars < 5:
             return 0
         
-        kelly_dollars = min(kelly_dollars, round(self.balance * MAX_POS_PCT))
+        kelly_dollars = min(kelly_dollars, round(self.balance * tier["max_pct"]))
         return kelly_dollars
 
     def update_trailing(self, slug: str, market_price: float):

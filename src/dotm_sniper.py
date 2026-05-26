@@ -80,6 +80,25 @@ TAKE_PROFIT = 2.00
 CONVERGENCE_TAKE_PROFIT = 0.90
 MIN_POSITION_CHECK_INTERVAL_HOURS = 3
 
+
+def get_tier_params(balance: float) -> dict:
+    if balance < 2000:
+        return {"kelly_mult": 0.25, "base_pct": 0.02, "other_pct": 0.035,
+                "max_pct": 0.10, "max_positions": 12, "max_price": 0.30,
+                "max_cluster": 0.30, "tier": "micro"}
+    elif balance < 10000:
+        return {"kelly_mult": 0.30, "base_pct": 0.03, "other_pct": 0.045,
+                "max_pct": 0.12, "max_positions": 20, "max_price": 0.40,
+                "max_cluster": 0.35, "tier": "growth"}
+    elif balance < 50000:
+        return {"kelly_mult": 0.35, "base_pct": 0.035, "other_pct": 0.05,
+                "max_pct": 0.15, "max_positions": 25, "max_price": 0.50,
+                "max_cluster": 0.40, "tier": "established"}
+    else:
+        return {"kelly_mult": 0.40, "base_pct": 0.04, "other_pct": 0.06,
+                "max_pct": 0.15, "max_positions": 30, "max_price": 0.50,
+                "max_cluster": 0.45, "tier": "scale"}
+
 # v5.1.0: Smart Exit - automatic TP limit orders at $0.85
 SMART_EXIT_PRICE = 0.85
 SMART_EXIT_SLIPPAGE = 0.015  # $0.015 slippage penalty for backtesting
@@ -629,13 +648,17 @@ def detect_clusters(question):
     return list(found) if found else ["other"]
 
 def check_cluster_limits(new_clusters, current_positions):
+    total_balance = sum(pos.get("size", 0) for pos in current_positions) or 500
+    tier = get_tier_params(total_balance)
+    cluster_limit = tier["max_cluster"]
+
     cluster_exposure = defaultdict(float)
     for pos in current_positions:
         for c in pos.get("clusters", []):
             cluster_exposure[c] += pos.get("size_pct", 0)
 
     for cluster in new_clusters:
-        if cluster_exposure.get(cluster, 0) >= MAX_CLUSTER_PCT:
+        if cluster_exposure.get(cluster, 0) >= cluster_limit:
             return False, f"Cluster {cluster} limit reached ({cluster_exposure[cluster]:.1%})"
     return True, "OK"
 
@@ -1175,24 +1198,26 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
         logger.info(f"[KELLY] p_model={p:.1%} < MIN_P_MODEL={min_p_model:.1%}, skipping")
         return 0
 
-    # Step 1: Fractional Kelly reduction (quarter Kelly by default)
-    kelly_fraction = kelly_full * FRACTIONAL_KELLY_MULTIPLIER
+    # Step 1: Fractional Kelly reduction (adaptive by balance tier)
+    tier = get_tier_params(balance)
+    kelly_mult = tier["kelly_mult"]
+    kelly_fraction = kelly_full * kelly_mult
 
     # Step 2: Confidence weighting (high confidence = bigger bet)
     kelly_with_confidence = kelly_fraction * confidence
 
-    # Cluster-aware position cap
-    effective_cap = OTHER_BOOST_POS_PCT if cluster == "other" else BASE_POS_PCT
+    # Cluster-aware position cap (adaptive by balance tier)
+    effective_cap = tier["other_pct"] if cluster == "other" else tier["base_pct"]
     size_pct = min(kelly_with_confidence, effective_cap)
 
     kelly_dollars = round(balance * size_pct)
     if kelly_dollars < 5:
         logger.info(f"[KELLY] kelly_dollars=${kelly_dollars} < $5 minimum, skipping trade")
         return 0
-    kelly_dollars = min(kelly_dollars, round(balance * MAX_POS_PCT))
+    kelly_dollars = min(kelly_dollars, round(balance * tier["max_pct"]))
 
     logger.info(
-        f"[KELLY] kelly_full={kelly_full:.4f} * frac={FRACTIONAL_KELLY_MULTIPLIER:.2f} "
+        f"[KELLY] tier={tier['tier']} kelly_full={kelly_full:.4f} * frac={kelly_mult:.2f} "
         f"* conf={confidence:.2f} = {kelly_with_confidence:.4f} "
         f"=> ${kelly_dollars} ({size_pct:.2%} of ${balance:.2f}) "
         f"[cap={effective_cap:.1%}, cluster={cluster}]"
@@ -2653,8 +2678,9 @@ def _main_inner():
         hours_ago = (now_ts - last_backtest) / 3600
         logger.info(f"[BACKTEST-COOLDOWN] Skipping, last run {hours_ago:.1f}h ago (cooldown={BACKTEST_COOLDOWN_SECONDS/3600:.0f}h)")
     # Read max positions from settings, fallback to hardcoded default
-    max_positions = settings.get("MAX_CONCURRENT_TRADES", MAX_POSITIONS)
-    print(f"⚙️ Thresholds: signal={settings.get('signal_threshold', 55)}, min_p_model={settings.get('min_p_model', 0.05):.0%}, confidence={settings['min_confidence']:.2f}, max_pos={max_positions}")
+    tier = get_tier_params(total_balance)
+    max_positions = settings.get("MAX_CONCURRENT_TRADES", tier["max_positions"])
+    print(f"⚙️ Tier={tier['tier']}, thresholds: signal={settings.get('signal_threshold', 55)}, min_p_model={settings.get('min_p_model', 0.05):.0%}, confidence={settings['min_confidence']:.2f}, max_pos={max_positions}")
 
     resolve_hypotheses()
     trailing_stop_check()
