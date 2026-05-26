@@ -400,12 +400,12 @@ def get_metaculus_forecast(pm_question, pm_resolve_date=None):
 
     if prob is None:
         return {"found": False, "probability": None, "reason": "no_aggregation", "best_match_title": meta_title}
-    forecaster_count = latest.get("forecaster_count", 0)
+    forecaster_count = latest.get("forecaster_count", 0) if latest else 0
     title = best_match.get("title", "") or best_match.get("short_title", "")
 
-    q1 = latest.get("q1")
-    q3 = latest.get("q3")
-    std = latest.get("std")
+    q1 = (latest or {}).get("q1")
+    q3 = (latest or {}).get("q3")
+    std = (latest or {}).get("std")
     dispersion = None
     dispersion_penalty = 1.0
 
@@ -2678,7 +2678,7 @@ def _main_inner():
         hours_ago = (now_ts - last_backtest) / 3600
         logger.info(f"[BACKTEST-COOLDOWN] Skipping, last run {hours_ago:.1f}h ago (cooldown={BACKTEST_COOLDOWN_SECONDS/3600:.0f}h)")
     # Read max positions from settings, fallback to hardcoded default
-    tier = get_tier_params(total_balance)
+    tier = get_tier_params(500)
     max_positions = settings.get("MAX_CONCURRENT_TRADES", tier["max_positions"])
     print(f"⚙️ Tier={tier['tier']}, thresholds: signal={settings.get('signal_threshold', 55)}, min_p_model={settings.get('min_p_model', 0.05):.0%}, confidence={settings['min_confidence']:.2f}, max_pos={max_positions}")
 
@@ -2691,6 +2691,10 @@ def _main_inner():
         return
     balance = balance_data.get("cash", 100)
     total_balance = balance_data.get("total_value", balance)
+
+    tier = get_tier_params(total_balance)
+    max_positions = settings.get("MAX_CONCURRENT_TRADES", tier["max_positions"])
+    print(f"⚙️ Tier={tier['tier']} (balance=${total_balance:.2f}), max_pos={max_positions}, kelly={tier['kelly_mult']}")
     print(f"💰 Balance: ${balance:.2f} (total: ${total_balance:.2f})")
 
     portfolio = get_portfolio()
@@ -2863,7 +2867,9 @@ if __name__ == "__main__":
                 try:
                     _main_inner()
                 except Exception as e:
+                    import traceback
                     print(f"Error: {e}")
+                    traceback.print_exc()
                 print("Sleeping 30 min...")
                 time.sleep(1800)
     finally:
