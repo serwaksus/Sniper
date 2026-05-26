@@ -61,6 +61,13 @@ def _normalize_keys(obj):
         return [_normalize_keys(item) for item in obj]
     return obj
 
+def _strip_dict_keys_recursive(obj):
+    if isinstance(obj, dict):
+        return {k.strip() if isinstance(k, str) else k: _strip_dict_keys_recursive(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_dict_keys_recursive(item) for item in obj]
+    return obj
+
 
 def load_json_safe(path, default):
     if not os.path.exists(path):
@@ -88,7 +95,7 @@ def save_json_safe(path, data):
     try:
         _lock_file(fd, exclusive=True)
         with os.fdopen(fd, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
+            json.dump(_strip_dict_keys_recursive(data), f, indent=2, default=str)
         lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
         try:
             _lock_file(lock_fd, exclusive=True)

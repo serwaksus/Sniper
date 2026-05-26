@@ -82,24 +82,25 @@ def _save_alert_state():
         })
 
 def _should_send_telegram(slug, trigger_exit, current_status):
-    if trigger_exit:
-        return True
-    normalized = str(current_status).upper().strip()
-    if normalized not in NOTIFY_SEVERITIES:
+    with _alert_state_lock:
+        if trigger_exit:
+            return True
+        normalized = str(current_status).upper().strip()
+        if normalized not in NOTIFY_SEVERITIES:
+            return False
+        last_notified = _last_notified_at.get(slug)
+        if last_notified:
+            try:
+                elapsed = (datetime.now() - datetime.fromisoformat(last_notified)).total_seconds()
+                if elapsed < NOTIFICATION_COOLDOWN_SECONDS:
+                    return False
+            except (ValueError, TypeError):
+                pass
+        last_status = _last_alert_status.get(slug)
+        last_normalized = str(last_status).upper().strip() if last_status else None
+        if normalized != last_normalized:
+            return True
         return False
-    last_notified = _last_notified_at.get(slug)
-    if last_notified:
-        try:
-            elapsed = (datetime.now() - datetime.fromisoformat(last_notified)).total_seconds()
-            if elapsed < NOTIFICATION_COOLDOWN_SECONDS:
-                return False
-        except (ValueError, TypeError):
-            pass
-    last_status = _last_alert_status.get(slug)
-    last_normalized = str(last_status).upper().strip() if last_status else None
-    if normalized != last_normalized:
-        return True
-    return False
 
 def _update_and_check_status(slug, trigger_exit, current_status):
     global _last_alert_status, _last_notified_at, _status_hold_counts
@@ -159,6 +160,13 @@ def _normalize_keys(obj):
         return [_normalize_keys(item) for item in obj]
     return obj
 
+def _strip_dict_keys_recursive(obj):
+    if isinstance(obj, dict):
+        return {k.strip() if isinstance(k, str) else k: _strip_dict_keys_recursive(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_dict_keys_recursive(item) for item in obj]
+    return obj
+
 def load_json(path, default):
     if not os.path.exists(path):
         return default
@@ -184,7 +192,7 @@ def save_json(path, data):
     try:
         _lock_file(fd, exclusive=True)
         with os.fdopen(fd, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
+            json.dump(_strip_dict_keys_recursive(data), f, indent=2, default=str)
         lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
         try:
             _lock_file(lock_fd, exclusive=True)

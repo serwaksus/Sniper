@@ -15,6 +15,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
+
 from news_scanner import check_market_news, extract_keywords, fetch_recent_news
 
 def _load_env_manual():
@@ -111,22 +112,32 @@ CLUSTER_SCORE_ADJUSTMENTS = {
 
 def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=None):
     """
-    Anti-Optimism Dampening: reduces hallucinated upside on DOTM markets.
+    Calibrate p_model using isotonic regression (if available) or fallback to dampening.
 
-    If market_price <= $0.10 (classic DOTM) and model claims p_model > 0.20,
-    but Metaculus also estimates < 10% (or no Metaculus data), apply a 0.65x
-    damping factor to cut hallucinated upside and reduce Brier Score error
-    on markets that resolve NO.
+    Priority:
+    1. Isotonic calibrator (if fitted on >= 20 samples)
+    2. Legacy dampening (0.65x multiplier for DOTM markets)
 
-    ASYMMETRIC: cluster="other" is EXEMPT from dampening (proven 52.9% WR).
-
-    Returns (calibrated_p_model, was_dampened: bool)
+    Returns (calibrated_p_model, was_calibrated: bool)
     """
+    from calibration import get_calibrator
+
+    calibrator = get_calibrator()
+    if calibrator.is_fitted:
+        p_calibrated = calibrator.predict(p_model, cluster or "other")
+        if abs(p_calibrated - p_model) > 0.02:
+            logger.info(
+                f"[CALIBRATION] p_model={p_model:.1%} -> {p_calibrated:.1%} "
+                f"(cluster={cluster}, isotonic)"
+            )
+        return p_calibrated, True
+
     if cluster == "other":
         return p_model, False
 
     if market_price > CALIBRATION_DOTM_THRESHOLD:
         return p_model, False
+
     if p_model <= CALIBRATION_AGGRESSIVE_PMODEL:
         return p_model, False
 
@@ -415,6 +426,7 @@ def _generate_search_queries(question):
 
 def _calculate_metaculus_match(pm_question, result):
     """Calculate relevance score between PM question and Metaculus result."""
+    from fuzzywuzzy import fuzz
     pm_lower = pm_question.lower()
     meta_title = (result.get("title", "") or result.get("short_title", "")).lower()
     
@@ -444,6 +456,11 @@ def _calculate_metaculus_match(pm_question, result):
     meta_nums = set(w for w in meta_clean if any(c.isdigit() for c in w))
     if pm_nums and meta_nums and pm_nums & meta_nums:
         base_score += 0.1
+
+    # 4. Fuzzy matching bonus
+    similarity = fuzz.partial_ratio(pm_lower, meta_title) / 100.0
+    if similarity > 0.70:
+        base_score += 0.15
     
     return min(base_score + substring_bonus, 1.0)
 
@@ -568,6 +585,13 @@ def _normalize_keys(obj):
         return [_normalize_keys(item) for item in obj]
     return obj
 
+def _strip_dict_keys_recursive(obj):
+    if isinstance(obj, dict):
+        return {k.strip() if isinstance(k, str) else k: _strip_dict_keys_recursive(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_dict_keys_recursive(item) for item in obj]
+    return obj
+
 def load_json(path, default):
     if not os.path.exists(path):
         return default
@@ -593,7 +617,7 @@ def save_json(path, data):
     try:
         _lock_file(fd, exclusive=True)
         with os.fdopen(fd, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
+            json.dump(_strip_dict_keys_recursive(data), f, indent=2, default=str)
         lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
         try:
             _lock_file(lock_fd, exclusive=True)
@@ -821,6 +845,14 @@ def calculate_brier_score(db):
 
     settings["calibration_brier"] = brier
     save_settings(settings)
+
+    if len(resolved) >= 50:
+        from calibration import get_calibrator
+        calibrator = get_calibrator()
+        calibrator.fit(resolved)
+        calibrator.save()
+        logger.info(f"[CALIBRATION] Trained isotonic model on {len(resolved)} resolved markets")
+
     return brier
 
 def learn_from_results(db):
@@ -1327,6 +1359,7 @@ def _place_tp_ladder(slug, outcome, total_shares):
 
 
 def _cancel_all_tp_orders(slug):
+    """Cancel all open sell orders for a position on manual/stop exit."""
     try:
         res = subprocess.run(["pm-trader", "orders", "--status", "open"], capture_output=True, text=True, timeout=30)
         for line in res.stdout.strip().split('\n')[1:]:
@@ -1334,7 +1367,8 @@ def _cancel_all_tp_orders(slug):
             parts = [p.strip() for p in line.split('|')]
             if len(parts)>=3 and parts[0]==slug and parts[2]=='sell':
                 subprocess.run(["pm-trader", "orders", "cancel", slug, parts[1]], timeout=20)
-    except Exception as e: logger.warning(f"[TP-CANCEL] {slug}: {e}")
+                logger.info(f"[TP-CANCEL] Canceled sell order for {slug[:40]}...")
+    except Exception as e: logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
 
 
 def _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=False):
@@ -1791,10 +1825,13 @@ Rules:
 
     metaculus_prob_val = metaculus_gap.get("metaculus_prob") if metaculus_gap else None
     p_model_raw = p_model
+
     p_model, was_dampened = calibrate_prediction(p_model, market["price"], metaculus_prob_val, cluster=cluster)
 
+    settings = get_settings()
+
     # Skip if our probability estimate is too low
-    min_p_model = get_settings().get("min_p_model", MIN_P_MODEL)
+    min_p_model = settings.get("min_p_model", MIN_P_MODEL)
     if p_model < min_p_model:
         logger.info(f"[ANALYSIS] p_model={p_model:.1%} < MIN_P_MODEL={min_p_model:.1%}, skipping")
         return {
@@ -2165,6 +2202,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
             metaculus_prob = metaculus_cache.get(slug)
 
         p_model_raw = p_model
+
         p_model, _ = calibrate_prediction(p_model, market_price, metaculus_prob, cluster=cluster)
 
         settings = get_settings()
@@ -2377,6 +2415,74 @@ Rules:
         return False, "UNKNOWN", 0.0, f"advisor_error: {str(e)[:80]}"
 
 
+SLIPPAGE_LOG_FILE = "/root/dotm-sniper/logs/slippage.json"
+
+
+def get_actual_fill_price(slug):
+    try:
+        res = subprocess.run(
+            ["pm-trader", "history", "--limit", "5"],
+            capture_output=True, text=True, timeout=15
+        )
+        data = json.loads(res.stdout)
+        for trade in data.get("data", []):
+            if trade.get("market_slug") == slug and trade.get("side") == "buy":
+                return {
+                    "avg_price": float(trade.get("avg_price", 0)),
+                    "amount_usd": float(trade.get("amount_usd", 0)),
+                    "shares": float(trade.get("shares", 0)),
+                    "slippage": float(trade.get("slippage", 0)),
+                    "levels_filled": int(trade.get("levels_filled", 0)),
+                }
+    except Exception as e:
+        logger.warning(f"[SLIPPAGE] Failed to get fill price for {slug}: {e}")
+    return None
+
+
+def log_slippage(slug, expected_price, fill_data):
+    if not fill_data:
+        return
+    actual_price = fill_data["avg_price"]
+    slippage_pct = (actual_price - expected_price) / expected_price if expected_price > 0 else 0
+
+    entry = {
+        "slug": slug,
+        "expected_price": expected_price,
+        "actual_price": actual_price,
+        "slippage_pct": round(slippage_pct, 4),
+        "amount_usd": fill_data["amount_usd"],
+        "shares": fill_data["shares"],
+        "levels_filled": fill_data["levels_filled"],
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    try:
+        if os.path.exists(SLIPPAGE_LOG_FILE):
+            with open(SLIPPAGE_LOG_FILE, "r") as f:
+                logs = json.load(f)
+        else:
+            logs = []
+        logs.append(entry)
+        logs = logs[-500:]
+        os.makedirs(os.path.dirname(SLIPPAGE_LOG_FILE), exist_ok=True)
+        with open(SLIPPAGE_LOG_FILE, "w") as f:
+            json.dump(logs, f, indent=2)
+    except Exception as e:
+        logger.warning(f"[SLIPPAGE] Failed to write log: {e}")
+
+    if abs(slippage_pct) > 0.05:
+        logger.warning(
+            f"[SLIPPAGE-HIGH] {slug[:40]}... expected=${expected_price:.4f} "
+            f"actual=${actual_price:.4f} slippage={slippage_pct:+.2%} "
+            f"({fill_data['levels_filled']} levels, ${fill_data['amount_usd']:.2f})"
+        )
+    else:
+        logger.info(
+            f"[SLIPPAGE] {slug[:40]}... expected=${expected_price:.4f} "
+            f"actual=${actual_price:.4f} slippage={slippage_pct:+.2%}"
+        )
+
+
 def execute_trade(market, estimated_size, factors, analysis, balance):
     """Execute trade with advisor pre-check. Returns True if successful."""
     approved, verdict, adv_conf, adv_reason = advisor_pre_check(market, analysis)
@@ -2387,6 +2493,11 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
     if not buy(market, estimated_size):
         print(f"   ❌ Buy failed for {market['slug']}")
         return False
+
+    time.sleep(2)
+    fill_data = get_actual_fill_price(market["slug"])
+    if fill_data:
+        log_slippage(market["slug"], market["price"], fill_data)
 
     # v5.3.3: TP Ladder replacing single TP limit
     shares = int(estimated_size / market["price"]) if market["price"] > 0 else 0

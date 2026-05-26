@@ -568,13 +568,14 @@ Rules:
 
     metaculus_prob_val = metaculus_gap.get("metaculus_prob") if metaculus_gap else None
     p_model_raw = p_model
+
     p_model, was_dampened = calibrate_prediction(p_model, market["yes_price"], metaculus_prob_val, cluster=cluster)
 
     damping_delta = None
     if was_dampened:
         damping_delta = p_model_raw - p_model
         logger.info(
-            f"[DAMPEN-DETAIL] slug={market['slug']} | "
+            f"[CALIBRATE-DETAIL] slug={market['slug']} | "
             f"p_model_raw={p_model_raw:.4f} -> p_model_calibrated={p_model:.4f} | "
             f"delta={damping_delta:.4f} | price=${market['yes_price']:.3f} | "
             f"metaculus={'none' if metaculus_prob_val is None else f'{metaculus_prob_val:.1%}'}"
@@ -741,7 +742,7 @@ def _parallel_analyze_markets(markets, label="BACKTEST"):
     return results
 
 
-def run_backtest_live(count=100, skip_advisor=False):
+def run_backtest_live(count=100, skip_advisor=False, use_calibrator=False):
     """
     Default mode: Fetch closed+resolved DOTM markets, run analysis in parallel,
     compute Winrate and Brier Score immediately (resolutions are known).
@@ -1356,6 +1357,8 @@ if __name__ == "__main__":
                         help="Number of markets to backtest (default: 100)")
     parser.add_argument("--skip-advisor", action="store_true",
                         help="Skip advisor pre-check (saves tokens)")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="Apply isotonic calibration from pre-trained model")
     parser.add_argument("--check", action="store_true",
                         help="Check resolution of pending predictions (live mode only)")
     args = parser.parse_args()
@@ -1363,6 +1366,6 @@ if __name__ == "__main__":
     if args.check:
         check_pending()
     elif args.mode in ("resolved", "sim"):
-        run_backtest_live(count=args.count, skip_advisor=args.skip_advisor)
+        run_backtest_live(count=args.count, skip_advisor=args.skip_advisor, use_calibrator=args.calibrate)
     elif args.mode == "live":
         run_backtest_live_active(count=args.count, skip_advisor=args.skip_advisor)
