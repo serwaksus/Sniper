@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 
 from news_scanner import check_market_news, extract_keywords, fetch_recent_news
-from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt
+from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt, check_and_write_pid, cleanup_pid_file
 
 PID_FILE = "/root/dotm-sniper/sniper.pid"
 
@@ -1202,6 +1202,31 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
 
 def buy(market, amount):
     try:
+        book = get_order_book(market["slug"])
+        best_ask = book.get("best_ask")
+        best_bid = book.get("best_bid")
+
+        if best_ask is None or best_ask <= 0:
+            logger.warning(f"[SNIPER] No valid ask for {market['slug']}, aborting buy")
+            return False
+
+        market_price = market.get("price", 0)
+        if market_price > 0 and best_ask > market_price * 1.15:
+            logger.warning(
+                f"[SNIPER] Slippage guard in buy(): ask={best_ask:.4f} > 15% above "
+                f"price={market_price:.4f} for {market['slug']}, aborting"
+            )
+            return False
+
+        if best_bid is not None and best_bid > 0 and best_ask > 0:
+            spread = best_ask - best_bid
+            if spread / best_ask > MAX_SPREAD_PCT:
+                logger.warning(
+                    f"[SNIPER] Spread too wide in buy(): spread={spread:.4f} "
+                    f"({spread/best_ask:.1%}) for {market['slug']}, aborting"
+                )
+                return False
+
         res = subprocess.run(["pm-trader", "buy", market["slug"], market["outcome"], str(amount)],
                            capture_output=True, text=True, timeout=30, start_new_session=True)
         if res.returncode != 0:
@@ -2342,7 +2367,7 @@ def advisor_pre_check(market, analysis):
     reasoning = analysis.get("reasoning", "")
 
     factors_text = "\n".join(
-        f"  - [{f.get('weight', '?')}] {f.get('factor', '')} ({f.get('direction', '')})"
+        f"  - [{f.get('weight', '?')}] {sanitize_for_prompt(f.get('factor', ''))} ({f.get('direction', '')})"
         for f in factors[:5]
     ) if factors else "  (none)"
 
@@ -2355,7 +2380,7 @@ MARKET PRICE: ${price:.3f} ({price*100:.1f}%)
 BOT P_MODEL (estimated true probability): {p_model:.1%}
 PROBABILITY RATIO: {p_model/price:.2f}x vs market
 COMPOSITE SIGNAL SCORE: {score:.0f}/100
-BOT REASONING: {reasoning}
+BOT REASONING: {sanitize_for_prompt(reasoning)}
 
 SUPPORTING FACTORS IDENTIFIED BY BOT:
 {factors_text}
@@ -2474,11 +2499,7 @@ def log_slippage(slug, expected_price, fill_data):
     }
 
     try:
-        if os.path.exists(SLIPPAGE_LOG_FILE):
-            with open(SLIPPAGE_LOG_FILE, "r") as f:
-                logs = json.load(f)
-        else:
-            logs = []
+        logs = load_json(SLIPPAGE_LOG_FILE, [])
         logs.append(entry)
         logs = logs[-500:]
         os.makedirs(os.path.dirname(SLIPPAGE_LOG_FILE), exist_ok=True)
@@ -2574,8 +2595,7 @@ def _update_status_file():
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
         portfolio_data = json.loads(res.stdout).get("data", [])
         status = {"balance": balance_data, "portfolio": portfolio_data, "updated_at": datetime.now().isoformat()}
-        with open("/root/dotm-sniper/current_status.json", "w") as f:
-            json.dump(status, f, indent=2, default=str)
+        save_json("/root/dotm-sniper/current_status.json", status)
         for dest in [
             "/root/.openclaw/workspace/dotm_status.json",
             "/root/.openclaw/agents/market_analyst/dotm_status.json",
@@ -2788,17 +2808,8 @@ if __name__ == "__main__":
     import sys
     single_run = len(sys.argv) > 1 and sys.argv[1] == "--once"
 
-    if os.path.exists(PID_FILE):
-        try:
-            with open(PID_FILE, 'r') as f:
-                old_pid = int(f.read().strip())
-            os.kill(old_pid, 0)
-            print(f"[SNIPER] Another instance running (PID {old_pid}), exiting")
-            sys.exit(1)
-        except (OSError, ValueError, ProcessLookupError):
-            pass
-    with open(PID_FILE, 'w') as f:
-        f.write(str(os.getpid()))
+    if not check_and_write_pid(PID_FILE):
+        sys.exit(1)
     try:
         if single_run:
             print("DOTM SNIPER v5.3.0 running single iteration...")
@@ -2813,7 +2824,4 @@ if __name__ == "__main__":
                 print("Sleeping 30 min...")
                 time.sleep(1800)
     finally:
-        try:
-            os.unlink(PID_FILE)
-        except OSError:
-            pass
+        cleanup_pid_file(PID_FILE)

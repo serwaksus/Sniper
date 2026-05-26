@@ -317,11 +317,10 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
 class TestDuplicateStatusReturn(unittest.TestCase):
     """Fix #2: evaluate_emergency_exit returns early on duplicate status."""
 
-    @patch('hermes_advisor._update_and_check_status')
     @patch('hermes_advisor.fetch_news_for_market')
     @patch('hermes_advisor.load_json')
     @patch('requests.post')
-    def test_duplicate_status_skips_update(self, mock_post, mock_load, mock_news, mock_update):
+    def test_duplicate_status_skips_update(self, mock_post, mock_load, mock_news):
         mock_load.return_value = {
             "test-slug": {
                 "market_question": "Will X happen?",
@@ -339,7 +338,7 @@ class TestDuplicateStatusReturn(unittest.TestCase):
 
         ha.evaluate_emergency_exit()
 
-        mock_update.assert_not_called()
+        self.assertEqual(ha._last_alert_status.get("test-slug"), "YELLOW")
 
 
 if __name__ == '__main__':

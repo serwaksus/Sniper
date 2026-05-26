@@ -22,6 +22,8 @@ from utils import load_json, save_json, _normalize_keys, _strip_dict_keys_recurs
 load_json_safe = load_json
 save_json_safe = save_json
 
+logger = logging.getLogger(__name__)
+
 
 def _load_notify_state():
     return load_json_safe(ADVISOR_NOTIFY_STATE_FILE, {"last_notified": {}})
@@ -136,6 +138,9 @@ def parse_llm_advisor_response(raw_text, log_label="ADVISOR"):
     return None, "no valid JSON object found after all extraction attempts"
 
 
+VALID_VERDICTS = {"CONFIRM", "DIVERGE", "WARNING", "UNKNOWN"}
+
+
 def _validate_advisor_schema(obj, log_label="ADVISOR"):
     """
     Validate advisor analysis schema. Returns error string or None.
@@ -206,8 +211,7 @@ HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/js
 
 def get_bot_status():
     try:
-        with open('/root/.openclaw/workspace/dotm_status.json', 'r') as f:
-            return json.load(f)
+        return load_json('/root/.openclaw/workspace/dotm_status.json', {"portfolio": [], "balance": {}})
     except:
         return {"portfolio": [], "balance": {}}
 
@@ -217,7 +221,7 @@ def get_positions_tracking():
 def analyze_market(market_slug, market_question, current_price, entry_price):
     prompt = f"""You are DOTM Advisor - independent analyst comparing analysis with a trading bot.
 
-Market: {market_question}
+Market: {sanitize_for_prompt(market_question)}
 Current market price: ${current_price:.3f}
 Bot entry price: ${entry_price:.3f}
 P&L since entry: {(current_price - entry_price) / entry_price * 100:.1f}%
@@ -262,8 +266,7 @@ Return ONLY JSON:
 
 def get_hypothesis_p_model(slug):
     try:
-        with open('/root/dotm-sniper/hypothesis_db.json', 'r') as f:
-            db = _normalize_keys(json.load(f))
+        db = load_json('/root/dotm-sniper/hypothesis_db.json', {})
         for h in db.get('hypotheses', []):
             if h['slug'] == slug and not h.get('resolved'):
                 return h.get('p_model')

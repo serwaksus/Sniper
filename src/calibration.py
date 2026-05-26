@@ -93,8 +93,11 @@ class IsotonicCalibrator:
             logger.info(f"[CALIBRATION] No calibration model found at {path}")
             return False
         try:
-            with open(path, 'r') as f:
-                model_data = json.load(f)
+            from utils import load_json as _load_json
+            model_data = _load_json(path, None)
+            if model_data is None:
+                logger.error(f"[CALIBRATION] Failed to load model from {path}")
+                return False
             self.models = {}
             for cluster, params in model_data.items():
                 X = np.array(params["X_thresholds_"])

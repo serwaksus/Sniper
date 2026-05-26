@@ -111,6 +111,31 @@ def save_json_versioned(path, data, expected_version=None):
     return True
 
 
+def check_and_write_pid(pid_file):
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, 'r') as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, 0)
+            print(f"[PID] Another instance running (PID {old_pid}), exiting")
+            return False
+        except (OSError, ValueError, ProcessLookupError):
+            pass
+    try:
+        with open(pid_file, 'w') as f:
+            f.write(str(os.getpid()))
+    except OSError as e:
+        logger.warning(f"[PID] Cannot write {pid_file}: {e}")
+    return True
+
+
+def cleanup_pid_file(pid_file):
+    try:
+        os.unlink(pid_file)
+    except OSError:
+        pass
+
+
 def sanitize_for_prompt(text):
     if not text:
         return ""
