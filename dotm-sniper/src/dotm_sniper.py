@@ -2570,6 +2570,8 @@ def _update_status_file():
         balance_data = json.loads(res.stdout).get("data", {})
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
         portfolio_data = json.loads(res.stdout).get("data", [])
+        # Filter out positions with negligible shares (floating-point artifacts from closed positions)
+        portfolio_data = [p for p in portfolio_data if p.get("shares", 0) > 1e-10]
         status = {"balance": balance_data, "portfolio": portfolio_data, "updated_at": datetime.now().isoformat()}
         with open("/root/dotm-sniper/current_status.json", "w") as f:
             json.dump(status, f, indent=2, default=str)
