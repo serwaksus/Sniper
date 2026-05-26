@@ -8,8 +8,8 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-MAX_POSITIONS = 15
-MAX_CLUSTER_PCT = 0.30
+MAX_POSITIONS = 50
+MAX_CLUSTER_PCT = 0.40
 BASE_POS_PCT = 0.02
 MAX_POS_PCT = 0.10
 FRACTIONAL_KELLY = 0.25

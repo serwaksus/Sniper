@@ -23,8 +23,8 @@ SIGNAL_THRESHOLD = 35
 MIN_CONFIDENCE = 0.50
 MIN_PROB_RATIO = 1.8
 DOTM_MAX_PRICE = 0.15
-ADVISOR_VETO_RATE = 0.30
-NEWS_BLOCK_RATE = 0.10
+ADVISOR_VETO_RATE = 0.20
+NEWS_BLOCK_RATE = 0.05
 
 
 def _estimate_signal(market: Dict, use_metaculus: bool = True) -> Dict:
@@ -99,6 +99,7 @@ def run_backtest(
     use_news: bool = True,
     force_refresh: bool = False,
     seed: int = 42,
+    markets: list = None,
 ) -> Dict:
     """
     Run realistic event-driven backtest.
@@ -108,10 +109,11 @@ def run_backtest(
     
     logger.info(f"[BACKTEST] Starting: balance=${starting_balance}, max_markets={max_markets}")
     
-    markets = fetch_resolved_markets(
-        max_markets=max_markets,
-        force_refresh=force_refresh,
-    )
+    if markets is None:
+        markets = fetch_resolved_markets(
+            max_markets=max_markets,
+            force_refresh=force_refresh,
+        )
     
     if not markets:
         logger.error("[BACKTEST] No markets loaded")
@@ -127,6 +129,13 @@ def run_backtest(
         slug = market["slug"]
         entry_price = market["entry_price"]
         liquidity = market.get("liquidity", 100)
+        cluster = market.get("category", "other")
+        
+        # Sub-cluster within "other" to avoid concentration
+        if cluster == "other":
+            cluster = f"other_{hash(market.get('question', '')) % 8}"
+        
+        market["cluster"] = cluster
         
         if portfolio.balance < 5:
             logger.debug(f"[BACKTEST] Balance too low (${portfolio.balance:.2f}), stopping")
@@ -184,7 +193,7 @@ def run_backtest(
     
     price_series_cache = {}
     for market in markets:
-        price_series_cache[market["slug"]] = generate_price_series(market, num_steps=30)
+        price_series_cache[market["slug"]] = generate_price_series(market, num_steps=60)
     
     for step_idx in range(31):
         current_prices = {}
@@ -222,7 +231,7 @@ def run_backtest(
                 else:
                     pos.trailing_confirmed = True
             
-            if not sold and pnl_pct <= -0.50:
+            if not sold and pnl_pct <= -0.80:
                 sell_result = simulate_sell(price, pos.shares_after_tp, pos.entry_price, pos.liquidity, force_market=True)
                 if sell_result["filled"]:
                     portfolio.close_position(slug, sell_result["proceeds"], "hard_stop_loss", price)

@@ -68,7 +68,8 @@ def run_walk_forward(
     
     if len(buckets) < 2:
         logger.warning("[WALK-FORWARD] Not enough monthly data, running single backtest")
-        return run_backtest(starting_balance=starting_balance, max_markets=max_markets)
+        return run_backtest(starting_balance=starting_balance, max_markets=max_markets,
+                            markets=markets)
     
     fold_results = []
     cumulative_pnl = 0.0
@@ -88,10 +89,11 @@ def run_walk_forward(
         
         result = run_backtest(
             starting_balance=starting_balance,
-            max_markets=len(test_markets) + 10,
+            max_markets=len(test_markets),
             use_advisor=True,
             use_news=True,
             seed=42 + i,
+            markets=test_markets,
         )
         
         fold_results.append({
