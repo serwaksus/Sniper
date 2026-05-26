@@ -16,102 +16,11 @@ import fcntl
 import html
 from datetime import datetime
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[
-        logging.FileHandler("/root/dotm-sniper/sniper.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
+from utils import load_json, save_json, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt
 
-VALID_VERDICTS = {"CONFIRM", "DIVERGE", "WARNING", "UNKNOWN"}
-
-ADVISOR_STATE_FILE = "/root/dotm-sniper/advisor_state.json"
-LONG_TERM_THRESHOLD_DAYS = 30
-STOP_LOSS_PROXIMITY_PCT = 0.15
-LONG_TERM_INTERVAL_SECONDS = 4 * 3600
-DEFAULT_INTERVAL_SECONDS = 30 * 60
-ELEVATED_INTERVAL_SECONDS = 15 * 60
-NOTIFY_COOLDOWN_SECONDS = 4 * 3600
-ADVISOR_NOTIFY_STATE_FILE = "/root/dotm-sniper/logs/advisor_notify_state.json"
-PROFITABLE_PNL_THRESHOLD = 0.50
-
-
-def _lock_file(fd, exclusive=True):
-    try:
-        op = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        fcntl.flock(fd, op)
-    except (OSError, AttributeError):
-        pass
-
-
-def _unlock_file(fd):
-    try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    except (OSError, AttributeError):
-        pass
-
-
-def _normalize_keys(obj):
-    if isinstance(obj, dict):
-        return {k.strip(): _normalize_keys(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_normalize_keys(item) for item in obj]
-    return obj
-
-def _strip_dict_keys_recursive(obj):
-    if isinstance(obj, dict):
-        return {k.strip() if isinstance(k, str) else k: _strip_dict_keys_recursive(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_strip_dict_keys_recursive(item) for item in obj]
-    return obj
-
-
-def load_json_safe(path, default):
-    if not os.path.exists(path):
-        return default
-    try:
-        fd = os.open(path, os.O_RDONLY)
-        try:
-            _lock_file(fd, exclusive=False)
-            with os.fdopen(fd, 'r') as f:
-                return _normalize_keys(json.load(f))
-        except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            return default
-    except Exception:
-        return default
-
-
-def save_json_safe(path, data):
-    import tempfile
-    dir_name = os.path.dirname(path) or '.'
-    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
-    try:
-        _lock_file(fd, exclusive=True)
-        with os.fdopen(fd, 'w') as f:
-            json.dump(_strip_dict_keys_recursive(data), f, indent=2, default=str)
-        lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
-        try:
-            _lock_file(lock_fd, exclusive=True)
-            os.replace(tmp_path, path)
-        finally:
-            _unlock_file(lock_fd)
-            try:
-                os.close(lock_fd)
-            except OSError:
-                pass
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+load_json_safe = load_json
+save_json_safe = save_json
 
 
 def _load_notify_state():
@@ -354,7 +263,7 @@ Return ONLY JSON:
 def get_hypothesis_p_model(slug):
     try:
         with open('/root/dotm-sniper/hypothesis_db.json', 'r') as f:
-            db = json.load(f)
+            db = _normalize_keys(json.load(f))
         for h in db.get('hypotheses', []):
             if h['slug'] == slug and not h.get('resolved'):
                 return h.get('p_model')

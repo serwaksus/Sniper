@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 
 from news_scanner import check_market_news, extract_keywords, fetch_recent_news
+from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt
+
+PID_FILE = "/root/dotm-sniper/sniper.pid"
 
 def _load_env_manual():
     env_path = "/root/dotm-sniper/.env"
@@ -39,7 +42,8 @@ logging.basicConfig(
     handlers=[
         logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
-    ]
+    ],
+    force=True
 )
 logger = logging.getLogger(__name__)
 
@@ -173,7 +177,7 @@ def update_daily_stats(balance, portfolio, trades_this_cycle):
         stats = {"date": today, "trades": 0, "pnl": 0, "started": False}
     stats["started"] = True
     stats["trades"] = stats.get("trades", 0) + trades_this_cycle
-    starting = 500.0
+    starting = get_settings().get("starting_balance", 500.0)
     stats["pnl"] = balance.get("total_value", 0) - starting
     save_json(DAILY_STATS_FILE, stats)
 
@@ -361,19 +365,19 @@ def get_metaculus_forecast(pm_question, pm_resolve_date=None):
     if latest:
         means = latest.get("means", [])
         if means:
-            prob = means[0]
+            prob = float(means[0])
 
     # Fallback: check for prediction field in question data
     if prob is None:
         pred = q_data.get("prediction") or best_match.get("prediction")
         if pred and isinstance(pred, dict):
-            prob = pred.get("number") or pred.get("p_above") or pred.get("p_below")
+            prob = float(pred.get("number") or pred.get("p_above") or pred.get("p_below") or 0)
 
     # Fallback 2: check for community forecast in vote data
     if prob is None:
         vote = best_match.get("vote", {})
         if vote and isinstance(vote, dict):
-            prob = vote.get("prediction")
+            prob = float(vote.get("prediction", 0))
 
     if prob is None:
         return {"found": False, "probability": None, "reason": "no_aggregation", "best_match_title": meta_title}
@@ -565,75 +569,7 @@ def extract_keywords(question):
     words = re.findall(r'\b[a-zA-Z]{4,}\b', question.lower())
     return [w for w in words if w not in stop_words][:10]
 
-def _lock_file(fd, exclusive=True):
-    try:
-        op = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        fcntl.flock(fd, op)
-    except (OSError, AttributeError):
-        pass
 
-def _unlock_file(fd):
-    try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    except (OSError, AttributeError):
-        pass
-
-def _normalize_keys(obj):
-    if isinstance(obj, dict):
-        return {k.strip(): _normalize_keys(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_normalize_keys(item) for item in obj]
-    return obj
-
-def _strip_dict_keys_recursive(obj):
-    if isinstance(obj, dict):
-        return {k.strip() if isinstance(k, str) else k: _strip_dict_keys_recursive(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_strip_dict_keys_recursive(item) for item in obj]
-    return obj
-
-def load_json(path, default):
-    if not os.path.exists(path):
-        return default
-    try:
-        fd = os.open(path, os.O_RDONLY)
-        try:
-            _lock_file(fd, exclusive=False)
-            with os.fdopen(fd, 'r') as f:
-                return _normalize_keys(json.load(f))
-        except:
-            try:
-                os.close(fd)
-            except:
-                pass
-            return default
-    except:
-        return default
-
-def save_json(path, data):
-    import tempfile
-    dir_name = os.path.dirname(path) or '.'
-    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
-    try:
-        _lock_file(fd, exclusive=True)
-        with os.fdopen(fd, 'w') as f:
-            json.dump(_strip_dict_keys_recursive(data), f, indent=2, default=str)
-        lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
-        try:
-            _lock_file(lock_fd, exclusive=True)
-            os.replace(tmp_path, path)
-        finally:
-            _unlock_file(lock_fd)
-            try:
-                os.close(lock_fd)
-            except:
-                pass
-    except:
-        try:
-            os.unlink(tmp_path)
-        except:
-            pass
-        raise
 
 def get_settings():
     s = load_json(SETTINGS_FILE, {
@@ -647,6 +583,7 @@ def get_settings():
     return s
 
 def save_settings(s):
+    s["__version"] = s.get("__version", 0) + 1
     save_json(SETTINGS_FILE, s)
 
 def load_hypothesis_db():
@@ -847,11 +784,15 @@ def calculate_brier_score(db):
     save_settings(settings)
 
     if len(resolved) >= 50:
-        from calibration import get_calibrator
-        calibrator = get_calibrator()
-        calibrator.fit(resolved)
-        calibrator.save()
-        logger.info(f"[CALIBRATION] Trained isotonic model on {len(resolved)} resolved markets")
+        recent_resolved = [h for h in resolved if h.get("resolved_at") and (datetime.now() - datetime.fromisoformat(h["resolved_at"])).days <= 90]
+        if len(recent_resolved) >= 20:
+            from calibration import get_calibrator
+            calibrator = get_calibrator()
+            calibrator.fit(recent_resolved)
+            calibrator.save()
+            logger.info(f"[CALIBRATION] Trained isotonic model on {len(recent_resolved)} recent markets (<=90 days)")
+        else:
+            logger.info(f"[CALIBRATION] Only {len(recent_resolved)} recent resolved, need >=20, skipping retrain")
 
     return brier
 
@@ -1054,12 +995,12 @@ def backtest_recent(n=20):
 def get_order_book(slug):
     try:
         res = subprocess.run(["pm-trader", "book", slug, "--depth", "3"],
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=15, start_new_session=True)
         data = json.loads(res.stdout)
         asks = data.get("data", {}).get("asks", [])
         bids = data.get("data", {}).get("bids", [])
-        best_ask = float(asks[0].get("price", 0)) if asks else None
-        best_bid = float(bids[0].get("price", 0)) if bids else None
+        best_ask = float(asks[0].get("price", 0)) if asks and asks[0].get("price") is not None else None
+        best_bid = float(bids[0].get("price", 0)) if bids and bids[0].get("price") is not None else None
         if best_bid and best_ask:
             mid_price = (best_bid + best_ask) / 2
         else:
@@ -1074,32 +1015,45 @@ def get_best_ask(slug):
 
 def get_balance():
     try:
-        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15)
+        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15, start_new_session=True)
+        if res.returncode != 0:
+            logger.error(f"[SNIPER] pm-trader balance failed: rc={res.returncode}")
+            return None
         return json.loads(res.stdout).get("data", {})
-    except:
+    except Exception:
         return None
 
 def get_portfolio():
     try:
-        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
+        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
+        if res.returncode != 0:
+            logger.error(f"[SNIPER] pm-trader portfolio failed: rc={res.returncode}")
+            return []
         return json.loads(res.stdout).get("data", [])
-    except:
+    except Exception:
         return []
 
 def fetch_markets():
     try:
         res = subprocess.run(["pm-trader", "markets", "list", "--limit", "200"],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=30, start_new_session=True)
+        if res.returncode != 0:
+            logger.error(f"[MARKETS] pm-trader markets failed: rc={res.returncode}")
+            return []
         data = json.loads(res.stdout)
         candidates = []
         now = datetime.now()
 
         for m in data.get("data", []):
-            if not m.get("active") or m.get("closed"):
+            if not m.get("active") or m.get("closed") or m.get("status") in ("closing", "resolved", "invalid"):
                 continue
 
             vol = float(m.get("volume", 0))
             if vol < MIN_VOLUME:
+                continue
+
+            liq = float(m.get("liquidity", 0))
+            if liq < 100:
                 continue
 
             end_date = m.get("end_date", "")
@@ -1119,7 +1073,9 @@ def fetch_markets():
                     price = float(price)
                 except (ValueError, TypeError):
                     continue
-                if price <= MAX_PRICE and price > 0:
+                if price is None or price <= 0 or price > 1.0:
+                    continue
+                if price <= MAX_PRICE:
                     clusters = detect_clusters(m["question"])
                     if any(c in BANNED_CLUSTERS for c in clusters):
                         continue
@@ -1198,14 +1154,12 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
     # vs market_price which might be midpoint with poor liquidity
     effective_price = best_ask if best_ask is not None else market_price
 
-    # Payout coefficient "b": for a YES bet at price P, if you win you receive
-    # (1-P) for each P wagered. E.g., at $0.05 price, you risk $0.05 to win $0.95
-    b = (1 - effective_price) / effective_price if effective_price > 0 else 0
+    if effective_price <= 0.001:
+        logger.warning(f"[KELLY] effective_price={effective_price:.6f} too small, minimum $5")
+        return 5
+    b = (1 - effective_price) / effective_price
 
     p = p_model; q = 1 - p
-    if b <= 1e-9:
-        logger.warning(f"[KELLY] b={b:.6f} too small (price={effective_price:.4f}), minimum $5")
-        return 5
     kelly_full = (b * p - q) / b
 
     logger.info(f"[KELLY] p={p:.3f}, b={b:.2f}, q={q:.3f}, kelly_full={kelly_full:.4f}")
@@ -1231,11 +1185,11 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
     effective_cap = OTHER_BOOST_POS_PCT if cluster == "other" else BASE_POS_PCT
     size_pct = min(kelly_with_confidence, effective_cap)
 
-    kelly_dollars = int(balance * size_pct)
+    kelly_dollars = round(balance * size_pct)
     if kelly_dollars <= 0:
         return 0
     kelly_dollars = max(kelly_dollars, 5)
-    kelly_dollars = min(kelly_dollars, int(balance * MAX_POS_PCT))
+    kelly_dollars = min(kelly_dollars, round(balance * MAX_POS_PCT))
 
     logger.info(
         f"[KELLY] kelly_full={kelly_full:.4f} * frac={FRACTIONAL_KELLY_MULTIPLIER:.2f} "
@@ -1249,7 +1203,10 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
 def buy(market, amount):
     try:
         res = subprocess.run(["pm-trader", "buy", market["slug"], market["outcome"], str(amount)],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=30, start_new_session=True)
+        if res.returncode != 0:
+            logger.error(f"[SNIPER] Buy failed for {market['slug']}: rc={res.returncode}")
+            return False
         result = json.loads(res.stdout)
         if result.get("ok"):
             print(f"  ✅ {market['question'][:45]}... ${amount}")
@@ -1262,10 +1219,10 @@ def buy(market, amount):
         return False
 
 def resolve_hypothesis_immediately(slug, current_price, entry_price):
+    _cancel_all_tp_orders(slug)
     db = load_hypothesis_db()
     for h in db["hypotheses"]:
         if h["slug"] == slug and not h.get("resolved"):
-            _cancel_all_tp_orders(slug)
             h["resolved"] = True
             h["resolved_at"] = datetime.now().isoformat()
             h["exit_price"] = current_price
@@ -1303,7 +1260,7 @@ def _place_limit_sell(slug, outcome, shares, limit_price):
         res = subprocess.run(
             ["pm-trader", "sell", slug, outcome, str(shares),
              "--limit", "--price", f"{limit_price:.4f}"],
-            capture_output=True, text=True, timeout=20
+            capture_output=True, text=True, timeout=20, start_new_session=True
         )
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
@@ -1325,7 +1282,7 @@ def _place_tp_limit_order_single(slug, outcome, shares, price):
         res = subprocess.run(
             ["pm-trader", "sell", slug, outcome, str(shares),
              "--limit", "--price", f"{price:.4f}"],
-            capture_output=True, text=True, timeout=20
+            capture_output=True, text=True, timeout=20, start_new_session=True
         )
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
@@ -1349,7 +1306,7 @@ def _place_tp_ladder(slug, outcome, total_shares):
     ladder = [(0.50, 0.75), (0.30, 0.85)]
     results = []; allocated = 0
     for pct, price in ladder:
-        shares = max(1, int(total_shares * pct))
+        shares = max(round(5.0 / price), round(total_shares * pct), 1)
         if allocated + shares > total_shares: shares = total_shares - allocated
         if shares <= 0: continue
         ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
@@ -1361,12 +1318,12 @@ def _place_tp_ladder(slug, outcome, total_shares):
 def _cancel_all_tp_orders(slug):
     """Cancel all open sell orders for a position on manual/stop exit."""
     try:
-        res = subprocess.run(["pm-trader", "orders", "--status", "open"], capture_output=True, text=True, timeout=30)
+        res = subprocess.run(["pm-trader", "orders", "--status", "open"], capture_output=True, text=True, timeout=30, start_new_session=True)
         for line in res.stdout.strip().split('\n')[1:]:
             if not line.strip() or '---' in line: continue
             parts = [p.strip() for p in line.split('|')]
             if len(parts)>=3 and parts[0]==slug and parts[2]=='sell':
-                subprocess.run(["pm-trader", "orders", "cancel", slug, parts[1]], timeout=20)
+                subprocess.run(["pm-trader", "orders", "cancel", slug, parts[1]], timeout=20, start_new_session=True)
                 logger.info(f"[TP-CANCEL] Canceled sell order for {slug[:40]}...")
     except Exception as e: logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
 
@@ -1413,7 +1370,7 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
     logger.info(f"[MARKET-SELL] {slug[:40]}... bid={best_bid:.4f} spread=${spread:.4f}")
     try:
         res = subprocess.run(["pm-trader", "sell", slug, outcome, str(shares)],
-                             capture_output=True, text=True, timeout=20)
+                             capture_output=True, text=True, timeout=20, start_new_session=True)
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             return True, best_bid, "market"
@@ -1548,7 +1505,7 @@ def trailing_stop_check():
                 logger.info(f"[TAKE-PROFIT] Gap convergence reached: {sold_reason}")
                 try:
                     res = subprocess.run(["pm-trader", "sell", slug, outcome, str(shares)],
-                                         capture_output=True, text=True, timeout=20)
+                                         capture_output=True, text=True, timeout=20, start_new_session=True)
                     result = json.loads(res.stdout) if res.stdout else {}
                     if result.get("ok"):
                         logger.info(f"SOLD take-profit convergence: {slug} pnl={pnl_pct:.2%}")
@@ -1596,12 +1553,28 @@ def trailing_stop_check():
                 pass
 
         if not sold and p.get("trailing_on") and current_price <= p.get("stop_loss", 0):
+            if not p.get("trailing_confirmed"):
+                p["trailing_confirmed"] = True
+                p["trailing_confirm_time"] = now.isoformat()
+                logger.info(f"[TRAILING-STOP] Confirming for {slug[:40]}... (1/2)")
+            else:
+                confirm_time = p.get("trailing_confirm_time")
+                if confirm_time:
+                    try:
+                        elapsed = (now - datetime.fromisoformat(confirm_time)).total_seconds()
+                        if elapsed < 300:
+                            logger.info(f"[TRAILING-STOP] Waiting confirmation for {slug[:40]}... ({elapsed:.0f}s/300s)")
+                            continue
+                    except (ValueError, TypeError):
+                        pass
             sold_reason = f"trailing={current_price:.3f} <= {p.get('stop_loss', 0):.3f}"
             logger.info(f"[TRAILING-STOP] Triggered for {slug[:40]}...")
             try:
                 sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                 if sold:
                     logger.info(f"SOLD trailing stop ({method}): {slug}")
+                    p.pop("trailing_confirmed", None)
+                    p.pop("trailing_confirm_time", None)
                     pnl_abs = shares * (eff_price - entry_price)
                     actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                     if telegram_reporter:
@@ -1674,7 +1647,7 @@ def resolve_hypotheses():
     market_map = {}
     try:
         res = subprocess.run(["pm-trader", "markets", "list", "--limit", "200"],
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=20, start_new_session=True)
         for m in json.loads(res.stdout).get("data", []):
             market_map[m["slug"]] = m
     except:
@@ -1760,7 +1733,7 @@ def full_market_analysis(market):
 
     prompt = f"""Prediction market analyst. Your job is to find DOTM (deep out-the-money) events where the crowd SIGNIFICANTLY underestimates probability.
 
-Market: {market['question']}
+Market: {sanitize_for_prompt(market['question'])}
 Price: ${market['price']:.3f} ({market['price']*100:.1f}%) | Volume: ${market.get('volume', 0):,.0f} | Resolution: {market.get('ttl_hours', 999) / 24:.0f}d | Category: {cluster}
 Best Ask: ${polymarket_prob:.3f}
 {gap_info}
@@ -1778,14 +1751,29 @@ Rules:
 - If estimate >3x price, explain what crowd is missing
 - IMPORTANT: For DOTM markets (price < 5%), even small probability increases are significant"""
 
+    resp = None
+    for _attempt in range(3):
+        try:
+            resp = requests.post(URL, headers=HEADERS, json={
+                "model": MODEL_MAIN,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 500
+            }, timeout=60)
+            break
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as _e:
+            if _attempt < 2:
+                _backoff = 2 ** (_attempt + 1)
+                logger.warning(f"[ANALYSIS] LLM retry {_attempt+1}/3 in {_backoff}s: {_e}")
+                time.sleep(_backoff)
+            else:
+                logger.error(f"[ANALYSIS] LLM error after 3 retries: {_e}")
+                p_model_llm = market["price"] * 2
+                factors = []
+                resp = None
     try:
-        resp = requests.post(URL, headers=HEADERS, json={
-            "model": MODEL_MAIN,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "max_tokens": 500
-        }, timeout=60)
-
+        if resp is None:
+            raise Exception("LLM unavailable after retries")
         resp_data = resp.json()
         msg = resp_data.get("choices", [{}])[0].get("message", {})
         content = msg.get("content") or ""
@@ -1923,7 +1911,16 @@ Rules:
 
 
 def _load_price_tracking():
-    return load_json(PRICE_TRACKING_FILE, {})
+    tracking = load_json(PRICE_TRACKING_FILE, {})
+    now = datetime.now()
+    stale = [k for k, v in tracking.items()
+             if isinstance(v, dict) and v.get("last_checked")
+             and (now - datetime.fromisoformat(v["last_checked"])).total_seconds() > 86400]
+    if stale:
+        for k in stale:
+            del tracking[k]
+        _save_price_tracking(tracking)
+    return tracking
 
 
 def _save_price_tracking(tracking):
@@ -1940,10 +1937,11 @@ def _check_price_delta(slug, current_price):
     if entry:
         last_price = entry.get("last_price", 0)
         cached_p_model = entry.get("p_model")
-        if cached_p_model is not None and abs(current_price - last_price) < max(PRICE_DELTA_THRESHOLD, current_price * 0.10):
+        actual_threshold = max(PRICE_DELTA_THRESHOLD, current_price * 0.10)
+        if cached_p_model is not None and abs(current_price - last_price) < actual_threshold:
             logger.info(
                 f"[DELTA-SKIP] {slug[:40]}... price delta "
-                f"${abs(current_price - last_price):.4f} < ${PRICE_DELTA_THRESHOLD}, reusing p_model={cached_p_model:.1%}"
+                f"${abs(current_price - last_price):.4f} < ${actual_threshold:.4f}, reusing p_model={cached_p_model:.1%}"
             )
             return False, cached_p_model
     return True, None
@@ -2051,6 +2049,8 @@ def batch_analyze_markets(markets):
             "cluster": cluster,
         })
 
+    for item in batch_items:
+        item["question"] = sanitize_for_prompt(item["question"])
     items_json = json.dumps(batch_items, indent=2)
 
     prompt = f"""Prediction market analyst. Analyze these DOTM (deep out-the-money) markets where the crowd may underestimates probability.
@@ -2080,14 +2080,27 @@ Rules:
 
 CRITICAL REGULATION FOR CONFIDENCE SCORING: Do NOT default to a flat 0.65 confidence across multiple markets just to pass filters. You must utilize the full analytical spectrum from 0.65 to 1.0 based on the robustness of available data, market volume, and time to resolution. If a market has weak evidence, score it near 0.65. If the evidence is solid and aligned with predictive markets, score it between 0.80 and 0.95. Generating a flat 0.65 across the entire batch will break the downstream composite scoring and will be treated as an invalid evaluation."""
 
+    resp = None
+    for _attempt in range(3):
+        try:
+            resp = requests.post(URL, headers=HEADERS, json={
+                "model": MODEL_MAIN,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 2000
+            }, timeout=90)
+            break
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as _e:
+            if _attempt < 2:
+                _backoff = 2 ** (_attempt + 1)
+                logger.warning(f"[BATCH] LLM retry {_attempt+1}/3 in {_backoff}s: {_e}")
+                time.sleep(_backoff)
+            else:
+                logger.error(f"[BATCH] LLM error after 3 retries: {_e}")
+                resp = None
     try:
-        resp = requests.post(URL, headers=HEADERS, json={
-            "model": MODEL_MAIN,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "max_tokens": 2000
-        }, timeout=90)
-
+        if resp is None:
+            raise Exception("LLM unavailable after retries")
         resp_data = resp.json()
         msg = resp_data.get("choices", [{}])[0].get("message", {})
         content = msg.get("content") or ""
@@ -2229,13 +2242,17 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
 
         ratio_score = min(prob_ratio / 3.0, 1.0) * 30
 
-        metaculus_prob = metaculus_cache.get(slug) if metaculus_cache else None
+        metaculus_prob_val = metaculus_cache.get(slug) if metaculus_cache else None
         metaculus_alignment = 0
-        if metaculus_prob is not None:
-            diff_model_meta = abs(p_model - metaculus_prob)
-            diff_meta_pm = abs(metaculus_prob - market_price)
-            if diff_model_meta < 0.05: metaculus_alignment = 10
-            elif p_model > metaculus_prob + 0.10 and diff_meta_pm < 0.03: metaculus_alignment = -20
+        if metaculus_prob_val is not None:
+            diff_model_meta = abs(p_model - metaculus_prob_val)
+            diff_meta_pm = abs(metaculus_prob_val - market_price)
+            if diff_model_meta < 0.05:
+                metaculus_alignment = 10
+                logger.info(f"[META-ALIGN-BATCH] +10: p_model={p_model:.1%} ~ metaculus={metaculus_prob_val:.1%}")
+            elif p_model > metaculus_prob_val + 0.10 and diff_meta_pm < 0.03:
+                metaculus_alignment = -20
+                logger.info(f"[META-PENALTY-BATCH] -20: p_model={p_model:.1%} >> metaculus={metaculus_prob_val:.1%}")
 
         factor_score = min((len(supporting) + len(high_weight)) / 4, 1.0) * 20
         vol_score = min(bi.get("volume", 0) / 1_000_000, 1.0) * 20
@@ -2332,7 +2349,7 @@ def advisor_pre_check(market, analysis):
     prompt = f"""You are DOTM Advisor - an independent risk analyst verifying a trade before execution.
 Use Chain-of-Thought reasoning to evaluate the thesis.
 
-MARKET: {question}
+MARKET: {sanitize_for_prompt(question)}
 SLUG: {slug}
 MARKET PRICE: ${price:.3f} ({price*100:.1f}%)
 BOT P_MODEL (estimated true probability): {p_model:.1%}
@@ -2422,7 +2439,7 @@ def get_actual_fill_price(slug):
     try:
         res = subprocess.run(
             ["pm-trader", "history", "--limit", "5"],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=15, start_new_session=True
         )
         data = json.loads(res.stdout)
         for trade in data.get("data", []):
@@ -2465,8 +2482,7 @@ def log_slippage(slug, expected_price, fill_data):
         logs.append(entry)
         logs = logs[-500:]
         os.makedirs(os.path.dirname(SLIPPAGE_LOG_FILE), exist_ok=True)
-        with open(SLIPPAGE_LOG_FILE, "w") as f:
-            json.dump(logs, f, indent=2)
+        save_json(SLIPPAGE_LOG_FILE, logs)
     except Exception as e:
         logger.warning(f"[SLIPPAGE] Failed to write log: {e}")
 
@@ -2490,6 +2506,11 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
         logger.info(f"[TRADE-BLOCKED] {market['slug']}: {adv_reason}")
         return False
 
+    current_ask = get_best_ask(market["slug"])
+    if current_ask is not None and current_ask > market["price"] * 1.15:
+        logger.warning(f"[SNIPER] Slippage guard: ask={current_ask:.4f} > 15% above price={market['price']:.4f}, aborting")
+        return False
+
     if not buy(market, estimated_size):
         print(f"   ❌ Buy failed for {market['slug']}")
         return False
@@ -2499,10 +2520,16 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
     if fill_data:
         log_slippage(market["slug"], market["price"], fill_data)
 
-    # v5.3.3: TP Ladder replacing single TP limit
-    shares = int(estimated_size / market["price"]) if market["price"] > 0 else 0
+    shares = round(float(fill_data.get("shares", 0))) if fill_data and fill_data.get("shares", 0) > 0 else round(estimated_size / market["price"]) if market["price"] > 0 else 0
     if shares > 0:
-        _place_tp_ladder(market["slug"], market["outcome"], shares)
+        ladder_results = _place_tp_ladder(market["slug"], market["outcome"], shares)
+        for price, shares_placed, ok, method in ladder_results:
+            if ok:
+                print(f"   🎯  TP rung placed @${price:.2f} ({shares_placed} shares)")
+            else:
+                print(f"   ⚠️  TP rung @{price:.2f} failed")
+        if not ladder_results:
+            print(f"   ⚠️  TP ladder placement failed, will rely on trailing_stop_check()")
     else:
         logger.warning(f"[SMART-EXIT] Zero shares for {market['slug']}, skipping TP")
 
@@ -2542,9 +2569,9 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
 def _update_status_file():
     try:
         import shutil
-        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15)
+        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15, start_new_session=True)
         balance_data = json.loads(res.stdout).get("data", {})
-        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
+        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
         portfolio_data = json.loads(res.stdout).get("data", [])
         status = {"balance": balance_data, "portfolio": portfolio_data, "updated_at": datetime.now().isoformat()}
         with open("/root/dotm-sniper/current_status.json", "w") as f:
@@ -2563,8 +2590,11 @@ def _update_status_file():
 
 
 def main():
+    _main_inner()
+
+def _main_inner():
     print("="*60)
-    print("  DOTM SNIPER v5.0.0 - Batch Processing + Delta Scan + Advisor")
+    print("  DOTM SNIPER v5.3.0 - Batch Processing + Delta Scan + Advisor")
     print("="*60)
 
     repair_positions_file()
@@ -2758,15 +2788,32 @@ if __name__ == "__main__":
     import sys
     single_run = len(sys.argv) > 1 and sys.argv[1] == "--once"
 
-    if single_run:
-        print("DOTM SNIPER v5.0.0 running single iteration...")
-        main()
-    else:
-        print("DOTM SNIPER v5.0.0 starting...")
-        while True:
-            try:
-                main()
-            except Exception as e:
-                print(f"Error: {e}")
-            print("Sleeping 30 min...")
-            time.sleep(1800)
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, 0)
+            print(f"[SNIPER] Another instance running (PID {old_pid}), exiting")
+            sys.exit(1)
+        except (OSError, ValueError, ProcessLookupError):
+            pass
+    with open(PID_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+    try:
+        if single_run:
+            print("DOTM SNIPER v5.3.0 running single iteration...")
+            _main_inner()
+        else:
+            print("DOTM SNIPER v5.3.0 starting...")
+            while True:
+                try:
+                    _main_inner()
+                except Exception as e:
+                    print(f"Error: {e}")
+                print("Sleeping 30 min...")
+                time.sleep(1800)
+    finally:
+        try:
+            os.unlink(PID_FILE)
+        except OSError:
+            pass

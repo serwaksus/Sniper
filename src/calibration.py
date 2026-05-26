@@ -4,9 +4,14 @@ Learns optimal p_model -> p_calibrated mapping from historical data
 """
 import json
 import os
+import sys
 import logging
+import tempfile
 import numpy as np
 from sklearn.isotonic import IsotonicRegression
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from utils import save_json
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +85,7 @@ class IsotonicCalibrator:
                     "X_thresholds_": iso.X_thresholds_.tolist(),
                     "y_thresholds_": iso.y_thresholds_.tolist(),
                 }
-        with open(path, 'w') as f:
-            json.dump(model_data, f, indent=2)
+        save_json(path, model_data)
         logger.info(f"[CALIBRATION] Saved {len(model_data)} models to {path}")
 
     def load(self, path=CALIBRATION_MODEL_FILE):

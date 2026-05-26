@@ -198,7 +198,7 @@ def check_market_news(market: Dict) -> Tuple[bool, str]:
     """
     Main entry point for news check on a market.
     Returns (passed: bool, reason: str)
-    Anti-FUD: empty headlines always returns True (no news = no FUD).
+    Anti-FUD: if no fresh news found, the trade is BLOCKED (safety measure).
     """
     keywords = extract_keywords(market.get("question", ""))
     if not keywords:

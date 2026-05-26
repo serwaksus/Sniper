@@ -12,6 +12,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 from news_scanner import fetch_recent_news
+from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt
 
 def _load_env_manual():
     env_path = "/root/dotm-sniper/.env"
@@ -50,6 +51,7 @@ CACHE_FILE = "/root/dotm-sniper/source_cache.json"
 RECONCILE_INTERVAL_SECONDS = 900
 NEWS_CHECK_INTERVAL_SECONDS = 600
 TP_LIMIT_PRICE = 0.85
+TP_LADDER_PRICES = {0.75, 0.85}
 MAX_EMERGENCY_RETRIES = 3
 NOTIFICATION_COOLDOWN_SECONDS = 4 * 3600
 TELEGRAM_REPORTER = TelegramReporter()
@@ -120,18 +122,17 @@ def _update_and_check_status(slug, trigger_exit, current_status):
                     return False
                 else:
                     del _status_hold_counts[hold_key]
-            for k in list(_status_hold_counts.keys()):
-                if k.startswith(f"{slug}:") and k != f"{slug}:{normalized}":
-                    del _status_hold_counts[k]
-        else:
-            hold_key = f"{slug}:{normalized}"
-            _status_hold_counts.pop(hold_key, None)
-
+                    for k in list(_status_hold_counts.keys()):
+                        if k.startswith(f"{slug}:") and k != f"{slug}:{normalized}":
+                            del _status_hold_counts[k]
+            else:
+                hold_key = f"{slug}:{normalized}"
+                _status_hold_counts.pop(hold_key, None)
         should_send = _should_send_telegram(slug, trigger_exit, normalized)
         _last_alert_status[slug] = normalized
         if should_send:
             _last_notified_at[slug] = datetime.now().isoformat()
-        _save_alert_state()
+            _save_alert_state()
         return should_send
 
 
@@ -140,76 +141,6 @@ DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 HEADERS = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
 
 
-def _lock_file(fd, exclusive=True):
-    try:
-        op = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        fcntl.flock(fd, op)
-    except (OSError, AttributeError):
-        pass
-
-def _unlock_file(fd):
-    try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    except (OSError, AttributeError):
-        pass
-
-def _normalize_keys(obj):
-    if isinstance(obj, dict):
-        return {k.strip(): _normalize_keys(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_normalize_keys(item) for item in obj]
-    return obj
-
-def _strip_dict_keys_recursive(obj):
-    if isinstance(obj, dict):
-        return {k.strip() if isinstance(k, str) else k: _strip_dict_keys_recursive(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_strip_dict_keys_recursive(item) for item in obj]
-    return obj
-
-def load_json(path, default):
-    if not os.path.exists(path):
-        return default
-    try:
-        fd = os.open(path, os.O_RDONLY)
-        try:
-            _lock_file(fd, exclusive=False)
-            with os.fdopen(fd, 'r') as f:
-                return _normalize_keys(json.load(f))
-        except:
-            try:
-                os.close(fd)
-            except:
-                pass
-            return default
-    except:
-        return default
-
-def save_json(path, data):
-    import tempfile
-    dir_name = os.path.dirname(path) or '.'
-    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
-    try:
-        _lock_file(fd, exclusive=True)
-        with os.fdopen(fd, 'w') as f:
-            json.dump(_strip_dict_keys_recursive(data), f, indent=2, default=str)
-        lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
-        try:
-            _lock_file(lock_fd, exclusive=True)
-            os.replace(tmp_path, path)
-        finally:
-            _unlock_file(lock_fd)
-            try:
-                os.close(lock_fd)
-            except:
-                pass
-    except:
-        try:
-            os.unlink(tmp_path)
-        except:
-            pass
-        raise
-
 _load_alert_state()
 
 def get_settings():
@@ -217,22 +148,28 @@ def get_settings():
 
 def get_balance():
     try:
-        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15)
+        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15, start_new_session=True)
+        if res.returncode != 0:
+            logger.error(f"[HERMES] pm-trader balance failed: rc={res.returncode} stderr={res.stderr[:200]}")
+            return None
         return json.loads(res.stdout).get("data", {})
-    except:
+    except Exception:
         return None
 
 def get_portfolio():
     try:
-        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
+        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
+        if res.returncode != 0:
+            logger.error(f"[HERMES] pm-trader portfolio failed: rc={res.returncode} stderr={res.stderr[:200]}")
+            return []
         return json.loads(res.stdout).get("data", [])
-    except:
+    except Exception:
         return []
 
 def get_open_orders():
     try:
         res = subprocess.run(["pm-trader", "orders", "--status", "open"],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=30, start_new_session=True)
         data = res.stdout
         orders = []
         if not data:
@@ -250,8 +187,8 @@ def get_open_orders():
                         "outcome": parts[1],
                         "side": parts[2],
                         "price": float(parts[3]) if parts[3] else 0.0,
-                        "shares": int(parts[4]) if parts[4] else 0,
-                        "filled": int(parts[5]) if len(parts) > 5 and parts[5] else 0,
+                        "shares": round(float(parts[4])) if parts[4] else 0,
+                        "filled": round(float(parts[5])) if len(parts) > 5 and parts[5] else 0,
                     }
                     orders.append(order)
                 except (ValueError, IndexError):
@@ -264,7 +201,10 @@ def get_open_orders():
 def cancel_order(slug, outcome="yes"):
     try:
         res = subprocess.run(["pm-trader", "orders", "cancel", slug, outcome],
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=20, start_new_session=True)
+        if res.returncode != 0:
+            logger.warning(f"[HERMES] Cancel failed for {slug}: rc={res.returncode}")
+            return False
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             logger.info(f"[HERMES] Canceled order for {slug[:40]}...")
@@ -288,7 +228,10 @@ def market_sell(slug, outcome="yes", shares=None):
             return False
         
         res = subprocess.run(["pm-trader", "sell", slug, outcome, str(shares)],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=30, start_new_session=True)
+        if res.returncode != 0:
+            logger.error(f"[HERMES] Market sell failed for {slug}: rc={res.returncode}")
+            return False
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             logger.info(f"[HERMES] Market sell executed for {slug}: {shares} shares")
@@ -312,6 +255,8 @@ def reconcile_positions():
     open_orders = get_open_orders()
     
     modified = False
+    deleted_slugs = set()
+    updated_positions = {}
     
     for slug, pos_data in list(positions.items()):
         if slug not in portfolio_slugs:
@@ -320,11 +265,11 @@ def reconcile_positions():
             
             logger.info(f"[HERMES] Position {slug[:40]}... not in portfolio, checking if fully closed")
             
-            tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in (0.75, 0.85))), None)
+            tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in TP_LADDER_PRICES)), None)
             
             if not tp_order:
                 logger.info(f"[HERMES] No open TP for {slug[:40]}..., marking as closed")
-                del positions[slug]
+                deleted_slugs.add(slug)
                 modified = True
                 _notify_position_closed(slug, pos_data)
             continue
@@ -346,7 +291,7 @@ def reconcile_positions():
             pos_data["entry_price"] = entry_price
             modified = True
         
-        tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in (0.75, 0.85))), None)
+        tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in TP_LADDER_PRICES)), None)
         
         if tp_order:
             filled = tp_order.get("filled", 0)
@@ -356,7 +301,8 @@ def reconcile_positions():
                 logger.warning(f"[HERMES] PARTIAL FILL for {slug[:40]}...: {filled}/{total}")
                 
                 if filled > 0:
-                    sold_value = filled * TP_LIMIT_PRICE
+                    fill_price = tp_order.get("price", TP_LIMIT_PRICE)
+                    sold_value = filled * fill_price
                     pos_data["shares"] = current_shares - filled
                     pos_data["partial_fills"] = pos_data.get("partial_fills", 0) + filled
                     pos_data["partial_proceeds"] = pos_data.get("partial_proceeds", 0) + sold_value
@@ -364,10 +310,21 @@ def reconcile_positions():
                     logger.info(f"[HERMES] Updated shares to {pos_data['shares']}, partial proceeds ${sold_value:.2f}")
                     modified = True
                     
-                    _notify_partial_fill(slug, pos_data, filled)
+                    _notify_partial_fill(slug, pos_data, filled, fill_price)
+        
+        if modified:
+            updated_positions[slug] = pos_data
     
     if modified:
-        save_json(POSITIONS_FILE, positions)
+        fresh = load_json(POSITIONS_FILE, {})
+        for s in deleted_slugs:
+            fresh.pop(s, None)
+        for s, p in updated_positions.items():
+            if s in fresh:
+                fresh[s] = p
+            else:
+                fresh[s] = p
+        save_json(POSITIONS_FILE, fresh)
         logger.info("[HERMES] Positions updated and saved")
 
 def _notify_position_closed(slug, pos_data):
@@ -383,14 +340,15 @@ def _notify_position_closed(slug, pos_data):
     except:
         pass
 
-def _notify_partial_fill(slug, pos_data, filled):
+def _notify_partial_fill(slug, pos_data, filled, fill_price=None):
     try:
         if TELEGRAM_REPORTER:
+            fp = fill_price or TP_LIMIT_PRICE
             TELEGRAM_REPORTER.alert_take_profit(
                 slug=slug,
                 question=pos_data.get("question", "Unknown"),
-                pnl_pct=((TP_LIMIT_PRICE - pos_data.get("entry_price", 0)) / pos_data.get("entry_price", 1)) * 100 if pos_data.get("entry_price", 0) > 0 else 0,
-                pnl_abs=filled * (TP_LIMIT_PRICE - pos_data.get("entry_price", 0))
+                pnl_pct=((fp - pos_data.get("entry_price", 0)) / pos_data.get("entry_price", 1)) * 100 if pos_data.get("entry_price", 0) > 0 else 0,
+                pnl_abs=filled * (fp - pos_data.get("entry_price", 0))
             )
     except:
         pass
@@ -402,15 +360,39 @@ def fetch_news_for_market(slug, question):
         keywords = [w for w in words if w not in stop][:5]
 
         news_items = fetch_recent_news(keywords, max_results=5, max_age_days=30)
+        if isinstance(news_items, dict):
+            headlines = news_items.get("headlines", [])
+            news_items["headlines"] = [sanitize_for_prompt(str(h)) for h in headlines]
+        elif isinstance(news_items, list):
+            news_items = [sanitize_for_prompt(str(h)) if isinstance(h, str) else h for h in news_items]
         return news_items
     except Exception as e:
         logger.error(f"[HERMES] News fetch failed for {slug}: {e}")
         return []
 
+def _prune_stale_cache():
+    try:
+        cache = load_json(CACHE_FILE, {"metaculus": {}, "news": {}, "last_update": None})
+        now = datetime.now()
+        pruned = False
+        for section in ("metaculus", "news"):
+            entries = cache.get(section, {})
+            stale = [k for k, v in entries.items()
+                     if isinstance(v, dict) and v.get("timestamp")
+                     and (now - datetime.fromisoformat(v["timestamp"])).total_seconds() > 86400]
+            for k in stale:
+                del entries[k]
+                pruned = True
+        if pruned:
+            save_json(CACHE_FILE, cache)
+    except Exception:
+        pass
+
 def evaluate_emergency_exit():
     logger.info("[HERMES] Starting emergency exit evaluation...")
 
     os.makedirs("logs", exist_ok=True)
+    _prune_stale_cache()
 
     positions = load_json(POSITIONS_FILE, {})
     if not positions:
@@ -449,11 +431,11 @@ def evaluate_emergency_exit():
             logger.info(f"[NEWS] No fresh news for 30 days, skipping evaluation for {slug[:40]}...")
             continue
 
-        news_text = "\n".join([f"- {h}" for h in headlines[:5]])
+        news_text = "\n".join([f"- {sanitize_for_prompt(str(h))}" for h in headlines[:5]])
 
         prompt = f"""You are a risk analysis bot. Determine if recent news makes the outcome YES mathematically impossible (0% probability).
 
-Market Question: {question}
+Market Question: {sanitize_for_prompt(question)}
 
 Bot's estimated probability (p_bot): {bot_prob:.1%}
 
@@ -472,15 +454,32 @@ Return ONLY JSON:
 {{"trigger_exit": true/false, "p_hermes": 0.XX, "status": "GREEN/YELLOW/RED/DIVERGENCE", "reason": "brief explanation"}}"""
 
         try:
-            import requests
-            resp = requests.post(DEEPSEEK_URL, headers=HEADERS, json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": 300
-            }, timeout=30)
+            for _attempt in range(3):
+                try:
+                    import requests
+                    resp = requests.post(DEEPSEEK_URL, headers=HEADERS, json={
+                        "model": "deepseek-chat",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1,
+                        "max_tokens": 300
+                    }, timeout=30)
 
-            content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                    content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                    break
+                except requests.exceptions.Timeout:
+                    if _attempt < 2:
+                        _backoff = 2 ** (_attempt + 1)
+                        logger.warning(f"[HERMES] LLM timeout for {slug}, retry in {_backoff}s")
+                        time.sleep(_backoff)
+                    else:
+                        raise
+                except requests.exceptions.ConnectionError:
+                    if _attempt < 2:
+                        _backoff = 2 ** (_attempt + 1)
+                        logger.warning(f"[HERMES] LLM connection error for {slug}, retry in {_backoff}s")
+                        time.sleep(_backoff)
+                    else:
+                        raise
 
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             if json_match:
@@ -523,12 +522,6 @@ Return ONLY JSON:
 
                 normalized_status = status.upper().strip()
 
-                last_status = _last_alert_status.get(slug)
-                last_normalized = str(last_status).upper().strip() if last_status else None
-                if not trigger and normalized_status == last_normalized:
-                    logger.info(f"[HERMES] Duplicate status {normalized_status} for {slug[:40]}..., skipping notification")
-                    continue
-
                 should_send = _update_and_check_status(slug, trigger, normalized_status)
 
                 if trigger:
@@ -538,7 +531,8 @@ Return ONLY JSON:
                     if normalized_status == "DIVERGENCE" and pnl_pct >= 0.50:
                         logger.info(f"[HERMES] Profitable position {slug[:40]}... P&L={pnl_pct:.0%}, downgrading DIVERGENCE→YELLOW notification")
                         normalized_status = "YELLOW"
-                        _last_alert_status[slug] = "YELLOW"
+                        with _alert_state_lock:
+                            _last_alert_status[slug] = "YELLOW"
                         _save_alert_state()
                     logger.info(f"[HERMES] Status changed to {normalized_status} for {slug[:40]}...: {reason}")
                     if TELEGRAM_REPORTER:
