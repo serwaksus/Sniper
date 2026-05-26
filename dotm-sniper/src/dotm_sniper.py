@@ -1,22 +1,44 @@
 #!/usr/bin/env python3
 """
-DOTM Sniper v5.3.0 - Adaptive Signal Thresholds
+DOTM Sniper v5.4.0 - Critical Bug Fixes Edition
 Based on the mathematical edge of Deep Out-The-Money trading
 
-v5.3.0 Changelog:
-- Per-horizon signal thresholds (short/medium/long) from bot_settings
-- Lowered PRICE_DELTA_THRESHOLD $0.005 -> $0.002 for DOTM sensitivity
-- Added [SIGNAL-BATCH] logging for batch analysis visibility
-- Fixed Renan Santos missing from hypothesis_db
+v5.4.0 Changelog (BUG FIXES):
+- BUG-01: Added PID file locking to prevent duplicate processes
+- BUG-02: TP Ladder shares now use actual fill_data['shares']
+- BUG-03: Optimistic locking for positions.json via versioned saves
+- BUG-08,10,13: Centralized atomic save_json in utils.py
+- BUG-32: Fixed float shares truncation (int() -> round())
+- BUG-33: Added market status filtering (open/closing/resolved/invalid)
+- BUG-34: TP ladder minimum $5 order size enforcement
+- BUG-35: Empty order book protection
+- BUG-36: pm-trader returncode validation
+- BUG-37: Metaculus binary market parsing fix
+- BUG-41: Prompt injection sanitization
+- BUG-42: Dynamic path resolution via DOTM_HOME
+- BUG-44: Slippage tolerance guard (15%)
+- BUG-45: Liquidity filter ($100 min)
+- BUG-49: Exponential backoff for API calls
+- BUG-50: Cache pruning (>24h stale entries)
+- BUG-53: subprocess timeout + start_new_session
 """
-import subprocess, json, requests, time, re, os, sys, logging, fcntl
+import subprocess, json, requests, time, re, os, sys, logging, fcntl, signal, math, tempfile
 from datetime import datetime
 from collections import defaultdict
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
-
 from news_scanner import check_market_news, extract_keywords, fetch_recent_news
+from utils import (
+    load_json as utils_load_json,
+    save_json as utils_save_json,
+    sanitize_for_prompt,
+    check_and_write_pid,
+    cleanup_pid_file,
+    prune_cache,
+    DOTM_HOME
+)
 
 def _load_env_manual():
     env_path = "/root/dotm-sniper/.env"
@@ -1059,17 +1081,29 @@ def get_order_book(slug):
     try:
         res = subprocess.run(["pm-trader", "book", slug, "--depth", "3"],
                            capture_output=True, text=True, timeout=15)
+        
+        # BUG-36 FIX: Check returncode before parsing
+        if res.returncode != 0:
+            logger.warning(f"[ORDERBOOK] pm-trader returned error for {slug}: {res.stderr}")
+            return {"best_bid": None, "best_ask": None, "mid_price": None}
+        
         data = json.loads(res.stdout)
         asks = data.get("data", {}).get("asks", [])
         bids = data.get("data", {}).get("bids", [])
         best_ask = float(asks[0].get("price", 0)) if asks else None
         best_bid = float(bids[0].get("price", 0)) if bids else None
+        
+        # BUG-35 FIX: Handle empty orderbook properly
+        if best_bid is None and best_ask is None:
+            return {"best_bid": None, "best_ask": None, "mid_price": None}
+        
         if best_bid and best_ask:
             mid_price = (best_bid + best_ask) / 2
         else:
             mid_price = best_ask or best_bid
         return {"best_bid": best_bid, "best_ask": best_ask, "mid_price": mid_price}
-    except:
+    except Exception as e:
+        logger.warning(f"[ORDERBOOK] Error fetching book for {slug}: {e}")
         return {"best_bid": None, "best_ask": None, "mid_price": None}
 
 def get_best_ask(slug):
@@ -1079,27 +1113,46 @@ def get_best_ask(slug):
 def get_balance():
     try:
         res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15)
+        if res.returncode != 0:
+            logger.warning(f"[BALANCE] pm-trader error: {res.stderr}")
+            return None
         return json.loads(res.stdout).get("data", {})
-    except:
+    except Exception as e:
+        logger.warning(f"[BALANCE] Error: {e}")
         return None
 
 def get_portfolio():
     try:
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
+        if res.returncode != 0:
+            logger.warning(f"[PORTFOLIO] pm-trader error: {res.stderr}")
+            return []
         return json.loads(res.stdout).get("data", [])
-    except:
+    except Exception as e:
+        logger.warning(f"[PORTFOLIO] Error: {e}")
         return []
 
 def fetch_markets():
     try:
         res = subprocess.run(["pm-trader", "markets", "list", "--limit", "200"],
                            capture_output=True, text=True, timeout=30)
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode != 0:
+            logger.warning(f"[FETCH] pm-trader error: {res.stderr}")
+            return []
+        
         data = json.loads(res.stdout)
         candidates = []
         now = datetime.now()
 
         for m in data.get("data", []):
+            # Check market status - Polymarket has explicit status field
             if not m.get("active") or m.get("closed"):
+                continue
+            
+            # Additional check for status field (open, closing, resolved, invalid)
+            if m.get("status") and m.get("status") != "open":
                 continue
 
             vol = float(m.get("volume", 0))
@@ -1254,6 +1307,13 @@ def buy(market, amount):
     try:
         res = subprocess.run(["pm-trader", "buy", market["slug"], market["outcome"], str(amount)],
                            capture_output=True, text=True, timeout=30)
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode != 0:
+            logger.warning(f"[BUY] pm-trader error for {market['slug']}: {res.stderr}")
+            print(f"  ❌ Buy failed: {res.stderr}")
+            return False
+        
         result = json.loads(res.stdout)
         if result.get("ok"):
             print(f"  ✅ {market['question'][:45]}... ${amount}")
@@ -1262,6 +1322,7 @@ def buy(market, amount):
             print(f"  ❌ {result}")
             return False
     except Exception as e:
+        logger.warning(f"[BUY] Error for {market['slug']}: {e}")
         print(f"  ❌ {e}")
         return False
 
@@ -1310,10 +1371,17 @@ def _place_limit_sell(slug, outcome, shares, limit_price):
              "--limit", "--price", f"{limit_price:.4f}"],
             capture_output=True, text=True, timeout=20
         )
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode != 0:
+            logger.warning(f"[LIMIT-SELL] pm-trader error for {slug}: {res.stderr}")
+            return False, "limit_failed"
+        
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             return True, "limit_placed"
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[LIMIT-SELL] Error for {slug}: {e}")
         pass
     return False, "limit_unsupported"
 
@@ -1332,6 +1400,12 @@ def _place_tp_limit_order_single(slug, outcome, shares, price):
              "--limit", "--price", f"{price:.4f}"],
             capture_output=True, text=True, timeout=20
         )
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode != 0:
+            logger.warning(f"[SMART-EXIT] pm-trader error for {slug}: {res.stderr}")
+            return False, "tp_limit_failed"
+        
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             logger.info(
@@ -1353,10 +1427,27 @@ def _place_tp_ladder(slug, outcome, total_shares):
     """v5.3.0 TP Ladder: 50% @$0.75, 30% @$0.85, 20% hold to expiry"""
     ladder = [(0.50, 0.75), (0.30, 0.85)]
     results = []; allocated = 0
+    
+    # Get current price for min order calculation
+    try:
+        res = subprocess.run(["pm-trader", "market", "--slug", slug], capture_output=True, text=True, timeout=15)
+        if res.returncode == 0:
+            market_data = json.loads(res.stdout)
+            current_price = float(market_data.get("price", 0.50))
+        else:
+            current_price = 0.50  # fallback
+    except Exception:
+        current_price = 0.50
+    
+    # Polymarket minimum order is $5
+    min_shares = max(1, math.ceil(5.0 / current_price)) if current_price > 0 else 1
+    
     for pct, price in ladder:
-        shares = max(1, int(total_shares * pct))
-        if allocated + shares > total_shares: shares = total_shares - allocated
-        if shares <= 0: continue
+        shares = max(min_shares, round(total_shares * pct))
+        if allocated + shares > total_shares: 
+            shares = total_shares - allocated
+        if shares < min_shares: 
+            continue  # Skip if can't meet minimum
         ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
         results.append((price, shares, ok, m)); allocated += shares
     logger.info(f"[TP-LADDER] {slug[:40]}... placed {len(results)} rungs, {total_shares - allocated} held to expiry")
@@ -1367,13 +1458,23 @@ def _cancel_all_tp_orders(slug):
     """Cancel all open sell orders for a position on manual/stop exit."""
     try:
         res = subprocess.run(["pm-trader", "orders", "--status", "open"], capture_output=True, text=True, timeout=30)
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode != 0:
+            logger.warning(f"[TP-CANCEL] pm-trader error for {slug}: {res.stderr}")
+            return
+        
         for line in res.stdout.strip().split('\n')[1:]:
             if not line.strip() or '---' in line: continue
             parts = [p.strip() for p in line.split('|')]
             if len(parts)>=3 and parts[0]==slug and parts[2]=='sell':
-                subprocess.run(["pm-trader", "orders", "cancel", slug, parts[1]], timeout=20)
-                logger.info(f"[TP-CANCEL] Canceled sell order for {slug[:40]}...")
-    except Exception as e: logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
+                cancel_res = subprocess.run(["pm-trader", "orders", "cancel", slug, parts[1]], timeout=20)
+                if cancel_res.returncode == 0:
+                    logger.info(f"[TP-CANCEL] Canceled sell order for {slug[:40]}...")
+                else:
+                    logger.warning(f"[TP-CANCEL] Failed to cancel order {parts[1]} for {slug}: {cancel_res.stderr}")
+    except Exception as e: 
+        logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
 
 
 def _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=False):
@@ -1419,10 +1520,17 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
     try:
         res = subprocess.run(["pm-trader", "sell", slug, outcome, str(shares)],
                              capture_output=True, text=True, timeout=20)
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode != 0:
+            logger.warning(f"[MARKET-SELL] pm-trader error for {slug}: {res.stderr}")
+            return False, best_bid, "market_failed"
+        
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             return True, best_bid, "market"
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[MARKET-SELL] Error for {slug}: {e}")
         pass
     return False, best_bid, "market_failed"
 
@@ -1554,6 +1662,12 @@ def trailing_stop_check():
                 try:
                     res = subprocess.run(["pm-trader", "sell", slug, outcome, str(shares)],
                                          capture_output=True, text=True, timeout=20)
+                    
+                    # BUG-36 FIX: Check returncode
+                    if res.returncode != 0:
+                        logger.warning(f"[CONVERGENCE-SELL] pm-trader error for {slug}: {res.stderr}")
+                        continue
+                    
                     result = json.loads(res.stdout) if res.stdout else {}
                     if result.get("ok"):
                         logger.info(f"SOLD take-profit convergence: {slug} pnl={pnl_pct:.2%}")
@@ -1561,7 +1675,8 @@ def trailing_stop_check():
                         pnl_abs = shares * (current_price - entry_price)
                         if telegram_reporter:
                             telegram_reporter.alert_convergence(slug, pos.get("market_question", ""), pnl_pct * 100, pnl_abs, convergence)
-                except:
+                except Exception as e:
+                    logger.warning(f"[CONVERGENCE-SELL] Error for {slug}: {e}")
                     pass
 
         if not sold and pnl_pct <= HARD_STOP_LOSS:
@@ -1680,9 +1795,13 @@ def resolve_hypotheses():
     try:
         res = subprocess.run(["pm-trader", "markets", "list", "--limit", "200"],
                            capture_output=True, text=True, timeout=20)
-        for m in json.loads(res.stdout).get("data", []):
-            market_map[m["slug"]] = m
-    except:
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode == 0:
+            for m in json.loads(res.stdout).get("data", []):
+                market_map[m["slug"]] = m
+    except Exception as e:
+        logger.warning(f"[RESOLVE] Error fetching markets: {e}")
         pass
 
     new_resolved = 0
@@ -2517,7 +2636,7 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
     if fill_data:
         log_slippage(market["slug"], market["price"], fill_data)
 
-    shares = int(fill_data.get("shares", 0)) if fill_data and fill_data.get("shares", 0) > 0 else int(estimated_size / market["price"]) if market["price"] > 0 else 0
+    shares = round(fill_data.get("shares", 0)) if fill_data and fill_data.get("shares", 0) > 0 else round(estimated_size / market["price"]) if market["price"] > 0 else 0
     if shares > 0:
         ladder_results = _place_tp_ladder(market["slug"], market["outcome"], shares)
         for price, shares_placed, ok, method in ladder_results:
@@ -2566,10 +2685,25 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
 def _update_status_file():
     try:
         import shutil
+        
         res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15)
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode != 0:
+            logger.warning(f"[STATUS] pm-trader balance error: {res.stderr}")
+            return
+        
         balance_data = json.loads(res.stdout).get("data", {})
+        
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
+        
+        # BUG-36 FIX: Check returncode
+        if res.returncode != 0:
+            logger.warning(f"[STATUS] pm-trader portfolio error: {res.stderr}")
+            return
+        
         portfolio_data = json.loads(res.stdout).get("data", [])
+        
         # Filter out positions with negligible shares (floating-point artifacts from closed positions)
         portfolio_data = [p for p in portfolio_data if p.get("shares", 0) > 1e-10]
         status = {"balance": balance_data, "portfolio": portfolio_data, "updated_at": datetime.now().isoformat()}

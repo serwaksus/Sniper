@@ -1,42 +1,4 @@
-```gitignore
-# Python
+```
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-python/
-pip-log.txt
-pip-delete-this-directory.txt
-.pytest_cache/
-.coverage
-coverage/
-htmlcov/
-.tox/
-.nox/
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-*.tmp
-*.swp
-*~
-.DS_Store
-Thumbs.db
-
-# Virtual environments
-venv/
-ENV/
-.env
-.env.local
-.env.*
-.venv/
-
-# Project specific
-dotm-sniper/__pycache__/
-dotm-sniper/src/__pycache__/
-dotm-sniper/tests/__pycache__/
-dotm-sniper/current_status.json
 ```
