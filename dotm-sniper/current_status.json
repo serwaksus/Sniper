@@ -8,18 +8,6 @@
   },
   "portfolio": [
     {
-      "market_slug": "will-renan-santos-finish-in-second-place-in-the-first-round-of-the-2026-brazilian-presidential-election",
-      "market_question": "Will Renan Santos finish in second place in the first round of the 2026 Brazilian presidential election?",
-      "outcome": "yes",
-      "shares": 1.4210854715202004e-14,
-      "avg_entry_price": 0.061,
-      "total_cost": 8.881784197001252e-16,
-      "live_price": 0.1805,
-      "current_value": 2.5650592760939616e-15,
-      "unrealized_pnl": 1.6768808563938364e-15,
-      "percent_pnl": 188.79999999999998
-    },
-    {
       "market_slug": "will-marco-rubio-win-the-2028-us-presidential-election",
       "market_question": "Will Marco Rubio win the 2028 US Presidential Election?",
       "outcome": "yes",
