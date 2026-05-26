@@ -8,6 +8,7 @@ import os
 import fcntl
 import tempfile
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +51,17 @@ def load_json(path, default):
         return default
     try:
         fd = os.open(path, os.O_RDONLY)
-        try:
-            _lock_file(fd, exclusive=False)
-            with os.fdopen(fd, 'r') as f:
-                return _normalize_keys(json.load(f))
-        except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            return default
+    except OSError:
+        return default
+    try:
+        _lock_file(fd, exclusive=False)
+        with os.fdopen(fd, 'r') as f:
+            return _normalize_keys(json.load(f))
     except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
         return default
 
 
@@ -68,9 +69,10 @@ def save_json(path, data):
     dir_name = os.path.dirname(path) or '.'
     fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
     try:
-        _lock_file(fd, exclusive=True)
         with os.fdopen(fd, 'w') as f:
             json.dump(_strip_dict_keys_recursive(data), f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
         lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
         try:
             _lock_file(lock_fd, exclusive=True)
@@ -93,40 +95,70 @@ def load_json_versioned(path, default):
     data = load_json(path, default)
     version = 0
     if isinstance(data, dict):
-        version = data.pop("__version", 0)
+        version = data.get("__version", 0)
     return data, version
 
 
 def save_json_versioned(path, data, expected_version=None):
-    if expected_version is not None:
-        current, _ = load_json_versioned(path, {})
-        current_version = current.get("__version", 0) if isinstance(current, dict) else 0
-        if current_version != expected_version:
-            logger.warning(f"[UTILS] Version mismatch for {path}: expected={expected_version}, actual={current_version}, retrying merge")
-            return False
-    if isinstance(data, dict):
-        data = dict(data)
-        data["__version"] = expected_version + 1 if expected_version is not None else data.get("__version", 0) + 1
-    save_json(path, data)
-    return True
+    lock_fd = None
+    try:
+        lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
+        _lock_file(lock_fd, exclusive=True)
+        if expected_version is not None:
+            current_data = load_json(path, {})
+            current_version = current_data.get("__version", 0) if isinstance(current_data, dict) else 0
+            if current_version != expected_version:
+                logger.warning(f"[UTILS] Version mismatch for {path}: expected={expected_version}, actual={current_version}")
+                return False
+        if isinstance(data, dict):
+            data = dict(data)
+            data["__version"] = expected_version + 1 if expected_version is not None else data.get("__version", 0) + 1
+        save_json(path, data)
+        return True
+    except Exception as e:
+        logger.error(f"[UTILS] save_json_versioned failed for {path}: {e}")
+        return False
+    finally:
+        if lock_fd is not None:
+            _unlock_file(lock_fd)
+            try:
+                os.close(lock_fd)
+            except OSError:
+                pass
 
 
 def check_and_write_pid(pid_file):
-    if os.path.exists(pid_file):
+    try:
+        fd = os.open(pid_file, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as e:
+        logger.warning(f"[PID] Cannot open {pid_file}: {e}")
+        return True
+    try:
+        _lock_file(fd, exclusive=False)
         try:
-            with open(pid_file, 'r') as f:
-                old_pid = int(f.read().strip())
-            os.kill(old_pid, 0)
-            print(f"[PID] Another instance running (PID {old_pid}), exiting")
-            return False
+            content = os.read(fd, 32).strip()
+            if content:
+                old_pid = int(content)
+                os.kill(old_pid, 0)
+                print(f"[PID] Another instance running (PID {old_pid}), exiting")
+                return False
         except (OSError, ValueError, ProcessLookupError):
             pass
-    try:
-        with open(pid_file, 'w') as f:
-            f.write(str(os.getpid()))
+        _unlock_file(fd)
+        _lock_file(fd, exclusive=True)
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, str(os.getpid()).encode())
+        return True
     except OSError as e:
         logger.warning(f"[PID] Cannot write {pid_file}: {e}")
-    return True
+        return True
+    finally:
+        _unlock_file(fd)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def cleanup_pid_file(pid_file):

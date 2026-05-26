@@ -29,7 +29,7 @@ class IsotonicCalibrator:
         for h in hypotheses:
             if h.get("outcome") not in ("YES", "NO"):
                 continue
-            if not h.get("p_model"):
+            if h.get("p_model") is None:
                 continue
             primary_cluster = h.get("clusters", ["other"])[0]
             if primary_cluster not in cluster_data:

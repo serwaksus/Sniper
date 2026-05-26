@@ -24,6 +24,16 @@ save_json_safe = save_json
 
 logger = logging.getLogger(__name__)
 
+ADVISOR_NOTIFY_STATE_FILE = "/root/dotm-sniper/logs/advisor_notify_state.json"
+PROFITABLE_PNL_THRESHOLD = 0.50
+NOTIFY_COOLDOWN_SECONDS = 4 * 3600
+ADVISOR_STATE_FILE = "/root/dotm-sniper/logs/advisor_state.json"
+STOP_LOSS_PROXIMITY_PCT = 0.15
+LONG_TERM_THRESHOLD_DAYS = 30
+ELEVATED_INTERVAL_SECONDS = 900
+LONG_TERM_INTERVAL_SECONDS = 14400
+DEFAULT_INTERVAL_SECONDS = 1800
+
 
 def _load_notify_state():
     return load_json_safe(ADVISOR_NOTIFY_STATE_FILE, {"last_notified": {}})
@@ -212,7 +222,7 @@ HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/js
 def get_bot_status():
     try:
         return load_json('/root/.openclaw/workspace/dotm_status.json', {"portfolio": [], "balance": {}})
-    except:
+    except Exception:
         return {"portfolio": [], "balance": {}}
 
 def get_positions_tracking():
@@ -261,7 +271,7 @@ Return ONLY JSON:
     except Exception as e:
         logger.error(f"ANALYSIS LLM error {e}")
 
-    p_fallback = min(current_price * 1.5, 0.35)
+    p_fallback = current_price
     return {"p_estimate": p_fallback, "confidence": 0.55, "factors": ["Insufficient data for independent estimate", "Using market price as baseline"], "verdict": "UNKNOWN"}
 
 def get_hypothesis_p_model(slug):
@@ -273,7 +283,7 @@ def get_hypothesis_p_model(slug):
         for h in db.get('resolved', []):
             if h['slug'] == slug:
                 return h.get('p_model')
-    except:
+    except Exception:
         pass
     return None
 
@@ -349,8 +359,9 @@ def _should_skip_long_term(positions_tracking):
 
     portfolio = []
     try:
-        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
-        portfolio = json.loads(res.stdout).get("data", [])
+        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
+        if res.returncode == 0 and res.stdout:
+            portfolio = json.loads(res.stdout).get("data", [])
     except Exception:
         pass
 
@@ -405,6 +416,8 @@ def _should_skip_long_term(positions_tracking):
     else:
         state["schedule"] = "default"
         required_interval = DEFAULT_INTERVAL_SECONDS
+
+    save_json_safe(ADVISOR_STATE_FILE, state)
 
     last_run_iso = state.get("last_run", {}).get("global")
     if last_run_iso:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hermes Advisor v5.3.2 - Async Position Risk Manager
+Hermes Advisor v5.3.7 - Async Position Risk Manager
 Runs parallel to dotm_sniper.py, handles reconciliation and emergency exits.
 Alert throttling: Telegram only on trigger_exit or status change.
 Anti-Fossil Filter: news limited to last 30 days, max 5 results.
@@ -22,7 +22,8 @@ def _load_env_manual():
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, val = line.split('=', 1)
-                    os.environ.setdefault(key.strip(), val.strip())
+                    val = val.strip().strip('"').strip("'")
+                    os.environ.setdefault(key.strip(), val)
 
 _load_env_manual()
 
@@ -62,6 +63,7 @@ _last_notified_at = {}
 _status_hold_counts = {}
 
 _alert_state_lock = threading.RLock()
+_positions_file_lock = threading.Lock()
 
 NOTIFY_SEVERITIES = {"DIVERGENCE", "RED"}
 STATUS_HOLD_SECONDS = 1800
@@ -161,10 +163,10 @@ def get_portfolio():
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
         if res.returncode != 0:
             logger.error(f"[HERMES] pm-trader portfolio failed: rc={res.returncode} stderr={res.stderr[:200]}")
-            return []
+            return None
         return json.loads(res.stdout).get("data", [])
     except Exception:
-        return []
+        return None
 
 def get_open_orders():
     try:
@@ -217,11 +219,14 @@ def cancel_order(slug, outcome="yes"):
 
 def market_sell(slug, outcome="yes", shares=None):
     try:
-        portfolio = get_portfolio()
-        pos = next((p for p in portfolio if p.get("market_slug") == slug), None)
-        
-        if shares is None and pos:
-            shares = pos.get("shares", 0)
+        if shares is None:
+            portfolio = get_portfolio()
+            if portfolio is None:
+                logger.error(f"[HERMES] Cannot get portfolio for market_sell {slug}, using last known shares")
+                return False
+            pos = next((p for p in portfolio if p.get("market_slug") == slug), None)
+            if pos:
+                shares = pos.get("shares", 0)
         
         if not shares or shares <= 0:
             logger.warning(f"[HERMES] No shares to sell for {slug}")
@@ -242,90 +247,109 @@ def market_sell(slug, outcome="yes", shares=None):
         logger.error(f"[HERMES] Market sell exception for {slug}: {e}")
         return False
 
-def reconcile_positions():
-    logger.info("[HERMES] Starting position reconciliation...")
-    
-    positions = load_json(POSITIONS_FILE, {})
-    if not positions:
-        logger.info("[HERMES] No positions to reconcile")
-        return
-    
-    portfolio = get_portfolio()
-    portfolio_slugs = {p["market_slug"] for p in portfolio}
-    open_orders = get_open_orders()
-    
-    modified = False
-    deleted_slugs = set()
-    updated_positions = {}
-    
-    for slug, pos_data in list(positions.items()):
-        if slug not in portfolio_slugs:
-            if pos_data.get("in_emergency_exit"):
-                continue
-            
-            logger.info(f"[HERMES] Position {slug[:40]}... not in portfolio, checking if fully closed")
-            
-            tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in TP_LADDER_PRICES)), None)
-            
-            if not tp_order:
-                logger.info(f"[HERMES] No open TP for {slug[:40]}..., marking as closed")
-                deleted_slugs.add(slug)
-                modified = True
-                _notify_position_closed(slug, pos_data)
-            continue
-        
-        pos = next((p for p in portfolio if p.get("market_slug") == slug), None)
-        if not pos:
-            continue
-        
-        current_shares = pos.get("shares", 0)
-        recorded_shares = pos_data.get("shares", 0)
-        
-        if current_shares != recorded_shares:
-            logger.info(f"[HERMES] Share mismatch for {slug[:40]}...: recorded={recorded_shares}, actual={current_shares}")
-            pos_data["shares"] = current_shares
-            modified = True
-        
-        entry_price = pos.get("avg_entry_price", 0)
-        if entry_price > 0 and pos_data.get("entry_price", 0) != entry_price:
-            pos_data["entry_price"] = entry_price
-            modified = True
-        
-        tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in TP_LADDER_PRICES)), None)
-        
-        if tp_order:
-            filled = tp_order.get("filled", 0)
-            total = tp_order.get("shares", 0)
-            
-            if 0 < filled < total:
-                logger.warning(f"[HERMES] PARTIAL FILL for {slug[:40]}...: {filled}/{total}")
-                
-                if filled > 0:
-                    fill_price = tp_order.get("price", TP_LIMIT_PRICE)
-                    sold_value = filled * fill_price
-                    pos_data["shares"] = current_shares - filled
-                    pos_data["partial_fills"] = pos_data.get("partial_fills", 0) + filled
-                    pos_data["partial_proceeds"] = pos_data.get("partial_proceeds", 0) + sold_value
-                    
-                    logger.info(f"[HERMES] Updated shares to {pos_data['shares']}, partial proceeds ${sold_value:.2f}")
-                    modified = True
-                    
-                    _notify_partial_fill(slug, pos_data, filled, fill_price)
-        
-        if modified:
-            updated_positions[slug] = pos_data
-    
-    if modified:
+def _merge_save_positions(deleted_slugs=None, updated_positions=None):
+    with _positions_file_lock:
         fresh = load_json(POSITIONS_FILE, {})
-        for s in deleted_slugs:
+        for s in (deleted_slugs or set()):
             fresh.pop(s, None)
-        for s, p in updated_positions.items():
+        for s, p in (updated_positions or {}).items():
             if s in fresh:
-                fresh[s] = p
+                for k, v in p.items():
+                    fresh[s][k] = v
             else:
                 fresh[s] = p
         save_json(POSITIONS_FILE, fresh)
-        logger.info("[HERMES] Positions updated and saved")
+
+def reconcile_positions():
+    logger.info("[HERMES] Starting position reconciliation...")
+    
+    with _positions_file_lock:
+        positions = load_json(POSITIONS_FILE, {})
+        if not positions:
+            logger.info("[HERMES] No positions to reconcile")
+            return
+        
+        portfolio = get_portfolio()
+        if portfolio is None:
+            logger.error("[HERMES] Portfolio API failed, skipping reconciliation to avoid data loss")
+            return
+        if len(portfolio) == 0 and len(positions) > 0:
+            logger.warning(f"[HERMES] Empty portfolio but {len(positions)} tracked positions — API may be down, skipping reconciliation")
+            return
+        
+        portfolio_slugs = {p["market_slug"] for p in portfolio}
+        open_orders = get_open_orders()
+        
+        deleted_slugs = set()
+        updated_positions = {}
+        
+        for slug, pos_data in list(positions.items()):
+            pos_modified = False
+            
+            if slug not in portfolio_slugs:
+                if pos_data.get("in_emergency_exit"):
+                    if not any(o.get("slug") == slug for o in open_orders):
+                        logger.info(f"[HERMES] Emergency-exit position {slug[:40]}... no open orders, checking portfolio again")
+                        fresh_portfolio = get_portfolio()
+                        if fresh_portfolio is not None and slug not in {p["market_slug"] for p in fresh_portfolio}:
+                            deleted_slugs.add(slug)
+                            _notify_position_closed(slug, pos_data)
+                    continue
+                
+                logger.info(f"[HERMES] Position {slug[:40]}... not in portfolio, checking if fully closed")
+                
+                tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in TP_LADDER_PRICES)), None)
+                
+                if not tp_order:
+                    logger.info(f"[HERMES] No open TP for {slug[:40]}..., marking as closed")
+                    deleted_slugs.add(slug)
+                    _notify_position_closed(slug, pos_data)
+                continue
+            
+            pos = next((p for p in portfolio if p.get("market_slug") == slug), None)
+            if not pos:
+                continue
+            
+            current_shares = pos.get("shares", 0)
+            recorded_shares = pos_data.get("shares", 0)
+            
+            if current_shares != recorded_shares:
+                logger.info(f"[HERMES] Share mismatch for {slug[:40]}...: recorded={recorded_shares}, actual={current_shares}")
+                pos_data["shares"] = current_shares
+                pos_modified = True
+            
+            entry_price = pos.get("avg_entry_price", 0)
+            if entry_price > 0 and pos_data.get("entry_price", 0) != entry_price:
+                pos_data["entry_price"] = entry_price
+                pos_modified = True
+            
+            tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in TP_LADDER_PRICES)), None)
+            
+            if tp_order:
+                filled = tp_order.get("filled", 0)
+                total = tp_order.get("shares", 0)
+                
+                if 0 < filled < total:
+                    logger.warning(f"[HERMES] PARTIAL FILL for {slug[:40]}...: {filled}/{total}")
+                    
+                    if filled > 0:
+                        fill_price = tp_order.get("price", TP_LIMIT_PRICE)
+                        sold_value = filled * fill_price
+                        pos_data["shares"] = current_shares
+                        pos_data["partial_fills"] = pos_data.get("partial_fills", 0) + filled
+                        pos_data["partial_proceeds"] = pos_data.get("partial_proceeds", 0) + sold_value
+                        
+                        logger.info(f"[HERMES] Updated shares to {current_shares} (portfolio already reflects partial fill), partial proceeds ${sold_value:.2f}")
+                        pos_modified = True
+                        
+                        _notify_partial_fill(slug, pos_data, filled, fill_price)
+            
+            if pos_modified:
+                updated_positions[slug] = pos_data
+        
+        if deleted_slugs or updated_positions:
+            _merge_save_positions(deleted_slugs=deleted_slugs, updated_positions=updated_positions)
+            logger.info(f"[HERMES] Positions updated: {len(deleted_slugs)} deleted, {len(updated_positions)} updated")
 
 def _notify_position_closed(slug, pos_data):
     try:
@@ -337,8 +361,8 @@ def _notify_position_closed(slug, pos_data):
                 pnl_abs=pos_data.get("pnl_abs", 0),
                 convergence_ratio=0
             )
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"[HERMES] Position closed notification failed: {e}")
 
 def _notify_partial_fill(slug, pos_data, filled, fill_price=None):
     try:
@@ -350,8 +374,8 @@ def _notify_partial_fill(slug, pos_data, filled, fill_price=None):
                 pnl_pct=((fp - pos_data.get("entry_price", 0)) / pos_data.get("entry_price", 1)) * 100 if pos_data.get("entry_price", 0) > 0 else 0,
                 pnl_abs=filled * (fp - pos_data.get("entry_price", 0))
             )
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"[HERMES] Partial fill notification failed: {e}")
 
 def fetch_news_for_market(slug, question):
     try:
@@ -385,8 +409,8 @@ def _prune_stale_cache():
                 pruned = True
         if pruned:
             save_json(CACHE_FILE, cache)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[HERMES] Cache prune error: {e}")
 
 def evaluate_emergency_exit():
     logger.info("[HERMES] Starting emergency exit evaluation...")
@@ -399,17 +423,38 @@ def evaluate_emergency_exit():
         logger.info("[HERMES] No positions to evaluate")
         return
 
-    portfolio = get_portfolio()
-    portfolio_map = {p.get("market_slug"): p for p in portfolio if p.get("market_slug")}
-
     for slug, pos_data in positions.items():
         if pos_data.get("in_emergency_exit"):
-            logger.info(f"[HERMES] Skipping {slug[:40]}... - already in emergency exit")
+            if pos_data.get("emergency_exit_failed"):
+                last_attempt = pos_data.get("last_emergency_attempt")
+                if last_attempt:
+                    try:
+                        elapsed = (datetime.now() - datetime.fromisoformat(last_attempt)).total_seconds()
+                        if elapsed > 600:
+                            logger.info(f"[HERMES] Retrying failed emergency exit for {slug[:40]}...")
+                            pos_data.pop("emergency_exit_failed", None)
+                            pos_data.pop("in_emergency_exit", None)
+                            with _positions_file_lock:
+                                _merge_save_positions(updated_positions={slug: pos_data})
+                    except (ValueError, TypeError):
+                        pass
+            else:
+                logger.info(f"[HERMES] Skipping {slug[:40]}... - already in emergency exit")
+            continue
+
+        if pos_data.get("selling_in_progress"):
+            logger.info(f"[HERMES] Skipping {slug[:40]}... - sniper is selling")
             continue
 
         question = pos_data.get("market_question", "")
         if not question:
             continue
+
+        portfolio = get_portfolio()
+        if portfolio is None:
+            logger.error("[HERMES] Portfolio API failed during emergency evaluation, skipping")
+            return
+        portfolio_map = {p.get("market_slug"): p for p in portfolio if p.get("market_slug")}
 
         bot_prob = pos_data.get("metaculus_prob") or (pos_data.get("entry_price", 0) * 2)
         bot_prob = min(max(bot_prob, 0.0), 1.0)
@@ -417,7 +462,13 @@ def evaluate_emergency_exit():
         entry_price = pos_data.get("entry_price", 0)
         portfolio_pos = portfolio_map.get(slug, {})
         current_price = portfolio_pos.get("live_price", 0)
-        pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 and current_price > 0 else 0
+        if entry_price > 0:
+            if current_price > 0:
+                pnl_pct = (current_price - entry_price) / entry_price
+            else:
+                pnl_pct = -1.0
+        else:
+            pnl_pct = 0
 
         news_data = fetch_news_for_market(slug, question)
 
@@ -453,6 +504,7 @@ Instructions:
 Return ONLY JSON:
 {{"trigger_exit": true/false, "p_hermes": 0.XX, "status": "GREEN/YELLOW/RED/DIVERGENCE", "reason": "brief explanation"}}"""
 
+        content = ""
         try:
             for _attempt in range(3):
                 try:
@@ -533,6 +585,10 @@ Return ONLY JSON:
                         normalized_status = "YELLOW"
                         with _alert_state_lock:
                             _last_alert_status[slug] = "YELLOW"
+                            hold_key_prefix = f"{slug}:"
+                            for k in list(_status_hold_counts.keys()):
+                                if k.startswith(hold_key_prefix):
+                                    del _status_hold_counts[k]
                         _save_alert_state()
                     logger.info(f"[HERMES] Status changed to {normalized_status} for {slug[:40]}...: {reason}")
                     if TELEGRAM_REPORTER:
@@ -553,70 +609,97 @@ Return ONLY JSON:
                                 msg += f"\n💰 P&L: {pnl_pct:+.0%}"
                             msg += f"\n📝 {html.escape(reason)}"
                             TELEGRAM_REPORTER._send(msg)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"[HERMES] Telegram send failed: {e}")
                 else:
                     logger.info(f"[HERMES] Routine check {slug[:40]}...: status={normalized_status} reason={reason}")
+            else:
+                logger.warning(f"[HERMES] LLM returned non-JSON for {slug[:40]}...: {content[:100]}")
         except Exception as e:
             logger.error(f"[HERMES] LLM evaluation failed for {slug}: {e}")
 
 def _execute_emergency_exit(slug, pos_data, reason):
     logger.info(f"[HERMES] Executing emergency exit for {slug[:40]}...")
     
-    positions = load_json(POSITIONS_FILE, {})
+    outcome = pos_data.get("outcome", "yes")
+    shares = pos_data.get("shares", 0)
     
-    if slug not in positions:
-        logger.warning(f"[HERMES] {slug} not found in positions, aborting emergency")
-        return
-    
-    positions[slug]["in_emergency_exit"] = True
-    save_json(POSITIONS_FILE, positions)
+    with _positions_file_lock:
+        positions = load_json(POSITIONS_FILE, {})
+        
+        if slug not in positions:
+            logger.warning(f"[HERMES] {slug} not found in positions, aborting emergency")
+            return
+        
+        positions[slug]["in_emergency_exit"] = True
+        positions[slug]["selling_in_progress"] = True
+        save_json(POSITIONS_FILE, positions)
     
     for attempt in range(MAX_EMERGENCY_RETRIES):
         logger.info(f"[HERMES] Cancel attempt {attempt + 1}/{MAX_EMERGENCY_RETRIES} for {slug[:40]}...")
         
-        if cancel_order(slug, "yes"):
+        if cancel_order(slug, outcome):
             logger.info(f"[HERMES] Order canceled for {slug[:40]}...")
             break
         
         if attempt == MAX_EMERGENCY_RETRIES - 1:
-            logger.error(f"[HERMES] Cancel failed after {MAX_EMERGENCY_RETRIES} attempts, forcing market sell")
+            logger.error(f"[HERMES] Cancel failed after {MAX_EMERGENCY_RETRIES} attempts, proceeding with market sell anyway")
     
     time.sleep(2)
     
-    logger.info(f"[HERMES] Executing market sell for {slug[:40]}...")
-    if market_sell(slug, "yes"):
+    logger.info(f"[HERMES] Executing market sell for {slug[:40]}... ({shares} shares, outcome={outcome})")
+    if market_sell(slug, outcome, shares=shares if shares > 0 else None):
         logger.info(f"[HERMES] Market sell successful for {slug[:40]}...")
         
-        _remove_position_safe(slug)
+        portfolio = get_portfolio()
+        remaining_shares = 0
+        if portfolio is not None:
+            remaining_pos = next((p for p in portfolio if p.get("market_slug") == slug), None)
+            if remaining_pos:
+                remaining_shares = remaining_pos.get("shares", 0)
+        
+        if remaining_shares > 0:
+            logger.warning(f"[HERMES] {remaining_shares} shares remain for {slug[:40]}..., updating position instead of deleting")
+            with _positions_file_lock:
+                _merge_save_positions(updated_positions={slug: {
+                    "shares": remaining_shares,
+                    "in_emergency_exit": False,
+                    "selling_in_progress": False,
+                    "emergency_exit_failed": False,
+                }})
+        else:
+            with _positions_file_lock:
+                _merge_save_positions(deleted_slugs={slug})
+            logger.info(f"[HERMES] Removed position {slug[:40]}... from file")
+        
+        entry_price = pos_data.get("entry_price", 0)
+        current_price = pos_data.get("live_price", 0)
+        actual_pnl_pct = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else -100
+        actual_pnl_abs = (current_price - entry_price) * shares if entry_price > 0 and shares > 0 else 0
         
         if TELEGRAM_REPORTER:
             try:
                 TELEGRAM_REPORTER.alert_stop_loss(
                     slug=slug,
                     question=pos_data.get("market_question", "Unknown"),
-                    pnl_pct=-100,
-                    pnl_abs=0
+                    pnl_pct=actual_pnl_pct,
+                    pnl_abs=actual_pnl_abs
                 )
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"[HERMES] Emergency notification failed: {e}")
         
         _log_emergency_exit(slug, pos_data, reason)
     else:
         logger.error(f"[HERMES] Market sell FAILED for {slug[:40]}...")
         
-        positions = load_json(POSITIONS_FILE, {})
-        if slug in positions:
-            positions[slug]["emergency_exit_failed"] = True
-            positions[slug]["last_emergency_attempt"] = datetime.now().isoformat()
-        save_json(POSITIONS_FILE, positions)
-
-def _remove_position_safe(slug):
-    positions = load_json(POSITIONS_FILE, {})
-    if slug in positions:
-        del positions[slug]
-        save_json(POSITIONS_FILE, positions)
-        logger.info(f"[HERMES] Removed position {slug[:40]}... from file")
+        with _positions_file_lock:
+            positions = load_json(POSITIONS_FILE, {})
+            if slug in positions:
+                positions[slug]["emergency_exit_failed"] = True
+                positions[slug]["last_emergency_attempt"] = datetime.now().isoformat()
+                positions[slug]["selling_in_progress"] = False
+                positions[slug]["in_emergency_exit"] = False
+            save_json(POSITIONS_FILE, positions)
 
 def _log_emergency_exit(slug, pos_data, reason):
     log_entry = {
@@ -654,7 +737,7 @@ def run_emergency_evaluation_loop():
 
 def main():
     logger.info("="*60)
-    logger.info("  HERMES ADVISOR v5.3.2 - Starting")
+    logger.info("  HERMES ADVISOR v5.3.7 - Starting")
     logger.info("="*60)
     
     reconcile_thread = threading.Thread(target=run_reconciliation_loop, daemon=True)
@@ -668,6 +751,15 @@ def main():
     try:
         while True:
             time.sleep(60)
+            
+            if not reconcile_thread.is_alive():
+                logger.error("[HERMES] Reconciliation thread died, restarting")
+                reconcile_thread = threading.Thread(target=run_reconciliation_loop, daemon=True)
+                reconcile_thread.start()
+            if not emergency_thread.is_alive():
+                logger.error("[HERMES] Emergency thread died, restarting")
+                emergency_thread = threading.Thread(target=run_emergency_evaluation_loop, daemon=True)
+                emergency_thread.start()
             
             positions = load_json(POSITIONS_FILE, {})
             active_count = len([p for p in positions.values() if not p.get("in_emergency_exit")])

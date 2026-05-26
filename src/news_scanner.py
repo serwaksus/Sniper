@@ -24,7 +24,8 @@ def load_env():
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, val = line.split('=', 1)
-                    os.environ.setdefault(key.strip(), val.strip())
+                    val = val.strip().strip('"').strip("'")
+                    os.environ.setdefault(key.strip(), val)
 
 load_env()
 
@@ -80,7 +81,7 @@ def _fetch_ddg_news_fallback(keywords: List[str], max_results: int, max_age_days
     when Tavily API is not available.
     Applies freshness filter: only results within max_age_days.
     """
-    query = "+".join(keywords[:3])
+    query = "+".join([requests.utils.quote(k) for k in keywords[:3]])
     url = f"https://duckduckgo.com/html/?q={query}+news&df=m&ia=news"
 
     try:
@@ -90,10 +91,10 @@ def _fetch_ddg_news_fallback(keywords: List[str], max_results: int, max_age_days
         response = requests.get(url, headers=headers, timeout=15)
         if response.ok:
             import re
-            html = response.text
-            headlines = re.findall(r'<a class="result__a"[^>]*href="[^"]*"[^>]*>([^<]+)</a>', html)[:max_results]
+            html_content = response.text
+            headlines = re.findall(r'<a class="result__a"[^>]*href="[^"]*"[^>]*>([^<]+)</a>', html_content)[:max_results]
             if not headlines:
-                headlines = re.findall(r'<h2[^>]*>([^<]+)</h2>', html)[:max_results]
+                headlines = re.findall(r'<h2[^>]*>([^<]+)</h2>', html_content)[:max_results]
             return {
                 "headlines": [h.strip() for h in headlines if len(h.strip()) > 20],
                 "sources": [],
@@ -179,13 +180,16 @@ def news_sanity_check(market_title: str, news_headlines: List[str],
             timeout=30
         )
 
+        if not resp.ok:
+            return True, f"LLM API returned {resp.status_code}, default PASS"
+
         data = resp.json()
         raw_content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         content = raw_content.strip().upper() if raw_content else ""
 
-        if "BLOCK" in content:
+        if re.search(r'\bBLOCK\b', content):
             return False, f"News contain breaking confirmation/refutation"
-        elif "PASS" in content:
+        elif re.search(r'\bPASS\b', content):
             return True, "News neutral, trade allowed"
         else:
             return True, f"Ambiguous LLM response: {content[:20]}, default PASS"
@@ -219,9 +223,6 @@ def check_market_news(market: Dict) -> Tuple[bool, str]:
 
     if passed:
         return True, reason
-
-    if not headlines or len(headlines) < 2:
-        return True, f"Insufficient news ({len(headlines)} headlines), default PASS"
 
     return passed, reason
 

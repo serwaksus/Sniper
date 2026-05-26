@@ -250,7 +250,7 @@ def metaculus_search(query, limit=10):
                           timeout=15)
         if resp.status_code == 200:
             return resp.json().get("results", [])
-    except:
+    except Exception:
         pass
     return []
 
@@ -259,7 +259,7 @@ def metaculus_get_question(qid):
         resp = requests.get(f"{METACULUS_URL}{qid}/", headers=METACULUS_HEADERS, timeout=15)
         if resp.status_code == 200:
             return resp.json()
-    except:
+    except Exception:
         pass
     return None
 
@@ -270,11 +270,11 @@ def parse_resolve_date(date_str):
     try:
         from dateutil.parser import parse
         return parse(date_str)
-    except:
+    except Exception:
         pass
     try:
         return datetime.fromisoformat(date_str)
-    except:
+    except Exception:
         pass
     return None
 
@@ -345,7 +345,7 @@ def get_metaculus_forecast(pm_question, pm_resolve_date=None):
             reveal_dt = datetime.fromisoformat(cp_reveal.replace("Z", "+00:00"))
             if datetime.now(reveal_dt.tzinfo) < reveal_dt:
                 return {"found": False, "probability": None, "reason": "cp_not_revealed"}
-        except:
+        except Exception:
             pass
 
     agg_data = q_data.get("aggregations") if q_data.get("aggregations") is not None else {}
@@ -1006,7 +1006,7 @@ def get_order_book(slug):
         else:
             mid_price = best_ask or best_bid
         return {"best_bid": best_bid, "best_ask": best_ask, "mid_price": mid_price}
-    except:
+    except Exception:
         return {"best_bid": None, "best_ask": None, "mid_price": None}
 
 def get_best_ask(slug):
@@ -1062,7 +1062,7 @@ def fetch_markets():
                 try:
                     end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
                     ttl_hours = max(0, (end - now).total_seconds() / 3600)
-                except:
+                except Exception:
                     pass
 
             if ttl_hours < MIN_TTL_HOURS:
@@ -1186,9 +1186,9 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
     size_pct = min(kelly_with_confidence, effective_cap)
 
     kelly_dollars = round(balance * size_pct)
-    if kelly_dollars <= 0:
+    if kelly_dollars < 5:
+        logger.info(f"[KELLY] kelly_dollars=${kelly_dollars} < $5 minimum, skipping trade")
         return 0
-    kelly_dollars = max(kelly_dollars, 5)
     kelly_dollars = min(kelly_dollars, round(balance * MAX_POS_PCT))
 
     logger.info(
@@ -1493,7 +1493,7 @@ def trailing_stop_check():
         if p.get("last_checked"):
             try:
                 last_checked = datetime.fromisoformat(p["last_checked"])
-            except:
+            except Exception:
                 last_checked = None
 
         check_interval = MIN_POSITION_CHECK_INTERVAL_HOURS * 3600
@@ -1521,6 +1521,10 @@ def trailing_stop_check():
         sold = False
         sold_reason = ""
 
+        p["selling_in_progress"] = True
+        positions[slug] = p
+        save_json(POSITIONS_FILE, positions)
+
         convergence = None
         if metaculus_prob and metaculus_prob > 0:
             convergence = current_price / metaculus_prob
@@ -1529,17 +1533,16 @@ def trailing_stop_check():
                 sold_reason = f"convergence={convergence:.2f} >= {CONVERGENCE_TAKE_PROFIT}"
                 logger.info(f"[TAKE-PROFIT] Gap convergence reached: {sold_reason}")
                 try:
-                    res = subprocess.run(["pm-trader", "sell", slug, outcome, str(shares)],
-                                         capture_output=True, text=True, timeout=20, start_new_session=True)
-                    result = json.loads(res.stdout) if res.stdout else {}
-                    if result.get("ok"):
-                        logger.info(f"SOLD take-profit convergence: {slug} pnl={pnl_pct:.2%}")
-                        sold = True
-                        pnl_abs = shares * (current_price - entry_price)
+                    _cancel_all_tp_orders(slug)
+                    sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
+                    if sold:
+                        logger.info(f"SOLD take-profit convergence ({method}): {slug} pnl={pnl_pct:.2%}")
+                        pnl_abs = shares * (eff_price - entry_price)
+                        actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                         if telegram_reporter:
-                            telegram_reporter.alert_convergence(slug, pos.get("market_question", ""), pnl_pct * 100, pnl_abs, convergence)
-                except:
-                    pass
+                            telegram_reporter.alert_convergence(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs, convergence)
+                except Exception as e:
+                    logger.warning(f"[CONVERGENCE-SELL] Failed for {slug}: {e}")
 
         if not sold and pnl_pct <= HARD_STOP_LOSS:
             sold_reason = f"hard_stop={pnl_pct:.0%}"
@@ -1574,7 +1577,7 @@ def trailing_stop_check():
                         pnl_abs = shares * (eff_price - entry_price)
                         if telegram_reporter:
                             telegram_reporter.alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
-            except:
+            except Exception:
                 pass
 
         if not sold and p.get("trailing_on") and current_price <= p.get("stop_loss", 0):
@@ -1582,6 +1585,7 @@ def trailing_stop_check():
                 p["trailing_confirmed"] = True
                 p["trailing_confirm_time"] = now.isoformat()
                 logger.info(f"[TRAILING-STOP] Confirming for {slug[:40]}... (1/2)")
+                continue
             else:
                 confirm_time = p.get("trailing_confirm_time")
                 if confirm_time:
@@ -1607,7 +1611,7 @@ def trailing_stop_check():
                             telegram_reporter.alert_take_profit(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
                         else:
                             telegram_reporter.alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
-            except:
+            except Exception:
                 pass
 
         if not sold and pnl_pct >= TAKE_PROFIT:
@@ -1620,7 +1624,7 @@ def trailing_stop_check():
                     pnl_abs = shares * (eff_price - entry_price)
                     if telegram_reporter:
                         telegram_reporter.alert_take_profit(slug, pos.get("market_question", ""), pnl_pct * 100, pnl_abs)
-            except:
+            except Exception:
                 pass
 
         if sold:
@@ -1631,6 +1635,7 @@ def trailing_stop_check():
                 del positions[slug]
                 save_json(POSITIONS_FILE, positions)
         else:
+            p.pop("selling_in_progress", None)
             positions[slug] = p
             save_json(POSITIONS_FILE, positions)
 
@@ -1675,7 +1680,7 @@ def resolve_hypotheses():
                            capture_output=True, text=True, timeout=20, start_new_session=True)
         for m in json.loads(res.stdout).get("data", []):
             market_map[m["slug"]] = m
-    except:
+    except Exception:
         pass
 
     new_resolved = 0
@@ -2302,6 +2307,18 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         else:
             min_signal = base_threshold
 
+        source_signal = "default"
+        metaculus_prob_val = metaculus_cache.get(slug) if metaculus_cache else None
+        if metaculus_prob_val is not None and metaculus_prob_val > market_price:
+            gap = metaculus_prob_val - market_price
+            signal_strength = gap / market_price if market_price > 0 else 0
+            if signal_strength > 0.3:
+                p_model = max(p_model, metaculus_prob_val)
+                source_signal = "metaculus_override"
+                confidence = min(confidence + 0.10, 0.95)
+                min_signal = max(min_signal - 10, 35)
+                logger.info(f"[META-OVERRIDE-BATCH] {slug[:30]}... p_model={p_model:.1%} from metaculus={metaculus_prob_val:.1%}")
+
         action = "BUY" if signal_score >= min_signal and confidence >= settings.get("min_confidence", MIN_CONFIDENCE) and prob_ratio >= MIN_PROB_RATIO else "SKIP"
 
         logger.info(
@@ -2319,9 +2336,9 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
             "confidence": confidence,
             "action": action,
             "factors": factors,
-            "source_signal": "default",
+            "source_signal": source_signal,
             "signal_score": signal_score,
-            "reasoning": f"score={signal_score:.0f}/{min_signal}(batch), ratio={prob_ratio:.2f}x, conf={confidence:.2f}",
+            "reasoning": f"score={signal_score:.0f}/{min_signal}(batch), ratio={prob_ratio:.2f}x, conf={confidence:.2f}, src={source_signal}",
             "best_ask": None,
         }
 
