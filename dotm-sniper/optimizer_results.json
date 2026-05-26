@@ -1,0 +1,251 @@
+{
+  "timestamp": "2026-05-23T21:03:31.036294",
+  "config": {
+    "n_markets": 1000,
+    "n_in_sample": 500,
+    "n_out_of_sample": 500,
+    "composite_thresholds": [
+      65,
+      70,
+      75,
+      80
+    ],
+    "volume_thresholds": [
+      100000,
+      150000,
+      200000,
+      250000
+    ],
+    "slippage_penalty": 0.015,
+    "monte_carlo_simulations": 10000,
+    "monte_carlo_trades": 100,
+    "position_pct": 0.035
+  },
+  "best_in_sample": {
+    "composite_threshold": 80,
+    "volume_threshold": 100000,
+    "min_confidence": 0.6,
+    "trades": 54,
+    "wins": 25,
+    "losses": 29,
+    "winrate": 0.46296296296296297,
+    "avg_ev": 5.218063356951353,
+    "avg_upside": 12.431016851014922,
+    "score": 5.218063356951353
+  },
+  "grid_results": [
+    {
+      "composite_threshold": 80,
+      "volume_threshold": 100000,
+      "min_confidence": 0.6,
+      "trades": 54,
+      "wins": 25,
+      "losses": 29,
+      "winrate": 0.46296296296296297,
+      "avg_ev": 5.218063356951353,
+      "avg_upside": 12.431016851014922,
+      "score": 5.218063356951353
+    },
+    {
+      "composite_threshold": 75,
+      "volume_threshold": 150000,
+      "min_confidence": 0.65,
+      "trades": 44,
+      "wins": 23,
+      "losses": 21,
+      "winrate": 0.5227272727272727,
+      "avg_ev": 4.928256873932643,
+      "avg_upside": 10.341013150132012,
+      "score": 4.928256873932643
+    },
+    {
+      "composite_threshold": 75,
+      "volume_threshold": 100000,
+      "min_confidence": 0.6,
+      "trades": 62,
+      "wins": 28,
+      "losses": 34,
+      "winrate": 0.45161290322580644,
+      "avg_ev": 4.919457078264094,
+      "avg_upside": 12.107369244727638,
+      "score": 4.919457078264094
+    },
+    {
+      "composite_threshold": 65,
+      "volume_threshold": 250000,
+      "min_confidence": 0.75,
+      "trades": 12,
+      "wins": 8,
+      "losses": 4,
+      "winrate": 0.6666666666666666,
+      "avg_ev": 4.761118759385233,
+      "avg_upside": 7.641678139077849,
+      "score": 4.761118759385233
+    },
+    {
+      "composite_threshold": 80,
+      "volume_threshold": 150000,
+      "min_confidence": 0.65,
+      "trades": 40,
+      "wins": 20,
+      "losses": 20,
+      "winrate": 0.5,
+      "avg_ev": 4.740309621900887,
+      "avg_upside": 10.480619243801774,
+      "score": 4.740309621900887
+    },
+    {
+      "composite_threshold": 65,
+      "volume_threshold": 150000,
+      "min_confidence": 0.65,
+      "trades": 59,
+      "wins": 30,
+      "losses": 29,
+      "winrate": 0.5084745762711864,
+      "avg_ev": 4.704980613426787,
+      "avg_upside": 10.219795206406015,
+      "score": 4.704980613426787
+    },
+    {
+      "composite_threshold": 70,
+      "volume_threshold": 150000,
+      "min_confidence": 0.65,
+      "trades": 52,
+      "wins": 25,
+      "losses": 27,
+      "winrate": 0.4807692307692308,
+      "avg_ev": 4.691071165277325,
+      "avg_upside": 10.837428023776836,
+      "score": 4.691071165277325
+    },
+    {
+      "composite_threshold": 65,
+      "volume_threshold": 200000,
+      "min_confidence": 0.7,
+      "trades": 21,
+      "wins": 13,
+      "losses": 8,
+      "winrate": 0.6190476190476191,
+      "avg_ev": 4.3238066240799915,
+      "avg_upside": 7.599995315821525,
+      "score": 4.3238066240799915
+    },
+    {
+      "composite_threshold": 80,
+      "volume_threshold": 250000,
+      "min_confidence": 0.75,
+      "trades": 7,
+      "wins": 4,
+      "losses": 3,
+      "winrate": 0.5714285714285714,
+      "avg_ev": 4.267953132764317,
+      "avg_upside": 8.218917982337555,
+      "score": 4.267953132764317
+    },
+    {
+      "composite_threshold": 75,
+      "volume_threshold": 250000,
+      "min_confidence": 0.75,
+      "trades": 7,
+      "wins": 4,
+      "losses": 3,
+      "winrate": 0.5714285714285714,
+      "avg_ev": 4.267953132764317,
+      "avg_upside": 8.218917982337555,
+      "score": 4.267953132764317
+    },
+    {
+      "composite_threshold": 70,
+      "volume_threshold": 100000,
+      "min_confidence": 0.6,
+      "trades": 82,
+      "wins": 33,
+      "losses": 49,
+      "winrate": 0.4024390243902439,
+      "avg_ev": 4.1438685325522,
+      "avg_upside": 11.781733929372137,
+      "score": 4.1438685325522
+    },
+    {
+      "composite_threshold": 65,
+      "volume_threshold": 100000,
+      "min_confidence": 0.6,
+      "trades": 91,
+      "wins": 38,
+      "losses": 53,
+      "winrate": 0.4175824175824176,
+      "avg_ev": 4.081927200736703,
+      "avg_upside": 11.169878296501052,
+      "score": 4.081927200736703
+    },
+    {
+      "composite_threshold": 75,
+      "volume_threshold": 200000,
+      "min_confidence": 0.7,
+      "trades": 14,
+      "wins": 8,
+      "losses": 6,
+      "winrate": 0.5714285714285714,
+      "avg_ev": 4.081555964851452,
+      "avg_upside": 7.89272293849004,
+      "score": 4.081555964851452
+    },
+    {
+      "composite_threshold": 80,
+      "volume_threshold": 200000,
+      "min_confidence": 0.7,
+      "trades": 14,
+      "wins": 8,
+      "losses": 6,
+      "winrate": 0.5714285714285714,
+      "avg_ev": 4.081555964851452,
+      "avg_upside": 7.89272293849004,
+      "score": 4.081555964851452
+    },
+    {
+      "composite_threshold": 70,
+      "volume_threshold": 250000,
+      "min_confidence": 0.75,
+      "trades": 8,
+      "wins": 4,
+      "losses": 4,
+      "winrate": 0.5,
+      "avg_ev": 3.6094589911687773,
+      "avg_upside": 8.218917982337555,
+      "score": 3.6094589911687773
+    },
+    {
+      "composite_threshold": 70,
+      "volume_threshold": 200000,
+      "min_confidence": 0.7,
+      "trades": 16,
+      "wins": 8,
+      "losses": 8,
+      "winrate": 0.5,
+      "avg_ev": 3.44636146924502,
+      "avg_upside": 7.89272293849004,
+      "score": 3.44636146924502
+    }
+  ],
+  "oos_validation": {
+    "composite_threshold": 80,
+    "volume_threshold": 100000,
+    "min_confidence": 0.6,
+    "trades": 36,
+    "wins": 20,
+    "losses": 16,
+    "winrate": 0.5555555555555556,
+    "avg_ev": 5.8263983888168545,
+    "avg_upside": 11.287517099870339,
+    "score": 5.8263983888168545
+  },
+  "monte_carlo": {
+    "ruin_probability": 0.0,
+    "max_drawdown_worst": 0.43449426515877143,
+    "max_drawdown_avg": 0.16784836713900755,
+    "avg_final_capital": 107314714.92947544,
+    "median_final_capital": 12057309.416608648,
+    "p5_final_capital": 435607.71811923565,
+    "p95_final_capital": 411239198.7927878
+  }
+}

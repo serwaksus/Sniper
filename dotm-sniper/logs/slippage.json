@@ -1,0 +1,12 @@
+[
+  {
+    "slug": "will-us-withdraw-from-nato-before-2027-348-975-598-224-737",
+    "expected_price": 0.08,
+    "actual_price": 0.085,
+    "slippage_pct": 0.0625,
+    "amount_usd": 5.0,
+    "shares": 58.8235294117647,
+    "levels_filled": 1,
+    "timestamp": "2026-05-25T21:05:27.979072"
+  }
+]
