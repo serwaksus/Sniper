@@ -110,6 +110,10 @@ def _update_and_check_status(slug, trigger_exit, current_status):
         last_status = _last_alert_status.get(slug)
         last_normalized = str(last_status).upper().strip() if last_status else None
 
+        # If status unchanged and not a trigger exit, skip update (duplicate suppression)
+        if not trigger_exit and last_normalized == normalized:
+            return False
+
         if last_normalized and normalized != last_normalized:
             if last_normalized == "DIVERGENCE" and normalized in ("GREEN", "YELLOW"):
                 hold_key = f"{slug}:{normalized}"
@@ -540,6 +544,13 @@ Return ONLY JSON:
                     status = "YELLOW"
 
                 normalized_status = status.upper().strip()
+
+                # Duplicate suppression: skip if status unchanged and not a trigger exit
+                last_status = _last_alert_status.get(slug)
+                last_normalized = str(last_status).upper().strip() if last_status else None
+                if not trigger and last_normalized == normalized_status:
+                    logger.debug(f"[HERMES] Duplicate status {normalized_status} for {slug[:40]}..., skipping")
+                    continue
 
                 should_send = _update_and_check_status(slug, trigger, normalized_status)
 
