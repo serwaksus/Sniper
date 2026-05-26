@@ -1,0 +1,32 @@
+{
+  "will-the-us-acquire-any-part-of-greenland-in-2026": {
+    "entry_price": 0.15,
+    "high_price": 0.15,
+    "trailing_on": false,
+    "stop_loss": 0.105,
+    "last_checked": "2026-05-26T11:59:18.729954",
+    "metaculus_prob": null,
+    "shares": 140.0,
+    "market_question": "Will the US acquire part of Greenland in 2026?"
+  },
+  "will-marco-rubio-win-the-2028-us-presidential-election": {
+    "entry_price": 0.141,
+    "high_price": 0.14150000000000001,
+    "trailing_on": false,
+    "stop_loss": 0.09869999999999998,
+    "last_checked": "2026-05-26T11:59:18.729954",
+    "metaculus_prob": null,
+    "shares": 35.46099290780142,
+    "market_question": "Will Marco Rubio win the 2028 US Presidential Election?"
+  },
+  "will-us-withdraw-from-nato-before-2027-348-975-598-224-737": {
+    "entry_price": 0.085,
+    "high_price": 0.085,
+    "trailing_on": false,
+    "stop_loss": 0.0595,
+    "last_checked": "2026-05-26T11:59:18.729954",
+    "metaculus_prob": null,
+    "shares": 58.8235294117647,
+    "market_question": "Will US withdraw from NATO before 2027?"
+  }
+}
