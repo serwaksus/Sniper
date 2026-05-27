@@ -13,11 +13,15 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
 
 CALIBRATION_LOG = "/root/dotm-sniper/calibration_log.json"
 HYPOTHESIS_DB = "/root/dotm-sniper/hypothesis_db.json"
+PLATT_MODEL_FILE = "/root/dotm-sniper/platt_model.json"
+MIN_PLATT_SAMPLES = 15
 
 logger = logging.getLogger(__name__)
 
@@ -236,12 +240,111 @@ def get_edge_report() -> Dict:
     }
 
 
+def _sigmoid(x):
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _train_platt_cluster(p_models: List[float], outcomes: List[float]) -> Optional[Dict]:
+    if len(p_models) < MIN_PLATT_SAMPLES:
+        return None
+
+    a, b = 0.0, 0.0
+    lr = 0.1
+    for epoch in range(200):
+        grad_a, grad_b = 0.0, 0.0
+        for p, y in zip(p_models, outcomes):
+            p = max(1e-6, min(1 - 1e-6, p))
+            logit = math.log(p / (1 - p))
+            pred = _sigmoid(a * logit + b)
+            eps = 1e-6
+            pred = max(eps, min(1 - eps, pred))
+            grad_a += (pred - y) * logit
+            grad_b += (pred - y)
+        a -= lr * grad_a / len(p_models)
+        b -= lr * grad_b / len(p_models)
+        if abs(grad_a) < 1e-5 and abs(grad_b) < 1e-5:
+            break
+
+    return {"a": round(a, 6), "b": round(b, 6), "samples": len(p_models)}
+
+
+def train_platt_models() -> Dict:
+    log = load_json(CALIBRATION_LOG, {"entries": []})
+    if not isinstance(log, dict):
+        log = {"entries": []}
+    entries = [e for e in log.get("entries", []) if e.get("actual_outcome") in ("YES", "NO")]
+
+    db = load_json(HYPOTHESIS_DB, {"resolved": []})
+    if isinstance(db, dict):
+        seen = {e["slug"] for e in log.get("entries", [])}
+        for h in db.get("resolved", []):
+            if h.get("outcome") in ("YES", "NO") and h.get("slug") not in seen and h.get("p_model") is not None:
+                entries.append({
+                    "p_model": h["p_model"],
+                    "actual_bin": 1.0 if h["outcome"] == "YES" else 0.0,
+                    "cluster": h.get("clusters", ["other"])[0] if h.get("clusters") else "other",
+                })
+
+    by_cluster = defaultdict(lambda: {"p": [], "y": []})
+    for e in entries:
+        cluster = e.get("cluster", "other")
+        by_cluster[cluster]["p"].append(e["p_model"])
+        by_cluster[cluster]["y"].append(e["actual_bin"])
+
+    global_ps = []
+    global_ys = []
+    for c in by_cluster:
+        global_ps.extend(by_cluster[c]["p"])
+        global_ys.extend(by_cluster[c]["y"])
+
+    models = {}
+    for cluster, data in by_cluster.items():
+        model = _train_platt_cluster(data["p"], data["y"])
+        if model:
+            models[cluster] = model
+            logger.info(f"[PLATT] Fitted {cluster}: a={model['a']:.3f}, b={model['b']:.3f}, n={model['samples']}")
+
+    global_model = _train_platt_cluster(global_ps, global_ys)
+    if global_model:
+        models["__global__"] = global_model
+        logger.info(f"[PLATT] Global model: a={global_model['a']:.3f}, b={global_model['b']:.3f}, n={global_model['samples']}")
+
+    save_json(PLATT_MODEL_FILE, {
+        "models": models,
+        "trained_at": datetime.now().isoformat(),
+    })
+
+    return models
+
+
+def get_platt_calibrated(p_model: float, cluster: str = "other") -> Optional[float]:
+    if not os.path.exists(PLATT_MODEL_FILE):
+        return None
+    data = load_json(PLATT_MODEL_FILE, None)
+    if not data or not isinstance(data, dict):
+        return None
+    models = data.get("models", {})
+    if not models:
+        return None
+
+    model = models.get(cluster) or models.get("__global__")
+    if not model or "a" not in model:
+        return None
+
+    p_model = max(1e-6, min(1 - 1e-6, p_model))
+    logit = math.log(p_model / (1 - p_model))
+    calibrated = _sigmoid(model["a"] * logit + model["b"])
+    calibrated = max(1e-6, min(1 - 1e-6, calibrated))
+    return calibrated
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--sync", action="store_true", help="Sync from hypothesis_db")
     parser.add_argument("--report", action="store_true", help="Show calibration report")
     parser.add_argument("--drift", action="store_true", help="Check for model drift")
+    parser.add_argument("--train-platt", action="store_true", help="Train Platt scaling models")
     args = parser.parse_args()
 
     if args.sync:
@@ -259,6 +362,10 @@ def main():
             print(f"ALERT: {alert}")
         else:
             print("No drift detected")
+
+    if args.train_platt:
+        models = train_platt_models()
+        print(f"Trained {len(models)} Platt models")
 
 
 if __name__ == "__main__":

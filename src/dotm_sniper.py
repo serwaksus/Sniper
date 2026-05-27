@@ -20,6 +20,7 @@ from news_scanner import check_market_news, extract_keywords, fetch_recent_news
 from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt, check_and_write_pid, cleanup_pid_file
 from equity_tracker import log_equity_snapshot, log_trade
 from calibration_tracker import log_calibration_entry, detect_model_drift
+from correlation_matrix import check_correlation_limit
 
 PID_FILE = "/root/dotm-sniper/sniper.pid"
 
@@ -82,6 +83,11 @@ TAKE_PROFIT = 2.00
 CONVERGENCE_TAKE_PROFIT = 0.90
 MIN_POSITION_CHECK_INTERVAL_HOURS = 3
 
+ATR_STOP_MULTIPLIER = 2.5
+ATR_TRAILING_MULTIPLIER = 1.5
+ATR_LOOKBACK_DAYS = 7
+PRICE_HISTORY_FILE = "/root/dotm-sniper/price_history.json"
+
 
 def get_tier_params(balance: float) -> dict:
     if balance < 2000:
@@ -137,45 +143,62 @@ CLUSTER_SCORE_ADJUSTMENTS = {
 
 def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=None):
     """
-    Calibrate p_model using isotonic regression (if available) or fallback to dampening.
-
-    Priority:
-    1. Isotonic calibrator (if fitted on >= 20 samples)
-    2. Legacy dampening (0.65x multiplier for DOTM markets)
-
-    Returns (calibrated_p_model, was_calibrated: bool)
+    Calibrate p_model using:
+    1. Hierarchical Platt scaling (if >= 30 resolved per cluster)
+    2. Isotonic regression (if >= 20 samples)
+    3. Legacy dampening fallback
+    Then apply extremization to compensate crowd regression-to-mean.
     """
     from calibration import get_calibrator
 
-    calibrator = get_calibrator()
-    if calibrator.is_fitted:
-        p_calibrated = calibrator.predict(p_model, cluster or "other")
-        if abs(p_calibrated - p_model) > 0.02:
-            logger.info(
-                f"[CALIBRATION] p_model={p_model:.1%} -> {p_calibrated:.1%} "
-                f"(cluster={cluster}, isotonic)"
-            )
-        return p_calibrated, True
+    p_calibrated = p_model
+    method = "raw"
 
-    if cluster == "other":
-        return p_model, False
+    try:
+        from calibration_tracker import get_platt_calibrated
+        p_platt = get_platt_calibrated(p_model, cluster or "other")
+        if p_platt is not None:
+            p_calibrated = p_platt
+            method = "platt"
+    except Exception:
+        pass
 
-    if market_price > CALIBRATION_DOTM_THRESHOLD:
-        return p_model, False
+    if method == "raw":
+        calibrator = get_calibrator()
+        if calibrator.is_fitted:
+            p_calibrated = calibrator.predict(p_model, cluster or "other")
+            method = "isotonic"
 
-    if p_model <= CALIBRATION_AGGRESSIVE_PMODEL:
-        return p_model, False
+    if method == "raw":
+        if cluster != "other" and market_price <= CALIBRATION_DOTM_THRESHOLD:
+            if p_model > CALIBRATION_AGGRESSIVE_PMODEL:
+                meta_low = metaculus_prob is None or metaculus_prob < CALIBRATION_METACULUS_LOW
+                if meta_low:
+                    p_calibrated = p_model * CALIBRATION_DAMPING_FACTOR
+                    method = "dampen"
 
-    meta_low = metaculus_prob is None or metaculus_prob < CALIBRATION_METACULUS_LOW
-    if not meta_low:
-        return p_model, False
+    d = 1.5
+    if market_price < 0.03:
+        d = 1.8
+    elif market_price < 0.07:
+        d = 1.6
+    elif market_price < 0.15:
+        d = 1.4
+    else:
+        d = 1.2
 
-    calibrated = p_model * CALIBRATION_DAMPING_FACTOR
-    logger.info(
-        f"[DAMPEN] p_model={p_model:.1%} -> {calibrated:.1%} "
-        f"(price=${market_price:.3f}, metaculus={'none' if metaculus_prob is None else f'{metaculus_prob:.1%}'})"
-    )
-    return calibrated, True
+    if p_calibrated > 0 and p_calibrated < 1:
+        p_ext = (p_calibrated ** d) / (p_calibrated ** d + (1 - p_calibrated) ** d)
+    else:
+        p_ext = p_calibrated
+
+    if method != "raw" or abs(p_ext - p_model) > 0.02:
+        logger.info(
+            f"[CALIBRATION] p_model={p_model:.1%} -> {p_calibrated:.1%} -> {p_ext:.1%} "
+            f"(method={method}, extremize_d={d:.1f}, cluster={cluster})"
+        )
+
+    return p_ext, method != "raw"
 
 
 def _cluster_score_adjustment(cluster):
@@ -1538,6 +1561,63 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
     return False, best_bid, "market_failed"
 
 
+def _log_price_for_atr(slug: str, price: float):
+    try:
+        history = load_json(PRICE_HISTORY_FILE, {})
+        if not isinstance(history, dict):
+            history = {}
+        slug_data = history.get(slug, [])
+        slug_data.append({"t": datetime.now().isoformat(), "p": round(price, 6)})
+        if len(slug_data) > 1008:
+            slug_data = slug_data[-1008:]
+        history[slug] = slug_data
+        save_json(PRICE_HISTORY_FILE, history)
+    except Exception:
+        pass
+
+
+def _calculate_atr(slug: str, current_price: float) -> float:
+    try:
+        history = load_json(PRICE_HISTORY_FILE, {})
+        if not isinstance(history, dict):
+            return abs(current_price) * 0.10
+        slug_data = history.get(slug, [])
+        if len(slug_data) < 2:
+            return abs(current_price) * 0.10
+
+        cutoff = (datetime.now() - timedelta(days=ATR_LOOKBACK_DAYS)).isoformat()
+        recent = [e for e in slug_data if e.get("t", "") >= cutoff]
+
+        if len(recent) < 2:
+            return abs(current_price) * 0.10
+
+        true_ranges = []
+        for i in range(1, len(recent)):
+            h = abs(recent[i]["p"] - recent[i - 1]["p"])
+            true_ranges.append(h)
+
+        if not true_ranges:
+            return abs(current_price) * 0.10
+
+        atr = sum(true_ranges) / len(true_ranges)
+        return max(atr, abs(current_price) * 0.03)
+    except Exception:
+        return abs(current_price) * 0.10
+
+
+def _get_atr_stop(slug: str, entry_price: float, current_price: float) -> float:
+    atr = _calculate_atr(slug, current_price)
+    stop = current_price - ATR_STOP_MULTIPLIER * atr
+    max_loss = entry_price * 0.50
+    floor = entry_price - max_loss
+    return max(stop, floor)
+
+
+def _get_atr_trailing_stop(slug: str, high_price: float, current_price: float) -> float:
+    atr = _calculate_atr(slug, current_price)
+    return high_price - ATR_TRAILING_MULTIPLIER * atr
+
+
 def _check_sell_safety(slug, current_price, shares):
     """
     Verify order book has sufficient liquidity before placing a market sell.
@@ -1605,15 +1685,19 @@ def trailing_stop_check():
         if current_price <= 0:
             continue
 
+        _log_price_for_atr(slug, current_price)
+
         pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
 
         positions = load_json(POSITIONS_FILE, {})
         if slug not in positions:
+            atr_stop = _get_atr_stop(slug, entry_price, current_price)
             positions[slug] = {
                 "entry_price": entry_price,
                 "high_price": max(entry_price, current_price),
                 "trailing_on": False,
-                "stop_loss": entry_price * (1 + HARD_STOP_LOSS),
+                "stop_loss": atr_stop,
+                "stop_type": "atr",
                 "last_checked": now.isoformat(),
                 "metaculus_prob": None,
                 "market_question": pos.get("market_question", ""),
@@ -1641,7 +1725,9 @@ def trailing_stop_check():
 
         if p["high_price"] > entry_price * (1 + TRAILING_ACTIVATION):
             p["trailing_on"] = True
-            p["stop_loss"] = p["high_price"] * (1 - TRAILING_STOP)
+            atr_trail = _get_atr_trailing_stop(slug, p["high_price"], current_price)
+            fixed_trail = p["high_price"] * (1 - TRAILING_STOP)
+            p["stop_loss"] = max(atr_trail, fixed_trail)
 
         meta = get_metaculus_forecast(pos.get("market_question", ""), None)
         metaculus_prob = None
@@ -1687,9 +1773,9 @@ def trailing_stop_check():
             elif convergence >= CONVERGENCE_TAKE_PROFIT:
                 logger.info(f"[CONVERGENCE] {slug[:40]}... convergence={convergence:.2f} but TP ladder active, letting limits execute")
 
-        if not sold and pnl_pct <= HARD_STOP_LOSS:
-            sold_reason = f"hard_stop={pnl_pct:.0%}"
-            logger.warning(f"[STOP-LOSS] Hard stop triggered: {slug[:40]}... pnl={pnl_pct:.0%}")
+        if not sold and current_price <= _get_atr_stop(slug, entry_price, current_price):
+            sold_reason = f"atr_stop: price=${current_price:.4f} <= atr_stop"
+            logger.warning(f"[STOP-LOSS] ATR stop triggered: {slug[:40]}... price=${current_price:.4f}")
             try:
                 pos_data = positions.get(slug, {})
                 limit_attempts = pos_data.get("limit_sell_attempts", 0)
@@ -2956,6 +3042,15 @@ def _main_inner():
 
         can_pass, reason = check_cluster_limits(m["clusters"], current_positions_for_clusters)
         if not can_pass:
+            continue
+
+        corr_ok, corr_reason = check_correlation_limit(
+            m["clusters"][0] if m["clusters"] else "other",
+            load_json(POSITIONS_FILE, {}),
+            balance,
+        )
+        if not corr_ok:
+            logger.info(f"[CORR-SKIP] {m['slug'][:40]}... {corr_reason}")
             continue
 
         if m["slug"] in position_slugs:

@@ -8,6 +8,7 @@ Anti-Fossil Filter: news limited to last 30 days, max 5 results.
 import subprocess, json, time, os, sys, logging, fcntl, re, threading, html
 from datetime import datetime, timedelta
 from collections import defaultdict
+from bayesian_updater import update_posterior, should_exit as bayesian_should_exit, classify_news_with_llm, init_posterior
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
@@ -616,6 +617,17 @@ Return ONLY JSON:
                     logger.info(f"[HERMES] Routine check {slug[:40]}...: status={normalized_status} reason={reason}")
             else:
                 logger.warning(f"[HERMES] LLM returned non-JSON for {slug[:40]}...: {content[:100]}")
+
+            if not trigger and headlines:
+                try:
+                    news_cat = classify_news_with_llm(question, headlines)
+                    posterior = update_posterior(slug, news_cat)
+                    bayes_exit, bayes_reason = bayesian_should_exit(slug)
+                    if bayes_exit:
+                        logger.warning(f"[HERMES] BAYESIAN EXIT for {slug[:40]}...: {bayes_reason}")
+                        _execute_emergency_exit(slug, pos_data, bayes_reason)
+                except Exception as be:
+                    logger.warning(f"[HERMES] Bayesian update failed for {slug}: {be}")
         except Exception as e:
             logger.error(f"[HERMES] LLM evaluation failed for {slug}: {e}")
 
