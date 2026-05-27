@@ -180,7 +180,8 @@ def get_portfolio():
     try:
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
         data = json.loads(res.stdout).get("data", [])
-        logger.info(f"Portfolio fetched: {len(data)} positions")
+        data = [p for p in data if float(p.get("shares", 0)) > 0.001]
+        logger.info(f"Portfolio fetched: {len(data)} positions (dust filtered)")
         return data
     except Exception as e:
         logger.error(f"Failed to get portfolio: {e}")

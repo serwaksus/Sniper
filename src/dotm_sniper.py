@@ -1052,7 +1052,8 @@ def get_portfolio():
         if res.returncode != 0:
             logger.error(f"[SNIPER] pm-trader portfolio failed: rc={res.returncode}")
             return []
-        return json.loads(res.stdout).get("data", [])
+        data = json.loads(res.stdout).get("data", [])
+        return [p for p in data if float(p.get("shares", 0)) > 0.001]
     except Exception:
         return []
 
@@ -2636,6 +2637,7 @@ def _update_status_file():
         balance_data = json.loads(res.stdout).get("data", {})
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
         portfolio_data = json.loads(res.stdout).get("data", [])
+        portfolio_data = [p for p in portfolio_data if float(p.get("shares", 0)) > 0.001]
         status = {"balance": balance_data, "portfolio": portfolio_data, "updated_at": datetime.now().isoformat()}
         save_json("/root/dotm-sniper/current_status.json", status)
         for dest in [

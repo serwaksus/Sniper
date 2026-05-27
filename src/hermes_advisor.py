@@ -164,7 +164,8 @@ def get_portfolio():
         if res.returncode != 0:
             logger.error(f"[HERMES] pm-trader portfolio failed: rc={res.returncode} stderr={res.stderr[:200]}")
             return None
-        return json.loads(res.stdout).get("data", [])
+        data = json.loads(res.stdout).get("data", [])
+        return [p for p in data if float(p.get("shares", 0)) > 0.001]
     except Exception:
         return None
 
