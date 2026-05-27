@@ -1756,11 +1756,11 @@ def trailing_stop_check():
             except Exception:
                 pass
 
-        if not sold and pnl_pct >= 3.0:
+        if not sold and current_price >= 0.75:
             tp_orders = _get_open_tp_orders(slug)
             if not tp_orders:
-                sold_reason = f"take_profit={pnl_pct:.0%}"
-                logger.info(f"[TAKE-PROFIT] {slug[:40]}... +{pnl_pct:.0f}% (no TP ladder, selling)")
+                sold_reason = f"price=${current_price:.3f} >= $0.75 (TP ladder fallback)"
+                logger.info(f"[TAKE-PROFIT] {slug[:40]}... price=${current_price:.3f} (no TP ladder, selling)")
                 try:
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                     if sold:
