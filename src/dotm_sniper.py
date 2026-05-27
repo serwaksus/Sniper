@@ -1459,6 +1459,20 @@ def _place_tp_ladder(slug, outcome, total_shares):
     return results
 
 
+def _get_open_tp_orders(slug):
+    try:
+        res = subprocess.run(["pm-trader", "orders", "--status", "open"], capture_output=True, text=True, timeout=30, start_new_session=True)
+        tp_orders = []
+        for line in res.stdout.strip().split('\n')[1:]:
+            if not line.strip() or '---' in line: continue
+            parts = [p.strip() for p in line.split('|')]
+            if len(parts) >= 3 and parts[0] == slug and parts[2] == 'sell':
+                tp_orders.append({"slug": parts[0], "order_id": parts[1], "side": parts[2]})
+        return tp_orders
+    except Exception:
+        return []
+
+
 def _cancel_all_tp_orders(slug):
     """Cancel all open sell orders for a position on manual/stop exit."""
     try:
@@ -1637,6 +1651,14 @@ def trailing_stop_check():
         positions[slug] = p
         save_json(POSITIONS_FILE, positions)
 
+        if not _get_open_tp_orders(slug) and current_price < 0.70:
+            try:
+                ladder_results = _place_tp_ladder(slug, outcome, shares)
+                if any(ok for _, _, ok, _ in ladder_results):
+                    logger.info(f"[TP-REFRESH] Placed TP ladder for {slug[:40]}... (was missing)")
+            except Exception:
+                pass
+
         sold = False
         sold_reason = ""
 
@@ -1648,11 +1670,10 @@ def trailing_stop_check():
         if metaculus_prob and metaculus_prob > 0:
             convergence = current_price / metaculus_prob
             logger.info(f"[CONVERGENCE] {slug[:40]}... mid={current_price:.3f}, meta={metaculus_prob:.0%}, ratio={convergence:.2f}")
-            if convergence >= CONVERGENCE_TAKE_PROFIT:
+            if convergence >= CONVERGENCE_TAKE_PROFIT and not _get_open_tp_orders(slug):
                 sold_reason = f"convergence={convergence:.2f} >= {CONVERGENCE_TAKE_PROFIT}"
-                logger.info(f"[TAKE-PROFIT] Gap convergence reached: {sold_reason}")
+                logger.info(f"[TAKE-PROFIT] Gap convergence reached, no TP ladder: {sold_reason}")
                 try:
-                    _cancel_all_tp_orders(slug)
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                     if sold:
                         logger.info(f"SOLD take-profit convergence ({method}): {slug} pnl={pnl_pct:.2%}")
@@ -1662,6 +1683,8 @@ def trailing_stop_check():
                             telegram_reporter.alert_convergence(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs, convergence)
                 except Exception as e:
                     logger.warning(f"[CONVERGENCE-SELL] Failed for {slug}: {e}")
+            elif convergence >= CONVERGENCE_TAKE_PROFIT:
+                logger.info(f"[CONVERGENCE] {slug[:40]}... convergence={convergence:.2f} but TP ladder active, letting limits execute")
 
         if not sold and pnl_pct <= HARD_STOP_LOSS:
             sold_reason = f"hard_stop={pnl_pct:.0%}"
@@ -1733,18 +1756,22 @@ def trailing_stop_check():
             except Exception:
                 pass
 
-        if not sold and pnl_pct >= TAKE_PROFIT:
-            sold_reason = f"take_profit={pnl_pct:.0%}"
-            logger.info(f"[TAKE-PROFIT] {slug[:40]}... +{pnl_pct:.0%}")
-            try:
-                sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
-                if sold:
-                    logger.info(f"SOLD take-profit ({method}): {slug}")
-                    pnl_abs = shares * (eff_price - entry_price)
-                    if telegram_reporter:
-                        telegram_reporter.alert_take_profit(slug, pos.get("market_question", ""), pnl_pct * 100, pnl_abs)
-            except Exception:
-                pass
+        if not sold and pnl_pct >= 3.0:
+            tp_orders = _get_open_tp_orders(slug)
+            if not tp_orders:
+                sold_reason = f"take_profit={pnl_pct:.0%}"
+                logger.info(f"[TAKE-PROFIT] {slug[:40]}... +{pnl_pct:.0f}% (no TP ladder, selling)")
+                try:
+                    sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
+                    if sold:
+                        logger.info(f"SOLD take-profit ({method}): {slug}")
+                        pnl_abs = shares * (eff_price - entry_price)
+                        if telegram_reporter:
+                            telegram_reporter.alert_take_profit(slug, pos.get("market_question", ""), pnl_pct * 100, pnl_abs)
+                except Exception:
+                    pass
+            else:
+                logger.info(f"[TAKE-PROFIT] {slug[:40]}... +{pnl_pct:.0f}% but TP ladder active, letting limit orders execute")
 
         if sold:
             _cancel_all_tp_orders(slug)
