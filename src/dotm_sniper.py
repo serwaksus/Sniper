@@ -18,6 +18,7 @@ from dotm_report import TelegramReporter
 
 from news_scanner import check_market_news, extract_keywords, fetch_recent_news
 from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt, check_and_write_pid, cleanup_pid_file
+from equity_tracker import log_equity_snapshot, log_trade
 
 PID_FILE = "/root/dotm-sniper/sniper.pid"
 
@@ -1130,9 +1131,101 @@ def fetch_markets():
             if c["slug"] not in seen_slugs:
                 seen_slugs.add(c["slug"])
                 unique.append(c)
-        return unique[:10]
+        return unique[:30]
     except Exception as e:
         logger.error(f"[MARKETS] Fetch error: {e}")
+        return []
+
+
+def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
+    try:
+        url = "https://gamma-api.polymarket.com/markets"
+        params = {
+            "closed": "false",
+            "limit": 100,
+            "order": "volume",
+            "ascending": "false",
+        }
+        resp = requests.get(url, params=params, timeout=20)
+        if resp.status_code != 200:
+            logger.warning(f"[GAMMA] status={resp.status_code}")
+            return []
+        markets = resp.json()
+        now = datetime.now()
+        candidates = []
+        for m in markets:
+            if m.get("active") is False:
+                continue
+            slug = m.get("slug", "")
+            if slug in existing_slugs:
+                continue
+            question = m.get("question", "")
+            if not question:
+                continue
+            outcome_prices = m.get("outcomePrices", "[]")
+            if isinstance(outcome_prices, str):
+                try:
+                    outcome_prices = json.loads(outcome_prices)
+                except Exception:
+                    continue
+            outcomes = m.get("outcomes", "[]")
+            if isinstance(outcomes, str):
+                try:
+                    outcomes = json.loads(outcomes)
+                except Exception:
+                    continue
+            vol = float(m.get("volume", 0))
+            if vol < MIN_VOLUME:
+                continue
+            end_date = m.get("endDate", m.get("end_date", ""))
+            ttl_hours = 999
+            if end_date:
+                try:
+                    end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00"))
+                    ttl_hours = max(0, (end - now).total_seconds() / 3600)
+                except Exception:
+                    pass
+            if ttl_hours < MIN_TTL_HOURS:
+                continue
+            for outcome, price_str in zip(outcomes, outcome_prices):
+                try:
+                    price = float(price_str)
+                except (ValueError, TypeError):
+                    continue
+                if price <= 0 or price > MAX_PRICE:
+                    continue
+                clusters = detect_clusters(question)
+                if any(c in BANNED_CLUSTERS for c in clusters):
+                    continue
+                is_allowed = any(c in ALLOWED_CLUSTERS for c in clusters)
+                is_other_high_vol = clusters == ["other"] and vol >= PRE_FILTER_OTHER_MIN_VOLUME
+                if not is_allowed and not is_other_high_vol:
+                    continue
+                candidates.append({
+                    "id": m.get("conditionId", m.get("condition_id", "")),
+                    "slug": slug,
+                    "question": question,
+                    "outcome": outcome,
+                    "price": price,
+                    "volume": vol,
+                    "liquidity": float(m.get("liquidity", 0)),
+                    "end_date": end_date,
+                    "ttl_hours": ttl_hours,
+                    "clusters": clusters,
+                    "oracle_type": m.get("oracleType", m.get("oracle_type", "unknown")),
+                    "source": "gamma",
+                })
+        candidates.sort(key=lambda x: -x["volume"])
+        seen = set()
+        unique = []
+        for c in candidates:
+            if c["slug"] not in seen and c["slug"] not in existing_slugs:
+                seen.add(c["slug"])
+                unique.append(c)
+        logger.info(f"[GAMMA] Fetched {len(markets)} markets, {len(unique)} new DOTM candidates")
+        return unique[:20]
+    except Exception as e:
+        logger.error(f"[GAMMA] Fetch error: {e}")
         return []
 
 def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None, cluster=None):
@@ -1656,6 +1749,22 @@ def trailing_stop_check():
         if sold:
             _cancel_all_tp_orders(slug)
             resolve_hypothesis_immediately(slug, current_price, entry_price)
+            try:
+                actual_pnl_val = (current_price - entry_price) / entry_price if entry_price > 0 else 0
+                log_trade(
+                    event_type="SELL",
+                    slug=slug,
+                    question=pos.get("market_question", ""),
+                    entry_price=entry_price,
+                    exit_price=current_price,
+                    shares=shares,
+                    invested=shares * entry_price,
+                    pnl_pct=actual_pnl_val * 100,
+                    pnl_abs=shares * (current_price - entry_price),
+                    reason=sold_reason,
+                )
+            except Exception:
+                pass
             positions = load_json(POSITIONS_FILE, {})
             if slug in positions:
                 del positions[slug]
@@ -1917,14 +2026,18 @@ Rules:
             )
 
     factor_score = min((len(supporting) + len(high_weight)) / 4, 1.0) * 20
-    vol_score = min(market.get("volume", 0) / 1_000_000, 1.0) * 20
+    vol_score = min(market.get("volume", 0) / 500_000, 1.0) * 20
     ttl_days = market.get("ttl_hours", 0) / 24
     if ttl_days > 180:
         time_score = 20
     elif ttl_days > 90:
         time_score = 15
     elif ttl_days > 30:
-        time_score = 10
+        time_score = 12
+    elif ttl_days > 14:
+        time_score = 8
+    elif ttl_days >= 2:
+        time_score = 5
     else:
         time_score = 0
     signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster)
@@ -2311,7 +2424,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
                 logger.info(f"[META-PENALTY-BATCH] -20: p_model={p_model:.1%} >> metaculus={metaculus_prob_val:.1%}")
 
         factor_score = min((len(supporting) + len(high_weight)) / 4, 1.0) * 20
-        vol_score = min(bi.get("volume", 0) / 1_000_000, 1.0) * 20
+        vol_score = min(bi.get("volume", 0) / 500_000, 1.0) * 20
         ttl_hours = bi.get("ttl_hours", 999)
         ttl_days = ttl_hours / 24
         if ttl_days > 180:
@@ -2319,7 +2432,11 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         elif ttl_days > 90:
             time_score = 15
         elif ttl_days > 30:
-            time_score = 10
+            time_score = 12
+        elif ttl_days > 14:
+            time_score = 8
+        elif ttl_days >= 2:
+            time_score = 5
         else:
             time_score = 0
 
@@ -2615,6 +2732,19 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
     })
     save_hypothesis_db(db)
 
+    try:
+        log_trade(
+            event_type="BUY",
+            slug=market["slug"],
+            question=market["question"],
+            entry_price=market["price"],
+            shares=shares,
+            invested=estimated_size,
+            reason=analysis.get("reasoning", "")[:100],
+        )
+    except Exception:
+        pass
+
     if telegram_reporter:
         meta_prob = analysis.get("p_model")
         telegram_reporter.alert_new_position(
@@ -2709,22 +2839,29 @@ def _main_inner():
         return
 
     markets = fetch_markets()
+    db = load_hypothesis_db()
+    existing_slugs = {h["slug"] for h in db.get("hypotheses", []) if not h.get("resolved")}
+    position_slugs = {p.get("slug", "") for p in portfolio}
+    gamma_candidates = fetch_gamma_dotm_candidates(existing_slugs | position_slugs)
+    seen = {m["slug"] for m in markets}
+    for gc in gamma_candidates:
+        if gc["slug"] not in seen:
+            markets.append(gc)
+            seen.add(gc["slug"])
     if not markets:
         print("No markets found")
         return
 
-    print(f"📈 Candidates: {len(markets)}")
+    print(f"📈 Candidates: {len(markets)} (pm-trader + {len(gamma_candidates)} gamma)")
 
     candidates_bought = 0
     available_balance = balance
 
-    db = load_hypothesis_db()
     current_positions_for_clusters = [
         {"clusters": h.get("clusters", []), "size_pct": h.get("size_pct", 0)}
         for h in db.get("hypotheses", []) if not h.get("resolved")
     ]
 
-    existing_slugs = {h["slug"] for h in db.get("hypotheses", []) if not h.get("resolved")}
     market_analyses = {}
 
     candidates_to_analyze = []
@@ -2736,7 +2873,7 @@ def _main_inner():
         can_pass, _ = check_cluster_limits(m["clusters"], current_positions_for_clusters)
         if not can_pass:
             continue
-        if m["slug"] in existing_slugs:
+        if m["slug"] in position_slugs:
             continue
         should_analyze, cached_p = _check_price_delta(m["slug"], m["price"])
         if not should_analyze and cached_p is not None:
@@ -2768,7 +2905,7 @@ def _main_inner():
         if not can_pass:
             continue
 
-        if m["slug"] in existing_slugs:
+        if m["slug"] in position_slugs:
             continue
 
         if m["slug"] in market_analyses:
@@ -2845,6 +2982,11 @@ def _main_inner():
     print(f"\n✅ Bought: {candidates_bought} | Available: ${available_balance:.2f}")
 
     update_daily_stats(balance_data, portfolio, candidates_bought)
+
+    try:
+        log_equity_snapshot()
+    except Exception:
+        pass
 
     db = load_hypothesis_db()
     resolved = db.get("resolved", [])
