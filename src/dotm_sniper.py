@@ -2181,6 +2181,14 @@ Rules:
         time_score = 0
     signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster)
 
+    try:
+        from social_buzz import compute_buzz_score
+        buzz = compute_buzz_score(market.get("slug", ""), market.get("question", ""))
+        buzz_score = buzz.get("buzz_score", 0)
+        signal_score += buzz_score
+    except Exception:
+        buzz_score = 0
+
     base_threshold = get_settings().get("signal_threshold", 55)
     if ttl_days > 90:
         min_signal = get_settings().get("signal_threshold_long_horizon", base_threshold + 10)
@@ -2198,7 +2206,8 @@ Rules:
 
     logger.info(
         f"[SIGNAL] ratio={prob_ratio:.2f}x -> {ratio_score:.0f}, factors={len(supporting)} -> {factor_score:.0f}, "
-        f"vol=${market.get('volume',0):,.0f} -> {vol_score:.0f}, ttl={ttl_days:.0f}d -> {time_score:.0f} "
+        f"vol=${market.get('volume',0):,.0f} -> {vol_score:.0f}, ttl={ttl_days:.0f}d -> {time_score:.0f}, "
+        f"buzz={buzz_score:.1f} "
         f"= {signal_score:.0f}/{min_signal} => {action}"
     )
 
@@ -2581,6 +2590,14 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
 
         signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster)
 
+        try:
+            from social_buzz import compute_buzz_score
+            buzz = compute_buzz_score(slug, bi.get("question", ""))
+            batch_buzz = buzz.get("buzz_score", 0)
+            signal_score += batch_buzz
+        except Exception:
+            batch_buzz = 0
+
         base_threshold = settings.get("signal_threshold", 55)
         if ttl_days > 90:
             min_signal = settings.get("signal_threshold_long_horizon", base_threshold + 10)
@@ -2605,7 +2622,8 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
 
         logger.info(
             f"[SIGNAL-BATCH] ratio={prob_ratio:.2f}x -> {ratio_score:.0f}, factors={len(supporting)}/{len(high_weight)} -> {factor_score:.0f}, "
-            f"vol=${bi.get('volume',0):,.0f} -> {vol_score:.0f}, ttl={ttl_days:.0f}d -> {time_score:.0f} "
+            f"vol=${bi.get('volume',0):,.0f} -> {vol_score:.0f}, ttl={ttl_days:.0f}d -> {time_score:.0f}, "
+            f"buzz={batch_buzz:.1f} "
             f"= {signal_score:.0f}/{min_signal} => {action}"
         )
 
