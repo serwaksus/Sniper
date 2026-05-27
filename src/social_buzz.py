@@ -138,7 +138,15 @@ def _extract_keywords_simple(question: str) -> List[str]:
     return combined[:5]
 
 
+_GDELT_LAST_FAIL = 0.0
+_GDELT_COOLDOWN = 600
+
+
 def fetch_gdelt(keywords: List[str]) -> Dict:
+    global _GDELT_LAST_FAIL
+    if (time.time() - _GDELT_LAST_FAIL) < _GDELT_COOLDOWN:
+        return {"count": 0, "tone": 0, "status": "cooldown"}
+
     query = " ".join(keywords[:3])
     try:
         resp = requests.get(GDELT_URL, params={
@@ -147,11 +155,13 @@ def fetch_gdelt(keywords: List[str]) -> Dict:
             "maxrecords": 250,
             "timespan": "24h",
             "format": "json",
-        }, timeout=15, headers={"User-Agent": "DotmSniper/1.0"})
+        }, timeout=8, headers={"User-Agent": "DotmSniper/1.0"})
         if resp.status_code == 429:
             logger.warning("[BUZZ-GDELT] Rate limited")
+            _GDELT_LAST_FAIL = time.time()
             return {"count": 0, "tone": 0, "status": "rate_limited"}
         if resp.status_code != 200:
+            _GDELT_LAST_FAIL = time.time()
             return {"count": 0, "tone": 0, "status": f"error_{resp.status_code}"}
 
         data = resp.json()
@@ -178,6 +188,7 @@ def fetch_gdelt(keywords: List[str]) -> Dict:
         return {"count": count, "tone": round(avg_tone, 2), "sentiment": sentiment, "status": "ok"}
     except Exception as e:
         logger.debug(f"[BUZZ-GDELT] Error: {e}")
+        _GDELT_LAST_FAIL = time.time()
         return {"count": 0, "tone": 0, "status": f"error: {e}"}
 
 
@@ -223,7 +234,21 @@ def fetch_telegram(keywords: List[str]) -> Dict:
 
     try:
         from telethon import TelegramClient
+        import signal as _signal
+
         session_path = "/tmp/dotm_telegram_session"
+        if not os.path.exists(session_path + ".session"):
+            return {"count": 0, "status": "no_session"}
+
+        class _TelegramTimeout(Exception):
+            pass
+
+        def _timeout_handler(signum, frame):
+            raise _TelegramTimeout("Telegram connection timed out")
+
+        _signal.signal(_signal.SIGALRM, _timeout_handler)
+        _signal.alarm(15)
+
         count = 0
         matching_messages = []
 
@@ -253,9 +278,16 @@ def fetch_telegram(keywords: List[str]) -> Dict:
         return {"count": count, "channels_checked": len(channels), "status": "ok"}
     except ImportError:
         return {"count": 0, "status": "telethon_not_installed"}
+    except _TelegramTimeout:
+        return {"count": 0, "status": "timeout"}
     except Exception as e:
         logger.debug(f"[BUZZ-TELEGRAM] Error: {e}")
         return {"count": 0, "status": f"error: {e}"}
+    finally:
+        try:
+            _signal.alarm(0)
+        except Exception:
+            pass
 
 
 def fetch_reddit(keywords: List[str]) -> Dict:
