@@ -202,7 +202,7 @@ def check_market_news(market: Dict) -> Tuple[bool, str]:
     """
     Main entry point for news check on a market.
     Returns (passed: bool, reason: str)
-    Anti-FUD: if no fresh news found, the trade is BLOCKED (safety measure).
+    Anti-FUD: if no fresh news found, the trade is ALLOWED (no contradictory evidence).
     """
     keywords = extract_keywords(market.get("question", ""))
     if not keywords:
@@ -212,7 +212,7 @@ def check_market_news(market: Dict) -> Tuple[bool, str]:
     headlines = news_data.get("headlines", [])
 
     if not headlines:
-        return False, "No fresh news — blocked by Anti-FUD v5.3.2"
+        return True, "No fresh news — no contradiction found"
 
     metaculus_prob = market.get("metaculus_prob")
     passed, reason = news_sanity_check(
