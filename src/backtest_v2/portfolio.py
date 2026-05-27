@@ -121,24 +121,29 @@ class PortfolioTracker:
     def open_position(self, slug: str, question: str, outcome: str,
                       entry_price: float, shares: float, cost: float,
                       liquidity: float, cluster: str = "other",
-                      p_model: float = 0.0, created_at: str = "") -> bool:
-        self.balance -= cost
-        pos = Position(slug, question, outcome, entry_price, shares, cost,
+                      p_model: float = 0.0, created_at: str = "",
+                      fee: float = 0.0) -> bool:
+        total_cost = cost + fee
+        if total_cost > self.balance:
+            return False
+        self.balance -= total_cost
+        pos = Position(slug, question, outcome, entry_price, shares, total_cost,
                        liquidity, cluster, p_model, created_at)
         self.positions[slug] = pos
-        self.cluster_exposure[cluster] = self.cluster_exposure.get(cluster, 0) + cost
+        self.cluster_exposure[cluster] = self.cluster_exposure.get(cluster, 0) + total_cost
         return True
 
     def close_position(self, slug: str, proceeds: float, reason: str,
-                       market_price: float = 0):
+                       market_price: float = 0, fee: float = 0):
         if slug not in self.positions:
             return
         
         pos = self.positions[slug]
-        pnl_abs = proceeds - pos.cost
-        pnl_pct = (proceeds - pos.cost) / pos.cost if pos.cost > 0 else 0
+        net_proceeds = proceeds - fee
+        pnl_abs = net_proceeds - pos.cost
+        pnl_pct = (net_proceeds - pos.cost) / pos.cost if pos.cost > 0 else 0
         
-        self.balance += proceeds
+        self.balance += net_proceeds
         cluster = pos.cluster
         self.cluster_exposure[cluster] = max(0, self.cluster_exposure.get(cluster, 0) - pos.cost)
         
@@ -148,7 +153,8 @@ class PortfolioTracker:
             "entry_price": pos.entry_price,
             "shares": pos.shares,
             "cost": pos.cost,
-            "proceeds": proceeds,
+            "proceeds": net_proceeds,
+            "fee": fee,
             "pnl_abs": pnl_abs,
             "pnl_pct": pnl_pct,
             "reason": reason,

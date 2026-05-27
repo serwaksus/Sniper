@@ -19,6 +19,7 @@ from dotm_report import TelegramReporter
 from news_scanner import check_market_news, extract_keywords, fetch_recent_news
 from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt, check_and_write_pid, cleanup_pid_file
 from equity_tracker import log_equity_snapshot, log_trade
+from calibration_tracker import log_calibration_entry, detect_model_drift
 
 PID_FILE = "/root/dotm-sniper/sniper.pid"
 
@@ -1887,6 +1888,31 @@ def resolve_hypotheses():
         if len(db.get("resolved", [])) >= BURN_IN_TRADES:
             calculate_brier_score(db)
             learn_from_results(db)
+
+        for h in db.get("resolved", []):
+            if h.get("outcome") in ("YES", "NO") and h.get("p_model") is not None:
+                try:
+                    log_calibration_entry(
+                        slug=h["slug"],
+                        question=h.get("question", ""),
+                        p_model=h["p_model"],
+                        p_calibrated=0,
+                        market_price=h.get("market_price", 0),
+                        actual_outcome=h["outcome"],
+                        cluster=h.get("clusters", ["other"])[0],
+                        entry_price=h.get("market_price", 0),
+                        exit_price=h.get("exit_price", 0),
+                        pnl_pct=h.get("pnl_at_exit", 0),
+                    )
+                except Exception:
+                    pass
+
+        try:
+            drift_alert = detect_model_drift()
+            if drift_alert:
+                logger.warning(f"[CALIBRATION] {drift_alert}")
+        except Exception:
+            pass
 
 
 def full_market_analysis(market):

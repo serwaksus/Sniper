@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 MIN_ORDER_USD = 5.0
 MAX_SLIPPAGE_PCT = 0.50
 MAX_SPREAD_PCT = 0.50
+FEE_PCT = 0.02  # 2% transaction cost per trade (spread + Polymarket fees)
 
 
 def walk_the_book(asks: List[Dict], amount_usd: float) -> Tuple[float, float, float]:
@@ -141,6 +142,8 @@ def simulate_buy(
     result["effective_price"] = effective_price
     result["shares"] = shares
     result["cost"] = cost
+    result["fee"] = round(cost * FEE_PCT, 4)
+    result["cost_with_fee"] = round(cost * (1 + FEE_PCT), 4)
     result["slippage_pct"] = slippage
     result["reason"] = "ok"
     result["book"] = book
@@ -210,6 +213,8 @@ def simulate_sell(
     result["effective_price"] = effective_price
     result["shares_filled"] = shares_filled
     result["proceeds"] = proceeds
+    result["fee"] = round(proceeds * FEE_PCT, 4)
+    result["proceeds_after_fee"] = round(proceeds * (1 - FEE_PCT), 4)
     result["slippage_pct"] = slippage
     result["partial_fill"] = shares_filled < shares * 0.99
     result["reason"] = "ok"

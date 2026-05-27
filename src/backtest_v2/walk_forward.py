@@ -21,6 +21,90 @@ logger = logging.getLogger(__name__)
 RESULTS_DIR = "/root/dotm-sniper/backtest_data"
 
 
+def run_is_oos_split(
+    starting_balance: float = 500.0,
+    is_months: tuple = ("2024-06", "2024-12"),
+    oos_months: tuple = ("2025-01", "2026-05"),
+    max_markets: int = 2000,
+    force_refresh: bool = False,
+) -> Dict:
+    """
+    In-Sample / Out-of-Sample split.
+    IS: 2024 data (parameter tuning, calibration).
+    OOS: 2025-2026 data (unseen, validates generalization).
+    """
+    markets = fetch_resolved_markets(max_markets=max_markets, force_refresh=force_refresh)
+    if not markets:
+        return {"error": "no markets"}
+
+    is_markets = [m for m in markets if is_months[0] <= m.get("created_at", "")[:7] <= is_months[1]]
+    oos_markets = [m for m in markets if oos_months[0] <= m.get("created_at", "")[:7] <= oos_months[1]]
+
+    logger.info(f"[IS/OOS] Total: {len(markets)}, IS: {len(is_markets)}, OOS: {len(oos_markets)}")
+
+    is_result = run_backtest(
+        starting_balance=starting_balance,
+        max_markets=len(is_markets),
+        use_advisor=True,
+        seed=42,
+        markets=is_markets,
+    ) if is_markets else {"total_trades": 0, "total_pnl": 0, "wins": 0}
+
+    oos_result = run_backtest(
+        starting_balance=starting_balance,
+        max_markets=len(oos_markets),
+        use_advisor=True,
+        seed=99,
+        markets=oos_markets,
+    ) if oos_markets else {"total_trades": 0, "total_pnl": 0, "wins": 0}
+
+    is_wr = is_result.get("wins", 0) / max(is_result.get("total_trades", 1), 1)
+    oos_wr = oos_result.get("wins", 0) / max(oos_result.get("total_trades", 1), 1)
+    overfitting_ratio = oos_wr / is_wr if is_wr > 0 else 0
+
+    report = {
+        "method": "is_oos_split",
+        "is_period": f"{is_months[0]} to {is_months[1]}",
+        "oos_period": f"{oos_months[0]} to {oos_months[1]}",
+        "is": {
+            "markets": len(is_markets),
+            "trades": is_result.get("total_trades", 0),
+            "wins": is_result.get("wins", 0),
+            "win_rate": round(is_wr, 3),
+            "pnl": round(is_result.get("total_pnl", 0), 2),
+            "avg_pnl_per_trade": round(is_result.get("total_pnl", 0) / max(is_result.get("total_trades", 1), 1), 4),
+        },
+        "oos": {
+            "markets": len(oos_markets),
+            "trades": oos_result.get("total_trades", 0),
+            "wins": oos_result.get("wins", 0),
+            "win_rate": round(oos_wr, 3),
+            "pnl": round(oos_result.get("total_pnl", 0), 2),
+            "avg_pnl_per_trade": round(oos_result.get("total_pnl", 0) / max(oos_result.get("total_trades", 1), 1), 4),
+        },
+        "overfitting_ratio": round(overfitting_ratio, 3),
+        "verdict": (
+            "HEALTHY" if overfitting_ratio >= 0.7 else
+            "SUSPECT" if overfitting_ratio >= 0.5 else
+            "OVERFIT"
+        ),
+        "oos_500_target_met": oos_result.get("total_trades", 0) >= 500,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    path = os.path.join(RESULTS_DIR, "is_oos_results.json")
+    with open(path, 'w') as f:
+        json.dump(report, f, indent=2, default=str)
+
+    logger.info(
+        f"[IS/OOS] IS: {report['is']['trades']} trades, WR={report['is']['win_rate']:.1%} | "
+        f"OOS: {report['oos']['trades']} trades, WR={report['oos']['win_rate']:.1%} | "
+        f"Ratio={overfitting_ratio:.2f} → {report['verdict']}"
+    )
+    return report
+
+
 def split_by_month(markets: List[Dict], min_train: int = 20) -> List[Dict]:
     """
     Split markets into monthly buckets.

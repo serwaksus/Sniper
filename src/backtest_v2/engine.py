@@ -187,6 +187,7 @@ def run_backtest(
             cluster=market.get("cluster", "other"),
             p_model=signal["p_model"],
             created_at=market.get("created_at", ""),
+            fee=buy_result.get("fee", buy_result["cost"] * 0.02),
         )
     
     logger.info(f"[BACKTEST] Analysis done: {analyzed} markets, {len(portfolio.positions)} positions opened")
@@ -218,15 +219,16 @@ def run_backtest(
                 if convergence >= CONVERGENCE_TP:
                     sell_result = simulate_sell(price, pos.shares_after_tp, pos.entry_price, pos.liquidity)
                     if sell_result["filled"]:
-                        total_proceeds = sell_result["proceeds"]
-                        portfolio.close_position(slug, total_proceeds, f"convergence={convergence:.2f}", price)
+                        fee = sell_result.get("fee", sell_result["proceeds"] * 0.02)
+                        portfolio.close_position(slug, sell_result["proceeds"], f"convergence={convergence:.2f}", price, fee=fee)
                         sold = True
             
             if not sold and pos.trailing_on and price <= pos.stop_loss:
                 if pos.trailing_confirmed:
                     sell_result = simulate_sell(price, pos.shares_after_tp, pos.entry_price, pos.liquidity)
                     if sell_result["filled"]:
-                        portfolio.close_position(slug, sell_result["proceeds"], "trailing_stop", price)
+                        fee = sell_result.get("fee", sell_result["proceeds"] * 0.02)
+                        portfolio.close_position(slug, sell_result["proceeds"], "trailing_stop", price, fee=fee)
                         sold = True
                 else:
                     pos.trailing_confirmed = True
@@ -234,13 +236,15 @@ def run_backtest(
             if not sold and pnl_pct <= -0.80:
                 sell_result = simulate_sell(price, pos.shares_after_tp, pos.entry_price, pos.liquidity, force_market=True)
                 if sell_result["filled"]:
-                    portfolio.close_position(slug, sell_result["proceeds"], "hard_stop_loss", price)
+                    fee = sell_result.get("fee", sell_result["proceeds"] * 0.02)
+                    portfolio.close_position(slug, sell_result["proceeds"], "hard_stop_loss", price, fee=fee)
                     sold = True
             
             if not sold and pnl_pct >= 1.50:
                 sell_result = simulate_sell(price, pos.shares_after_tp, pos.entry_price, pos.liquidity)
                 if sell_result["filled"]:
-                    portfolio.close_position(slug, sell_result["proceeds"], "take_profit", price)
+                    fee = sell_result.get("fee", sell_result["proceeds"] * 0.02)
+                    portfolio.close_position(slug, sell_result["proceeds"], "take_profit", price, fee=fee)
                     sold = True
             
             if not sold and not pos.tp_ladder_filled and price >= 0.75:
@@ -263,7 +267,8 @@ def run_backtest(
         final_price = series[-1]
         sell_result = simulate_sell(final_price, pos.shares_after_tp, pos.entry_price, pos.liquidity, force_market=True)
         proceeds = sell_result["proceeds"] if sell_result["filled"] else pos.shares_after_tp * final_price * 0.5
-        portfolio.close_position(slug, proceeds, "resolution", final_price)
+        fee = sell_result.get("fee", proceeds * 0.02) if sell_result["filled"] else proceeds * 0.02
+        portfolio.close_position(slug, proceeds, "resolution", final_price, fee=fee)
     
     summary = portfolio.summary()
     summary["markets_analyzed"] = analyzed
