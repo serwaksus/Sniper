@@ -354,6 +354,8 @@ def simulate_sell(current_price: float, shares: float, entry_price: float,
 
 def simulate_profile(markets: list, profile: dict, starting_balance: float = 1500.0,
                      seed: int = 42) -> dict:
+    from datetime import datetime as _dt
+
     rng = np.random.default_rng(seed)
     random.seed(seed)
 
@@ -365,107 +367,70 @@ def simulate_profile(markets: list, profile: dict, starting_balance: float = 150
     rejection_reasons = {}
     signals_passed = 0
 
-    for market in markets:
-        slug = market["slug"]
-        entry_price = market["entry_price"]
-        liquidity = market.get("liquidity", 100)
-        category = market.get("category", "other")
-        volume = market.get("volume", 1000)
-        ttl_days = market.get("ttl_days", 30)
-        resolution = market.get("resolution", "NO")
-
-        if balance < 5:
-            break
-
-        signal = estimate_signal(market)
-
-        if signal["signal_score"] < profile["min_signal_score"]:
-            rejection_reasons["low_signal"] = rejection_reasons.get("low_signal", 0) + 1
-            continue
-        if signal["confidence"] < profile["min_confidence"]:
-            rejection_reasons["low_confidence"] = rejection_reasons.get("low_confidence", 0) + 1
-            continue
-        if signal["prob_ratio"] < profile["min_prob_ratio"]:
-            rejection_reasons["low_prob_ratio"] = rejection_reasons.get("low_prob_ratio", 0) + 1
-            continue
-
-        signals_passed += 1
-
-        b = (1 - entry_price) / entry_price
-        p = signal["p_model"]
-        q = 1 - p
-        kelly_full = (b * p - q) / b
-        if kelly_full <= 0:
-            rejection_reasons["negative_kelly"] = rejection_reasons.get("negative_kelly", 0) + 1
-            continue
-
-        kelly_dollars = balance * profile["base_pct"] * profile["kelly_fraction"] * signal["confidence"]
-        if kelly_dollars < MIN_ORDER_USD:
-            rejection_reasons["below_min_size"] = rejection_reasons.get("below_min_size", 0) + 1
-            continue
-        kelly_dollars = min(kelly_dollars, balance * profile["max_pct"])
-
-        if len(positions) >= profile["max_positions"]:
-            rejection_reasons["max_positions"] = rejection_reasons.get("max_positions", 0) + 1
-            continue
-
-        cluster_group = get_cluster_group(category)
-        total_equity = balance + sum(p_d["cost"] for p_d in positions.values())
-        new_cluster_exp = cluster_exposure.get(cluster_group, 0) + kelly_dollars
-        if total_equity > 0 and new_cluster_exp / total_equity > profile["max_cluster_pct"]:
-            rejection_reasons["cluster_limit"] = rejection_reasons.get("cluster_limit", 0) + 1
-            continue
-
-        buy_result = simulate_buy(entry_price, kelly_dollars, liquidity, rng)
-        if not buy_result["filled"]:
-            rejection_reasons["buy_failed"] = rejection_reasons.get("buy_failed", 0) + 1
-            continue
-
-        fee = buy_result["fee"]
-        total_cost = buy_result["cost"] + fee
-        if total_cost > balance:
-            rejection_reasons["insufficient_balance"] = rejection_reasons.get("insufficient_balance", 0) + 1
-            continue
-
-        balance -= total_cost
-
-        positions[slug] = {
-            "entry_price": buy_result["effective_price"],
-            "shares": buy_result["shares"],
-            "cost": total_cost,
-            "liquidity": liquidity,
-            "cluster": cluster_group,
-            "category": category,
-            "p_model": signal["p_model"],
-            "volume": volume,
-            "ttl_days": ttl_days,
-            "resolution": resolution,
-            "high_price": buy_result["effective_price"],
-            "trailing_on": False,
-            "stop_loss": 0.0,
-            "shares_held": buy_result["shares"],
-            "tp_rungs_executed": [],
+    if not markets:
+        return {
+            "total_trades": 0, "signals_passed": 0,
+            "final_equity": starting_balance, "total_pnl": 0,
+            "max_drawdown": 0, "sharpe_ratio": 0, "win_rate": 0,
+            "avg_win_pct": 0, "avg_loss_pct": 0, "equity_curve": [],
+            "trades": [], "rejection_reasons": {},
         }
-        cluster_exposure[cluster_group] = cluster_exposure.get(cluster_group, 0) + total_cost
 
-    for slug, pos in positions.items():
-        num_steps = max(30, min(120, pos["ttl_days"] * 4))
-        path = generate_price_path(
-            pos["entry_price"], pos["resolution"], pos["ttl_days"],
-            pos["volume"], num_steps, rng
+    for market in markets:
+        num_steps = max(30, min(120, market.get("ttl_days", 30) * 4))
+        market["_price_path"] = generate_price_path(
+            market["entry_price"], market.get("resolution", "NO"),
+            market.get("ttl_days", 30), market.get("volume", 1000),
+            num_steps, rng
         )
-        pos["_price_path"] = path
 
-    for step_idx in range(121):
-        current_prices = {}
-        for slug, pos in positions.items():
-            path = pos.get("_price_path", [pos["entry_price"]])
-            idx = min(step_idx, len(path) - 1)
-            current_prices[slug] = path[idx]
+    first_date = None
+    for m in markets:
+        d = m.get("created_at", "")
+        if d and (first_date is None or d < first_date):
+            first_date = d
+    if first_date is None:
+        first_date = "2024-01-01"
+    try:
+        first_dt = _dt.fromisoformat(first_date)
+    except Exception:
+        first_dt = _dt(2024, 1, 1)
 
+    for m in markets:
+        try:
+            d = _dt.fromisoformat(m.get("created_at", first_date))
+            m["_day_index"] = max(0, (d - first_dt).days)
+        except Exception:
+            m["_day_index"] = 0
+
+    max_day = max((m.get("_day_index", 0) for m in markets), default=0)
+    max_ttl = max((m.get("ttl_days", 30) for m in markets), default=30)
+    sim_end_day = max_day + max_ttl + 1
+
+    day_to_markets = {}
+    for i, m in enumerate(markets):
+        day = m.get("_day_index", 0)
+        if day not in day_to_markets:
+            day_to_markets[day] = []
+        day_to_markets[day].append(i)
+
+    event_days_set = set(day_to_markets.keys())
+    for m in markets:
+        event_days_set.add(m.get("_day_index", 0) + m.get("ttl_days", 30))
+    for extra in [0, max_ttl // 4, max_ttl // 2, max_ttl, max_ttl + max_ttl // 2]:
+        event_days_set.add(max_day + extra)
+    event_days = sorted(event_days_set)
+
+    processed = set()
+
+    for day in sorted(set(event_days)):
         for slug in list(positions.keys()):
             pos = positions[slug]
-            price = current_prices.get(slug, 0)
+            path = pos.get("_price_path", [pos["entry_price"]])
+            days_held = day - pos.get("_open_day", 0)
+            path_idx = min(max(0, days_held), len(path) - 1)
+            price = path[path_idx]
+
             if price <= 0:
                 continue
 
@@ -496,7 +461,7 @@ def simulate_profile(markets: list, profile: dict, starting_balance: float = 150
                 pos["trailing_on"] = True
                 pos["stop_loss"] = pos["high_price"] * 0.75
 
-            if not sold and pos["trailing_on"] and price <= pos["stop_loss"]:
+            if not sold and pos.get("trailing_on") and price <= pos.get("stop_loss", 0):
                 sell_r = simulate_sell(price, sell_shares, entry, pos["liquidity"], rng, force_market=True)
                 if sell_r["filled"]:
                     net = sell_r["proceeds"] - sell_r.get("fee", sell_r["proceeds"] * FEE_PCT)
@@ -548,15 +513,133 @@ def simulate_profile(markets: list, profile: dict, starting_balance: float = 150
                     balance += net
                     pos["shares_held"] -= sell_portion
 
-        eq = balance + sum(
-            p["shares_held"] * current_prices.get(s, 0) for s, p in positions.items()
-        )
-        peak = max((e["equity"] for e in equity_curve), default=eq)
-        dd = (eq - peak) / peak if peak > 0 else 0
+            if not sold and days_held >= pos.get("ttl_days", 30):
+                resolution_price = 1.0 if pos["resolution"] == "YES" else 0.0
+                if pos["shares_held"] > 0:
+                    if resolution_price >= 0.5:
+                        proceeds = pos["shares_held"] * min(resolution_price, 0.99)
+                    else:
+                        proceeds = pos["shares_held"] * max(resolution_price * 0.1, 0.001)
+                    fee = proceeds * FEE_PCT
+                    net = proceeds - fee
+                    balance += net
+                    pnl_abs = net - pos["cost"]
+                    trades.append({
+                        "slug": slug, "entry_price": entry, "exit_price": resolution_price,
+                        "pnl_pct": pnl_abs / pos["cost"] if pos["cost"] > 0 else 0,
+                        "pnl_abs": pnl_abs, "reason": "resolution",
+                    })
+                    cluster_exposure[pos["cluster"]] = max(0, cluster_exposure.get(pos["cluster"], 0) - pos["cost"])
+                    del positions[slug]
+                    sold = True
+
+        if day in day_to_markets and balance >= 5:
+            for i in day_to_markets[day]:
+                if i in processed:
+                    continue
+                processed.add(i)
+
+                market = markets[i]
+                slug = market["slug"]
+                entry_price = market["entry_price"]
+                liquidity = market.get("liquidity", 100)
+                category = market.get("category", "other")
+                volume = market.get("volume", 1000)
+                ttl_days = market.get("ttl_days", 30)
+                resolution = market.get("resolution", "NO")
+
+                if balance < 5:
+                    break
+
+                signal = estimate_signal(market)
+
+                if signal["signal_score"] < profile["min_signal_score"]:
+                    rejection_reasons["low_signal"] = rejection_reasons.get("low_signal", 0) + 1
+                    continue
+                if signal["confidence"] < profile["min_confidence"]:
+                    rejection_reasons["low_confidence"] = rejection_reasons.get("low_confidence", 0) + 1
+                    continue
+                if signal["prob_ratio"] < profile["min_prob_ratio"]:
+                    rejection_reasons["low_prob_ratio"] = rejection_reasons.get("low_prob_ratio", 0) + 1
+                    continue
+
+                signals_passed += 1
+
+                b = (1 - entry_price) / entry_price
+                p = signal["p_model"]
+                q = 1 - p
+                kelly_full = (b * p - q) / b
+                if kelly_full <= 0:
+                    rejection_reasons["negative_kelly"] = rejection_reasons.get("negative_kelly", 0) + 1
+                    continue
+
+                kelly_dollars = balance * profile["base_pct"] * profile["kelly_fraction"] * signal["confidence"]
+                if kelly_dollars < MIN_ORDER_USD:
+                    rejection_reasons["below_min_size"] = rejection_reasons.get("below_min_size", 0) + 1
+                    continue
+                kelly_dollars = min(kelly_dollars, balance * profile["max_pct"])
+
+                if len(positions) >= profile["max_positions"]:
+                    rejection_reasons["max_positions"] = rejection_reasons.get("max_positions", 0) + 1
+                    continue
+
+                cluster_group = get_cluster_group(category)
+                total_equity = balance + sum(p_d["cost"] for p_d in positions.values())
+                new_cluster_exp = cluster_exposure.get(cluster_group, 0) + kelly_dollars
+                if total_equity > 0 and new_cluster_exp / total_equity > profile["max_cluster_pct"]:
+                    rejection_reasons["cluster_limit"] = rejection_reasons.get("cluster_limit", 0) + 1
+                    continue
+
+                buy_result = simulate_buy(entry_price, kelly_dollars, liquidity, rng)
+                if not buy_result["filled"]:
+                    rejection_reasons["buy_failed"] = rejection_reasons.get("buy_failed", 0) + 1
+                    continue
+
+                fee = buy_result["fee"]
+                total_cost = buy_result["cost"] + fee
+                if total_cost > balance:
+                    rejection_reasons["insufficient_balance"] = rejection_reasons.get("insufficient_balance", 0) + 1
+                    continue
+
+                balance -= total_cost
+
+                positions[slug] = {
+                    "entry_price": buy_result["effective_price"],
+                    "shares": buy_result["shares"],
+                    "cost": total_cost,
+                    "liquidity": liquidity,
+                    "cluster": cluster_group,
+                    "category": category,
+                    "p_model": signal["p_model"],
+                    "volume": volume,
+                    "ttl_days": ttl_days,
+                    "resolution": resolution,
+                    "high_price": buy_result["effective_price"],
+                    "trailing_on": False,
+                    "stop_loss": 0.0,
+                    "shares_held": buy_result["shares"],
+                    "tp_rungs_executed": [],
+                    "_price_path": market.get("_price_path", [entry_price]),
+                    "_open_day": day,
+                }
+                cluster_exposure[cluster_group] = cluster_exposure.get(cluster_group, 0) + total_cost
+
+        total_equity_val = balance
+        for slug, pos in positions.items():
+            path = pos.get("_price_path", [pos["entry_price"]])
+            days_held = day - pos.get("_open_day", 0)
+            idx = min(max(0, days_held), len(path) - 1)
+            total_equity_val += pos["shares_held"] * path[idx]
+
+        peak = max((e["equity"] for e in equity_curve), default=total_equity_val)
+        dd = (total_equity_val - peak) / peak if peak > 0 else 0
         equity_curve.append({
-            "step": step_idx, "equity": eq, "drawdown": dd,
+            "step": day, "equity": total_equity_val, "drawdown": dd,
             "balance": balance, "open_positions": len(positions),
         })
+
+        if not positions and len(processed) >= len(markets) and day > max_day:
+            break
 
     for slug in list(positions.keys()):
         pos = positions[slug]
@@ -663,6 +746,10 @@ def monte_carlo_simulation(markets: list, profile: dict, n_simulations: int = 10
             nm["entry_price"] = max(0.005, min(0.29, m["entry_price"] * price_noise))
             vol_noise = 1.0 + rng.uniform(-0.15, 0.15)
             nm["volume"] = max(100, m.get("volume", 1000) * vol_noise)
+            ttl_noise = 1.0 + rng.uniform(-0.15, 0.15)
+            nm["ttl_days"] = max(1, int(m.get("ttl_days", 30) * ttl_noise))
+            liq_noise = 1.0 + rng.uniform(-0.20, 0.20)
+            nm["liquidity"] = max(1, m.get("liquidity", 100) * liq_noise)
             noisy.append(nm)
 
         result = simulate_profile(noisy, profile, starting_balance=starting_balance, seed=sim_seed)
