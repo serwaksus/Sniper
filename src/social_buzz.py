@@ -234,14 +234,17 @@ def fetch_telegram(keywords: List[str]) -> Dict:
 
         count = 0
         matching_messages = []
+        channels_checked = 0
 
         def _fetch_channels():
+            nonlocal channels_checked
             c = 0
             msgs = []
             with TelegramClient(session_path, int(api_id), api_hash) as client:
                 channels = json.loads(
                     os.environ.get("TELEGRAM_CHANNELS", json.dumps(DEFAULT_TELEGRAM_CHANNELS))
                 )
+                channels_checked = len(channels)
                 cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
                 for channel in channels:
@@ -271,7 +274,7 @@ def fetch_telegram(keywords: List[str]) -> Dict:
             except Exception as e:
                 return {"count": 0, "status": f"error: {e}"}
 
-        return {"count": count, "channels_checked": len(channels), "status": "ok"}
+        return {"count": count, "channels_checked": channels_checked, "status": "ok"}
     except ImportError:
         return {"count": 0, "status": "telethon_not_installed"}
     except Exception as e:

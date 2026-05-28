@@ -167,7 +167,7 @@ class PortfolioTracker:
 
     def position_size(self, p_model: float, market_price: float, cluster: str = "other",
                       best_ask: float = None) -> float:
-        tier = get_tier(self.balance)
+        tier = get_tier(self.balance + sum(p.cost for p in self.positions.values()))
         effective_price = best_ask if best_ask is not None else market_price
         if effective_price <= 0.001:
             return 0
@@ -187,7 +187,7 @@ class PortfolioTracker:
 
         kelly_with_conf = kelly_full * kelly_frac
 
-        cap = other_pct if cluster == "other" else base_pct
+        cap = base_pct if cluster.startswith("other") else min(base_pct + 0.01, other_pct)
 
         size_pct = min(kelly_with_conf, cap)
         kelly_dollars = round(self.balance * size_pct)

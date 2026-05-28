@@ -1877,10 +1877,10 @@ def trailing_stop_check():
                 )
             except Exception:
                 pass
-            positions = load_json(POSITIONS_FILE, {})
-            if slug in positions:
-                del positions[slug]
-                save_json(POSITIONS_FILE, positions)
+            fresh = load_json(POSITIONS_FILE, {})
+            if slug in fresh:
+                del fresh[slug]
+                save_json(POSITIONS_FILE, fresh)
                 try:
                     from bayesian_updater import cleanup_slug
                     cleanup_slug(slug)
@@ -2633,7 +2633,6 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
                 logger.info(f"[META-OVERRIDE-BATCH] {slug[:30]}... p_model={p_model:.1%} from metaculus={metaculus_prob_val:.1%}")
 
         prob_ratio = p_model / market_price if market_price > 0 else 0
-        ratio_score = min(prob_ratio / 3.0, 1.0) * 25
         signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + batch_buzz
 
         action = "BUY" if signal_score >= min_signal and confidence >= settings.get("min_confidence", MIN_CONFIDENCE) and prob_ratio >= MIN_PROB_RATIO else "SKIP"

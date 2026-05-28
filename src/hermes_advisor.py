@@ -442,7 +442,11 @@ def evaluate_emergency_exit():
         if not question:
             continue
 
-        bot_prob = pos_data.get("metaculus_prob") or (pos_data.get("entry_price", 0) * 2)
+        metaculus_prob_raw = pos_data.get("metaculus_prob")
+        if metaculus_prob_raw is not None and metaculus_prob_raw > 0:
+            bot_prob = metaculus_prob_raw
+        else:
+            bot_prob = min(pos_data.get("entry_price", 0) * 2, 0.20)
         bot_prob = min(max(bot_prob, 0.0), 1.0)
 
         entry_price = pos_data.get("entry_price", 0)
@@ -670,7 +674,11 @@ def _execute_emergency_exit(slug, pos_data, reason):
             logger.info(f"[HERMES] Removed position {slug[:40]}... from file")
         
         entry_price = pos_data.get("entry_price", 0)
-        current_price = pos_data.get("live_price", 0)
+        fresh_portfolio = get_portfolio()
+        fresh_pos = next((p for p in (fresh_portfolio or []) if p.get("market_slug") == slug), None)
+        current_price = fresh_pos.get("live_price", 0) if fresh_pos else 0
+        if current_price <= 0:
+            current_price = pos_data.get("live_price", 0)
         actual_pnl_pct = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else -100
         actual_pnl_abs = (current_price - entry_price) * shares if entry_price > 0 and shares > 0 else 0
         

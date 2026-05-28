@@ -111,10 +111,7 @@ def load_json_versioned(path, default):
 
 
 def save_json_versioned(path, data, expected_version=None):
-    lock_fd = None
     try:
-        lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
-        _lock_file(lock_fd, exclusive=True)
         if expected_version is not None:
             current_data = load_json(path, {})
             current_version = current_data.get("__version", 0) if isinstance(current_data, dict) else 0
@@ -129,13 +126,8 @@ def save_json_versioned(path, data, expected_version=None):
     except Exception as e:
         logger.error(f"[UTILS] save_json_versioned failed for {path}: {e}")
         return False
-    finally:
-        if lock_fd is not None:
-            _unlock_file(lock_fd)
-            try:
-                os.close(lock_fd)
-            except OSError:
-                pass
+
+
 
 
 def check_and_write_pid(pid_file):

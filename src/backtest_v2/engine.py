@@ -10,6 +10,7 @@ import os
 import sys
 import logging
 import random
+import hashlib
 from typing import Dict, List, Optional
 from datetime import datetime
 
@@ -217,6 +218,8 @@ def run_backtest(
                         sold = True
                 else:
                     pos.trailing_confirmed = True
+            elif pos.trailing_on and price > pos.stop_loss:
+                pos.trailing_confirmed = False
 
             if not sold and pnl_pct >= 1.50:
                 sell_result = simulate_sell(price, pos.shares_after_tp, pos.entry_price, pos.liquidity)
@@ -266,7 +269,7 @@ def run_backtest(
                 cluster = market.get("category", "other")
 
                 if cluster == "other":
-                    cluster = f"other_{hash(market.get('question', '')) % 8}"
+                    cluster = f"other_{int(hashlib.md5(market.get('question', '').encode()).hexdigest(), 16) % 8}"
 
                 market["cluster"] = cluster
 
