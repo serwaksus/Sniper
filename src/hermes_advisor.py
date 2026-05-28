@@ -13,20 +13,9 @@ from bayesian_updater import update_posterior, should_exit as bayesian_should_ex
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 from news_scanner import fetch_recent_news
-from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt
+from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt, load_env_file
 
-def _load_env_manual():
-    env_path = "/root/dotm-sniper/.env"
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, val = line.split('=', 1)
-                    val = val.strip().strip('"').strip("'")
-                    os.environ.setdefault(key.strip(), val)
-
-_load_env_manual()
+load_env_file()
 
 HERMES_LOG = "/root/dotm-sniper/logs/hermes.log"
 os.makedirs(os.path.dirname(HERMES_LOG), exist_ok=True)
@@ -172,46 +161,41 @@ def get_portfolio():
 
 def get_open_orders():
     try:
-        res = subprocess.run(["pm-trader", "orders", "--status", "open"],
+        res = subprocess.run(["pm-trader", "orders", "list"],
                            capture_output=True, text=True, timeout=30, start_new_session=True)
-        data = res.stdout
-        orders = []
-        if not data:
-            return orders
-        
-        lines = data.strip().split('\n')
-        for line in lines[1:]:
-            if not line.strip() or '---' in line:
+        data = json.loads(res.stdout) if res.stdout else {}
+        orders = data.get("data", []) if isinstance(data.get("data"), list) else []
+        result = []
+        for o in orders:
+            if o.get("status") != "pending":
                 continue
-            parts = [p.strip() for p in line.split('|')]
-            if len(parts) >= 5:
-                try:
-                    order = {
-                        "slug": parts[0],
-                        "outcome": parts[1],
-                        "side": parts[2],
-                        "price": float(parts[3]) if parts[3] else 0.0,
-                        "shares": round(float(parts[4])) if parts[4] else 0,
-                        "filled": round(float(parts[5])) if len(parts) > 5 and parts[5] else 0,
-                    }
-                    orders.append(order)
-                except (ValueError, IndexError):
-                    continue
-        return orders
+            result.append({
+                "id": o.get("id"),
+                "slug": o.get("market_slug", ""),
+                "outcome": o.get("outcome", "yes"),
+                "side": o.get("side", ""),
+                "price": float(o.get("limit_price", 0)),
+                "shares": float(o.get("amount", 0)),
+            })
+        return result
     except Exception as e:
         logger.error(f"[HERMES] Failed to get open orders: {e}")
         return []
 
 def cancel_order(slug, outcome="yes"):
     try:
-        res = subprocess.run(["pm-trader", "orders", "cancel", slug, outcome],
-                           capture_output=True, text=True, timeout=20, start_new_session=True)
-        if res.returncode != 0:
-            logger.warning(f"[HERMES] Cancel failed for {slug}: rc={res.returncode}")
+        orders = get_open_orders()
+        matching = [o for o in orders if o.get("slug") == slug and o.get("side") == "sell"]
+        if not matching:
             return False
+        order_id = matching[0].get("id")
+        if not order_id:
+            return False
+        res = subprocess.run(["pm-trader", "orders", "cancel", str(order_id)],
+                           capture_output=True, text=True, timeout=20, start_new_session=True)
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
-            logger.info(f"[HERMES] Canceled order for {slug[:40]}...")
+            logger.info(f"[HERMES] Canceled order {order_id} for {slug[:40]}...")
             return True
         logger.warning(f"[HERMES] Cancel failed for {slug}: {result}")
         return False
@@ -425,6 +409,12 @@ def evaluate_emergency_exit():
         logger.info("[HERMES] No positions to evaluate")
         return
 
+    portfolio = get_portfolio()
+    if portfolio is None:
+        logger.error("[HERMES] Portfolio API failed, skipping cycle")
+        return
+    portfolio_map = {p.get("market_slug"): p for p in portfolio if p.get("market_slug")}
+
     for slug, pos_data in positions.items():
         if pos_data.get("in_emergency_exit"):
             if pos_data.get("emergency_exit_failed"):
@@ -451,12 +441,6 @@ def evaluate_emergency_exit():
         question = pos_data.get("market_question", "")
         if not question:
             continue
-
-        portfolio = get_portfolio()
-        if portfolio is None:
-            logger.error("[HERMES] Portfolio API failed during emergency evaluation, skipping")
-            return
-        portfolio_map = {p.get("market_slug"): p for p in portfolio if p.get("market_slug")}
 
         bot_prob = pos_data.get("metaculus_prob") or (pos_data.get("entry_price", 0) * 2)
         bot_prob = min(max(bot_prob, 0.0), 1.0)

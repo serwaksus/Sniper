@@ -24,17 +24,8 @@ from correlation_matrix import check_correlation_limit
 
 PID_FILE = "/root/dotm-sniper/sniper.pid"
 
-def _load_env_manual():
-    env_path = "/root/dotm-sniper/.env"
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, val = line.split('=', 1)
-                    os.environ.setdefault(key.strip(), val.strip())
-
-_load_env_manual()
+from utils import load_env_file
+load_env_file()
 
 telegram_reporter = TelegramReporter()
 
@@ -441,7 +432,7 @@ def get_metaculus_forecast(pm_question, pm_resolve_date=None):
 
     if dispersion is not None and dispersion > DISPERSION_PENALTY_THRESHOLD:
         dispersion_penalty = max(0.0, 1.0 - (dispersion - DISPERSION_PENALTY_THRESHOLD))
-        logger.info(f"[DISPERSION] q1={q1:.3f}, q3={q3:.3f}, dispersion={dispersion:.3f}, penalty={dispersion_penalty:.2f}")
+        logger.info(f"[DISPERSION] q1={q1!r}, q3={q3!r}, dispersion={dispersion:.3f}, penalty={dispersion_penalty:.2f}")
 
     result = {
         "found": True,
@@ -673,18 +664,20 @@ def detect_clusters(question):
     return list(found) if found else ["other"]
 
 def check_cluster_limits(new_clusters, current_positions):
-    total_balance = sum(pos.get("size", 0) for pos in current_positions) or 500
-    tier = get_tier_params(total_balance)
+    total_balance = get_balance()
+    cash = total_balance.get("cash", 500) if total_balance else 500
+    portfolio_value = total_balance.get("total", cash) if total_balance else cash
+    tier = get_tier_params(portfolio_value)
     cluster_limit = tier["max_cluster"]
 
     cluster_exposure = defaultdict(float)
     for pos in current_positions:
         for c in pos.get("clusters", []):
-            cluster_exposure[c] += pos.get("size_pct", 0)
+            cluster_exposure[c] += pos.get("cost_usd", 0)
 
     for cluster in new_clusters:
-        if cluster_exposure.get(cluster, 0) >= cluster_limit:
-            return False, f"Cluster {cluster} limit reached ({cluster_exposure[cluster]:.1%})"
+        if portfolio_value > 0 and cluster_exposure.get(cluster, 0) / portfolio_value >= cluster_limit:
+            return False, f"Cluster {cluster} limit reached ({cluster_exposure[cluster]/portfolio_value:.1%})"
     return True, "OK"
 
 CLUSTER_KEYWORDS = {
@@ -1420,14 +1413,9 @@ LIMIT_MAX_ATTEMPTS = 3
 
 
 def _place_limit_sell(slug, outcome, shares, limit_price):
-    """
-    Place a limit sell order via pm-trader CLI.
-    Falls back to market order if --limit flag unsupported.
-    """
     try:
         res = subprocess.run(
-            ["pm-trader", "sell", slug, outcome, str(shares),
-             "--limit", "--price", f"{limit_price:.4f}"],
+            ["pm-trader", "orders", "place", slug, outcome, "sell", str(int(shares)), f"{limit_price:.4f}"],
             capture_output=True, text=True, timeout=20, start_new_session=True
         )
         result = json.loads(res.stdout) if res.stdout else {}
@@ -1435,35 +1423,21 @@ def _place_limit_sell(slug, outcome, shares, limit_price):
             return True, "limit_placed"
     except Exception:
         pass
-    return False, "limit_unsupported"
+    return False, "limit_failed"
 
 
 def _place_tp_limit_order_single(slug, outcome, shares, price):
-    """
-    v5.1.0: Place an unconditional Take-Profit limit sell order.
-    This is called immediately after a successful BUY execution.
-    The TP is placed regardless of time to expiration.
-
-    Returns (ok: bool, method: str)
-    """
     try:
         res = subprocess.run(
-            ["pm-trader", "sell", slug, outcome, str(shares),
-             "--limit", "--price", f"{price:.4f}"],
+            ["pm-trader", "orders", "place", slug, outcome, "sell", str(int(shares)), f"{price:.4f}"],
             capture_output=True, text=True, timeout=20, start_new_session=True
         )
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
-            logger.info(
-                f"[SMART-EXIT] TP limit placed for {slug[:40]}... "
-                f"@{price:.2f} (shares={shares})"
-            )
+            logger.info(f"[SMART-EXIT] TP limit placed for {slug[:40]}... @{price:.2f} (shares={shares})")
             return True, "tp_limit_placed"
         else:
-            logger.warning(
-                f"[SMART-EXIT] TP limit failed for {slug[:40]}... "
-                f"response={result}"
-            )
+            logger.warning(f"[SMART-EXIT] TP limit failed for {slug[:40]}... response={result}")
     except Exception as e:
         logger.warning(f"[SMART-EXIT] Exception placing TP for {slug[:40]}...: {e}")
     return False, "tp_limit_failed"
@@ -1477,6 +1451,9 @@ def _place_tp_ladder(slug, outcome, total_shares):
         shares = max(round(5.0 / price), round(total_shares * pct), 1)
         if allocated + shares > total_shares: shares = total_shares - allocated
         if shares <= 0: continue
+        if shares * price < 5.0:
+            logger.debug(f"[TP-LADDER] Skipping rung @{price:.2f}: value=${shares*price:.2f} < $5 min")
+            continue
         ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
         results.append((price, shares, ok, m)); allocated += shares
     logger.info(f"[TP-LADDER] {slug[:40]}... placed {len(results)} rungs, {total_shares - allocated} held to expiry")
@@ -1485,29 +1462,24 @@ def _place_tp_ladder(slug, outcome, total_shares):
 
 def _get_open_tp_orders(slug):
     try:
-        res = subprocess.run(["pm-trader", "orders", "--status", "open"], capture_output=True, text=True, timeout=30, start_new_session=True)
-        tp_orders = []
-        for line in res.stdout.strip().split('\n')[1:]:
-            if not line.strip() or '---' in line: continue
-            parts = [p.strip() for p in line.split('|')]
-            if len(parts) >= 3 and parts[0] == slug and parts[2] == 'sell':
-                tp_orders.append({"slug": parts[0], "order_id": parts[1], "side": parts[2]})
-        return tp_orders
+        res = subprocess.run(["pm-trader", "orders", "list"], capture_output=True, text=True, timeout=30, start_new_session=True)
+        data = json.loads(res.stdout) if res.stdout else {}
+        orders = data.get("data", []) if isinstance(data.get("data"), list) else []
+        return [o for o in orders if o.get("market_slug") == slug and o.get("side") == "sell" and o.get("status") == "pending"]
     except Exception:
         return []
 
 
 def _cancel_all_tp_orders(slug):
-    """Cancel all open sell orders for a position on manual/stop exit."""
     try:
-        res = subprocess.run(["pm-trader", "orders", "--status", "open"], capture_output=True, text=True, timeout=30, start_new_session=True)
-        for line in res.stdout.strip().split('\n')[1:]:
-            if not line.strip() or '---' in line: continue
-            parts = [p.strip() for p in line.split('|')]
-            if len(parts)>=3 and parts[0]==slug and parts[2]=='sell':
-                subprocess.run(["pm-trader", "orders", "cancel", slug, parts[1]], timeout=20, start_new_session=True)
-                logger.info(f"[TP-CANCEL] Canceled sell order for {slug[:40]}...")
-    except Exception as e: logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
+        orders = _get_open_tp_orders(slug)
+        for order in orders:
+            order_id = order.get("id")
+            if order_id:
+                subprocess.run(["pm-trader", "orders", "cancel", str(order_id)], timeout=20, start_new_session=True)
+                logger.info(f"[TP-CANCEL] Canceled sell order {order_id} for {slug[:40]}...")
+    except Exception as e:
+        logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
 
 
 def _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=False):
@@ -1640,9 +1612,10 @@ def _check_sell_safety(slug, current_price, shares):
             )
             return False, f"spread_too_wide:{spread:.1%}", best_bid
 
-    if best_bid < current_price * 0.70:
+    bid_threshold = 0.40 if current_price < 0.15 else 0.70
+    if best_bid < current_price * bid_threshold:
         logger.warning(
-            f"[SLIPPAGE-GUARD] {slug[:40]}... best_bid={best_bid:.4f} is >30% below mid={current_price:.4f}, "
+            f"[SLIPPAGE-GUARD] {slug[:40]}... best_bid={best_bid:.4f} is >{(1-bid_threshold)*100:.0f}% below mid={current_price:.4f}, "
             f"likely empty order book, aborting sell"
         )
         return False, f"bid_far_from_mid:{best_bid:.4f}_vs_{current_price:.4f}", best_bid

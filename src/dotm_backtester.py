@@ -43,17 +43,8 @@ from dotm_sniper import (
     calibrate_prediction, _cluster_score_adjustment,
 )
 
-def _load_env_manual():
-    env_path = "/root/dotm-sniper/.env"
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, val = line.split('=', 1)
-                    os.environ.setdefault(key.strip(), val.strip())
-
-_load_env_manual()
+from utils import load_env_file
+load_env_file()
 
 LOG_FILE = "/root/dotm-sniper/sniper.log"
 logging.basicConfig(

@@ -174,3 +174,15 @@ def sanitize_for_prompt(text):
     cleaned = text.replace("{", "").replace("}", "").replace("\\", "")
     cleaned = "".join(c for c in cleaned if ord(c) < 0x10000)
     return cleaned[:500]
+
+
+def load_env_file(path="/root/dotm-sniper/.env"):
+    if not os.path.exists(path):
+        return
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, val = line.split('=', 1)
+                val = val.strip().strip('"').strip("'")
+                os.environ.setdefault(key.strip(), val)

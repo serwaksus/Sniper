@@ -199,17 +199,26 @@ def news_sanity_check(market_title: str, news_headlines: List[str],
 
 
 def check_market_news(market: Dict) -> Tuple[bool, str]:
-    """
-    Main entry point for news check on a market.
-    Returns (passed: bool, reason: str)
-    Anti-FUD: if no fresh news found, the trade is ALLOWED (no contradictory evidence).
-    """
     keywords = extract_keywords(market.get("question", ""))
     if not keywords:
         return True, "No keywords extracted"
 
     news_data = fetch_recent_news(keywords)
     headlines = news_data.get("headlines", [])
+
+    clusters = market.get("clusters", ["other"])
+    cluster_key = clusters[0] if clusters else "other"
+    try:
+        from utils import load_json, save_json
+        cache = load_json("/root/dotm-sniper/source_cache.json", {"metaculus": {}, "news": {}, "last_update": None})
+        cache.setdefault("news", {})[cluster_key] = {
+            "timestamp": datetime.now().isoformat(),
+            "headlines_count": len(headlines),
+            "passed": None,
+        }
+        save_json("/root/dotm-sniper/source_cache.json", cache)
+    except Exception:
+        pass
 
     if not headlines:
         return True, "No fresh news — no contradiction found"
@@ -221,8 +230,12 @@ def check_market_news(market: Dict) -> Tuple[bool, str]:
         metaculus_prob=metaculus_prob
     )
 
-    if passed:
-        return True, reason
+    try:
+        cache = load_json("/root/dotm-sniper/source_cache.json", {})
+        cache.setdefault("news", {})[cluster_key]["passed"] = passed
+        save_json("/root/dotm-sniper/source_cache.json", cache)
+    except Exception:
+        pass
 
     return passed, reason
 

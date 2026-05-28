@@ -40,17 +40,9 @@ GOOGLE_NEWS_URL = "https://news.google.com/rss/search"
 REDDIT_URL = "https://www.reddit.com/search.json"
 
 
-def _load_env():
-    env_path = "/root/dotm-sniper/.env"
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, _, val = line.partition('=')
-                    os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+from utils import load_env_file
+load_env_file()
 
-_load_env()
 
 
 def _get_cache() -> Dict:
