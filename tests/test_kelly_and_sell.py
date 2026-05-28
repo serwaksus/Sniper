@@ -15,8 +15,11 @@ class TestNormalizeProbability(unittest.TestCase):
     def test_valid_decimal(self):
         self.assertAlmostEqual(ds.normalize_probability(0.25), 0.25)
 
-    def test_percentage_above_100_clips_to_1(self):
-        self.assertAlmostEqual(ds.normalize_probability(150.0), 1.0)
+    def test_percentage_converted(self):
+        self.assertAlmostEqual(ds.normalize_probability(45.0), 0.45)
+
+    def test_percentage_50(self):
+        self.assertAlmostEqual(ds.normalize_probability(50.0), 0.50)
 
     def test_none_returns_zero(self):
         self.assertEqual(ds.normalize_probability(None), 0)
@@ -24,21 +27,17 @@ class TestNormalizeProbability(unittest.TestCase):
     def test_negative_clamped_to_zero(self):
         self.assertEqual(ds.normalize_probability(-0.5), 0.0)
 
-    def test_above_one_clamped(self):
-        self.assertAlmostEqual(ds.normalize_probability(1.5), 1.0)
+    def test_above_one_converted(self):
+        self.assertAlmostEqual(ds.normalize_probability(1.5), 0.015)
 
-    def test_exactly_50_is_clamped_to_1(self):
-        self.assertAlmostEqual(ds.normalize_probability(50.0), 1.0)
-
-    def test_exactly_100_clamped_to_1(self):
+    def test_exactly_100(self):
         self.assertAlmostEqual(ds.normalize_probability(100.0), 1.0)
 
-    def test_just_below_100_not_divided(self):
-        self.assertAlmostEqual(ds.normalize_probability(99.9), 1.0)
+    def test_above_100_clips_to_1(self):
+        self.assertAlmostEqual(ds.normalize_probability(150.0), 1.0)
 
-    def test_above_100_clips_to_1_after_division(self):
-        result = ds.normalize_probability(101.0)
-        self.assertAlmostEqual(result, 1.0)
+    def test_just_above_1_converted(self):
+        self.assertAlmostEqual(ds.normalize_probability(1.01), 0.0101)
 
 
 class TestGetTierParams(unittest.TestCase):
@@ -105,6 +104,16 @@ class TestPositionSizeKelly(unittest.TestCase):
         size_1k = ds.position_size(0.30, 0.10, 1000)
         size_10k = ds.position_size(0.30, 0.10, 10000)
         self.assertGreater(size_10k, size_1k)
+
+    def test_other_cluster_lower_than_named(self):
+        size_other = ds.position_size(0.80, 0.10, 1000, cluster="other")
+        size_ai = ds.position_size(0.80, 0.10, 1000, cluster="ai_tech")
+        self.assertGreater(size_ai, size_other)
+
+    def test_named_cluster_kelly_differentiates(self):
+        size_weak = ds.position_size(0.30, 0.10, 1000, cluster="ai_tech")
+        size_strong = ds.position_size(0.60, 0.10, 1000, cluster="ai_tech")
+        self.assertGreater(size_strong, size_weak)
 
 
 class TestCalibratePrediction(unittest.TestCase):

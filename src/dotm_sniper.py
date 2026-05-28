@@ -241,7 +241,7 @@ def normalize_probability(p):
     if p is None:
         return 0
     p = float(p)
-    if p > 100.0:
+    if p > 1.0:
         p = p / 100.0
     return max(0.0, min(1.0, p))
 
@@ -1330,8 +1330,10 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
     # Step 2: Confidence weighting (high confidence = bigger bet)
     kelly_with_confidence = kelly_fraction * confidence
 
-    # Cluster-aware position cap (adaptive by balance tier)
-    effective_cap = tier["other_pct"] if cluster == "other" else tier["base_pct"]
+    # Cluster-aware position cap
+    # Named clusters: Kelly decides up to max_pct (10%+ depending on tier)
+    # "other" cluster: conservative base_pct cap
+    effective_cap = tier["base_pct"] if cluster == "other" else tier["max_pct"]
     size_pct = min(kelly_with_confidence, effective_cap)
 
     kelly_dollars = round(balance * size_pct)

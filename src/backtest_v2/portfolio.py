@@ -187,7 +187,10 @@ class PortfolioTracker:
 
         kelly_with_conf = kelly_full * kelly_frac
 
-        cap = base_pct if cluster.startswith("other") else min(base_pct + 0.01, other_pct)
+        if cluster.startswith("other"):
+            cap = base_pct
+        else:
+            cap = cap_pct
 
         size_pct = min(kelly_with_conf, cap)
         kelly_dollars = round(self.balance * size_pct)

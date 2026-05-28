@@ -162,7 +162,7 @@ class TestKellySizing(unittest.TestCase):
         pt = PortfolioTracker(1000)
         size_other = pt.position_size(0.80, 0.10, cluster="other")
         size_cluster = pt.position_size(0.80, 0.10, cluster="ai_tech")
-        self.assertGreaterEqual(size_cluster, size_other)
+        self.assertGreater(size_cluster, size_other)
 
     def test_best_ask_used_if_provided(self):
         pt = PortfolioTracker(100000)
