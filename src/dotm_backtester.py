@@ -53,7 +53,8 @@ logging.basicConfig(
     handlers=[
         logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
-    ]
+    ],
+    force=True
 )
 logger = logging.getLogger(__name__)
 

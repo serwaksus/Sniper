@@ -113,7 +113,7 @@ def parse_llm_advisor_response(raw_text, log_label="ADVISOR"):
         if c == '\\' and in_string:
             escape_next = True
             continue
-        if c == '"' and not escape_next:
+        if c == '"':
             in_string = not in_string
             continue
         if in_string:
@@ -221,9 +221,13 @@ HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/js
 
 def get_bot_status():
     try:
-        return load_json('/root/.openclaw/workspace/dotm_status.json', {"portfolio": [], "balance": {}})
+        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15, start_new_session=True)
+        if res.returncode == 0 and res.stdout:
+            data = json.loads(res.stdout).get("data", {})
+            return {"portfolio": [], "balance": data}
     except Exception:
-        return {"portfolio": [], "balance": {}}
+        pass
+    return {"portfolio": [], "balance": {}}
 
 def get_positions_tracking():
     return load_json_safe('/root/dotm-sniper/positions.json', {})

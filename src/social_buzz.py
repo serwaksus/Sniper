@@ -226,60 +226,61 @@ def fetch_telegram(keywords: List[str]) -> Dict:
 
     try:
         from telethon import TelegramClient
-        import signal as _signal
+        import concurrent.futures
 
         session_path = "/tmp/dotm_telegram_session"
         if not os.path.exists(session_path + ".session"):
             return {"count": 0, "status": "no_session"}
 
-        class _TelegramTimeout(Exception):
-            pass
-
-        def _timeout_handler(signum, frame):
-            raise _TelegramTimeout("Telegram connection timed out")
-
-        _signal.signal(_signal.SIGALRM, _timeout_handler)
-        _signal.alarm(15)
-
         count = 0
         matching_messages = []
 
-        with TelegramClient(session_path, int(api_id), api_hash) as client:
-            channels = json.loads(
-                os.environ.get("TELEGRAM_CHANNELS", json.dumps(DEFAULT_TELEGRAM_CHANNELS))
-            )
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        def _fetch_channels():
+            c = 0
+            msgs = []
+            with TelegramClient(session_path, int(api_id), api_hash) as client:
+                channels = json.loads(
+                    os.environ.get("TELEGRAM_CHANNELS", json.dumps(DEFAULT_TELEGRAM_CHANNELS))
+                )
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
-            for channel in channels:
-                try:
-                    for msg in client.iter_messages(channel, limit=50, offset_date=None):
-                        if msg.date < cutoff:
-                            break
-                        if msg.text:
-                            text_lower = msg.text.lower()
-                            if any(kw.lower() in text_lower for kw in keywords):
-                                count += 1
-                                matching_messages.append(msg.text[:80])
-                                if count >= 20:
-                                    break
-                except Exception:
-                    continue
-                if count >= 20:
-                    break
+                for channel in channels:
+                    try:
+                        for msg in client.iter_messages(channel, limit=50, offset_date=None):
+                            if msg.date < cutoff:
+                                break
+                            if msg.text:
+                                text_lower = msg.text.lower()
+                                if any(kw.lower() in text_lower for kw in keywords):
+                                    c += 1
+                                    msgs.append(msg.text[:80])
+                                    if c >= 20:
+                                        break
+                    except Exception:
+                        continue
+                    if c >= 20:
+                        break
+            return c, msgs
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_fetch_channels)
+            try:
+                count, matching_messages = future.result(timeout=15)
+            except concurrent.futures.TimeoutError:
+                return {"count": 0, "status": "timeout"}
+            except Exception as e:
+                return {"count": 0, "status": f"error: {e}"}
 
         return {"count": count, "channels_checked": len(channels), "status": "ok"}
     except ImportError:
         return {"count": 0, "status": "telethon_not_installed"}
     except _TelegramTimeout:
         return {"count": 0, "status": "timeout"}
+    except ImportError:
+        return {"count": 0, "status": "telethon_not_installed"}
     except Exception as e:
         logger.debug(f"[BUZZ-TELEGRAM] Error: {e}")
         return {"count": 0, "status": f"error: {e}"}
-    finally:
-        try:
-            _signal.alarm(0)
-        except Exception:
-            pass
 
 
 def fetch_reddit(keywords: List[str]) -> Dict:

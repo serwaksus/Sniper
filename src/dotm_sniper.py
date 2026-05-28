@@ -27,7 +27,16 @@ PID_FILE = "/root/dotm-sniper/sniper.pid"
 from utils import load_env_file
 load_env_file()
 
-telegram_reporter = TelegramReporter()
+_tr_instance = None
+
+def _tr():
+    global _tr_instance
+    if _tr_instance is None:
+        try:
+            _tr_instance = TelegramReporter()
+        except Exception:
+            pass
+    return _tr_instance
 
 LOG_FILE = "/root/dotm-sniper/sniper.log"
 logging.basicConfig(
@@ -251,7 +260,7 @@ def parse_llm_json(response_text):
         if c == '\\' and in_string:
             escape_next = True
             continue
-        if c == '"' and not escape_next:
+        if c == '"':
             in_string = not in_string
             continue
         if in_string:
@@ -648,6 +657,17 @@ def save_hypothesis_db(db):
         db["resolved"] = db["resolved"][-MAX_RESOLVED:]
     save_json(HYPOTHESIS_DB, db)
 
+CLUSTER_KEYWORDS = {
+    "venezuela": {"venezuela", "maduro", "caracas", "chavez", "bolivar"},
+    "russia_ukraine": {"russia", "ukraine", "putin", "zelensky", "kremlin", "moscow", "kyiv", "nato", "war in ukraine", "russian invasion", "ceasefire", "peace deal", "peace talks", "territor", "donbas", "crimea", "donetsk"},
+    "usa_politics": {"trump", "biden", "republican", "democratic", "congress", "senate", "house", "election", "president", "white house", "greenland", "tariff", "executive order", "governor", "primary", "nominee"},
+    "fed_fomc": {"fed", "federal reserve", "fomc", "powell", "interest rate", "monetary", "s&p", "sp 500", "sp500", "recession", "inflation", "treasury", "stock market", "spy"},
+    "sports_nba": {"nba", "basketball", "lakers", "warriors", "celtics"},
+    "sports_ufc": {"ufc", "mma", "fight", "boxing", "fighter"},
+    "crypto": {"bitcoin", "ethereum", "crypto", "btc", "eth", "blockchain", "solana", "monero"},
+    "ai_tech": {"ai safety", "ai bill", "artificial intelligence", "openai", "google deepmind", "microsoft ai", "anthropic", "gpt", "llm", "bytedance", "ipo market cap"},
+}
+
 def detect_clusters(question):
     question_lower = question.lower()
     found = set()
@@ -679,17 +699,6 @@ def check_cluster_limits(new_clusters, current_positions):
         if portfolio_value > 0 and cluster_exposure.get(cluster, 0) / portfolio_value >= cluster_limit:
             return False, f"Cluster {cluster} limit reached ({cluster_exposure[cluster]/portfolio_value:.1%})"
     return True, "OK"
-
-CLUSTER_KEYWORDS = {
-    "venezuela": {"venezuela", "maduro", "caracas", "chavez", "bolivar"},
-    "russia_ukraine": {"russia", "ukraine", "putin", "zelensky", "kremlin", "moscow", "kyiv", "nato", "war in ukraine", "russian invasion", "ceasefire", "peace deal", "peace talks", "territor", "donbas", "crimea", "donetsk"},
-    "usa_politics": {"trump", "biden", "republican", "democratic", "congress", "senate", "house", "election", "president", "white house", "greenland", "tariff", "executive order", "governor", "primary", "nominee"},
-    "fed_fomc": {"fed", "federal reserve", "fomc", "powell", "interest rate", "monetary", "s&p", "sp 500", "sp500", "recession", "inflation", "treasury", "stock market", "spy"},
-    "sports_nba": {"nba", "basketball", "lakers", "warriors", "celtics"},
-    "sports_ufc": {"ufc", "mma", "fight", "boxing", "fighter"},
-    "crypto": {"bitcoin", "ethereum", "crypto", "btc", "eth", "blockchain", "solana", "monero"},
-    "ai_tech": {"ai safety", "ai bill", "artificial intelligence", "openai", "google deepmind", "microsoft ai", "anthropic", "gpt", "llm", "bytedance", "ipo market cap"},
-}
 
 # ============================================================
 # PORTFOLIO EXPOSURE: Track correlated risks by category
@@ -1674,6 +1683,8 @@ def trailing_stop_check():
                 "last_checked": now.isoformat(),
                 "metaculus_prob": None,
                 "market_question": pos.get("market_question", ""),
+                "outcome": pos.get("outcome", "yes"),
+                "clusters": pos.get("clusters", []),
                 "shares": shares
             }
             save_json(POSITIONS_FILE, positions)
@@ -1739,8 +1750,8 @@ def trailing_stop_check():
                         logger.info(f"SOLD take-profit convergence ({method}): {slug} pnl={pnl_pct:.2%}")
                         pnl_abs = shares * (eff_price - entry_price)
                         actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
-                        if telegram_reporter:
-                            telegram_reporter.alert_convergence(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs, convergence)
+                        if _tr():
+                            _tr().alert_convergence(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs, convergence)
                 except Exception as e:
                     logger.warning(f"[CONVERGENCE-SELL] Failed for {slug}: {e}")
             elif convergence >= CONVERGENCE_TAKE_PROFIT:
@@ -1760,16 +1771,16 @@ def trailing_stop_check():
                             f"[STOP-DELAYED] {slug[:40]}... sell unsafe: {safe_reason}. "
                             f"mid={current_price:.4f} entry={entry_price:.4f}"
                         )
-                        if telegram_reporter:
-                            telegram_reporter.alert_stop_loss(slug, pos.get("market_question", ""), pnl_pct * 100, shares * (current_price - entry_price))
+                        if _tr():
+                            _tr().alert_stop_loss(slug, pos.get("market_question", ""), pnl_pct * 100, shares * (current_price - entry_price))
                     else:
                         sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                         if sold:
                             actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                             logger.info(f"SOLD hard stop ({method}): {slug} mid_pnl={pnl_pct:.2%} eff_pnl={actual_pnl:.2%}")
                             pnl_abs = shares * (eff_price - entry_price)
-                            if telegram_reporter:
-                                telegram_reporter.alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
+                            if _tr():
+                                _tr().alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
                 else:
                     logger.warning(f"[EMERGENCY-SELL] {slug[:40]}... forcing market after {limit_attempts} limit attempts")
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=True)
@@ -1777,8 +1788,8 @@ def trailing_stop_check():
                         actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                         logger.info(f"SOLD emergency ({method}): {slug} pnl={actual_pnl:.2%}")
                         pnl_abs = shares * (eff_price - entry_price)
-                        if telegram_reporter:
-                            telegram_reporter.alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
+                        if _tr():
+                            _tr().alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
             except Exception:
                 pass
 
@@ -1808,11 +1819,11 @@ def trailing_stop_check():
                     p.pop("trailing_confirm_time", None)
                     pnl_abs = shares * (eff_price - entry_price)
                     actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
-                    if telegram_reporter:
+                    if _tr():
                         if actual_pnl > 0:
-                            telegram_reporter.alert_take_profit(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
+                            _tr().alert_take_profit(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
                         else:
-                            telegram_reporter.alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
+                            _tr().alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
             except Exception:
                 pass
 
@@ -1826,8 +1837,8 @@ def trailing_stop_check():
                     if sold:
                         logger.info(f"SOLD take-profit ({method}): {slug}")
                         pnl_abs = shares * (eff_price - entry_price)
-                        if telegram_reporter:
-                            telegram_reporter.alert_take_profit(slug, pos.get("market_question", ""), pnl_pct * 100, pnl_abs)
+                        if _tr():
+                            _tr().alert_take_profit(slug, pos.get("market_question", ""), pnl_pct * 100, pnl_abs)
                 except Exception:
                     pass
             else:
@@ -2878,9 +2889,9 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
     except Exception:
         pass
 
-    if telegram_reporter:
+    if _tr():
         meta_prob = analysis.get("p_model")
-        telegram_reporter.alert_new_position(
+        _tr().alert_new_position(
             market_slug=market["slug"],
             question=market["question"],
             entry_price=market["price"],
@@ -2988,7 +2999,7 @@ def _main_inner():
     print(f"📈 Candidates: {len(markets)} (pm-trader + {len(gamma_candidates)} gamma)")
 
     candidates_bought = 0
-    available_balance = balance
+    available_balance = total_balance
 
     current_positions_for_clusters = [
         {"clusters": h.get("clusters", []), "size_pct": h.get("size_pct", 0)}
