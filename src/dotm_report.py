@@ -36,6 +36,7 @@ class TelegramReporter:
         if not self.enabled:
             logger.warning("Telegram send skipped: reporter not enabled")
             return False
+        message = message[:4096]
         for attempt in range(3):
             try:
                 response = requests.post(
@@ -195,7 +196,7 @@ def load_history():
         try:
             with open(HISTORY_FILE, 'r') as f:
                 return json.load(f)
-        except:
+        except Exception:
             pass
     return {"trades": [], "summary": {"total_trades": 0, "wins": 0, "losses": 0, "total_pnl": 0}}
 

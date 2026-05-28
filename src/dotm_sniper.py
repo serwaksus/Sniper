@@ -201,12 +201,13 @@ def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=Non
     return p_ext, method != "raw"
 
 
-def _cluster_score_adjustment(cluster):
+def _cluster_score_adjustment(cluster, settings=None):
     """
     Returns point adjustment to signal_score based on backtest-calibrated cluster weights.
     Reads from bot_settings.json cluster_score_adjustments, falls back to defaults.
     """
-    settings = get_settings()
+    if settings is None:
+        settings = get_settings()
     adjustments = settings.get("cluster_score_adjustments", CLUSTER_SCORE_ADJUSTMENTS)
     adj = adjustments.get(cluster, 0)
     if adj != 0:
@@ -339,7 +340,7 @@ def dates_match(date1, date2, window_days=DATE_WINDOW_DAYS):
 
 def get_metaculus_forecast(pm_question, pm_resolve_date=None):
     cache = load_cache()
-    cache_key = pm_question[:60]
+    cache_key = pm_question[:120]
 
     if cache_key in cache.get("metaculus", {}):
         cached = cache["metaculus"][cache_key]
@@ -415,7 +416,10 @@ def get_metaculus_forecast(pm_question, pm_resolve_date=None):
     if prob is None:
         pred = q_data.get("prediction") or best_match.get("prediction")
         if pred and isinstance(pred, dict):
-            prob = float(pred.get("number") or pred.get("p_above") or pred.get("p_below") or 0)
+            prob = pred.get("number")
+            if prob is None: prob = pred.get("p_above")
+            if prob is None: prob = pred.get("p_below")
+            prob = float(prob) if prob is not None else 0.0
 
     # Fallback 2: check for community forecast in vote data
     if prob is None:
@@ -637,7 +641,6 @@ def load_hypothesis_db():
     if len(active) != len(db.get("hypotheses", [])):
         db["hypotheses"] = active
         dirty = True
-    resolved_slugs = {h["slug"] for h in db.get("resolved", [])}
     deduped = []
     seen = set()
     for h in db.get("resolved", []):
@@ -683,17 +686,19 @@ def detect_clusters(question):
                     break
     return list(found) if found else ["other"]
 
-def check_cluster_limits(new_clusters, current_positions):
-    total_balance = get_balance()
-    cash = total_balance.get("cash", 500) if total_balance else 500
-    portfolio_value = total_balance.get("total", cash) if total_balance else cash
+def check_cluster_limits(new_clusters, current_positions, portfolio_value=None):
+    if portfolio_value is None:
+        total_balance = get_balance()
+        cash = total_balance.get("cash", 500) if total_balance else 500
+        portfolio_value = total_balance.get("total", cash) if total_balance else cash
     tier = get_tier_params(portfolio_value)
     cluster_limit = tier["max_cluster"]
 
     cluster_exposure = defaultdict(float)
     for pos in current_positions:
         for c in pos.get("clusters", []):
-            cluster_exposure[c] += pos.get("cost_usd", 0)
+            cost = pos.get("cost_usd", pos.get("size_pct", 0) * portfolio_value)
+            cluster_exposure[c] += cost
 
     for cluster in new_clusters:
         if portfolio_value > 0 and cluster_exposure.get(cluster, 0) / portfolio_value >= cluster_limit:
@@ -1407,6 +1412,12 @@ def resolve_hypothesis_immediately(slug, current_price, entry_price):
                 del positions[slug]
                 save_json(POSITIONS_FILE, positions)
 
+                try:
+                    from bayesian_updater import cleanup_slug
+                    cleanup_slug(slug)
+                except Exception:
+                    pass
+
             save_hypothesis_db(db)
 
             settings = get_settings()
@@ -1511,7 +1522,9 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
         pos = positions.get(slug, {})
         limit_attempts = pos.get("limit_sell_attempts", 0)
 
-        if limit_attempts < LIMIT_MAX_ATTEMPTS:
+        if _get_open_tp_orders(slug):
+            logger.info(f"[LIMIT-SELL] {slug[:40]}... limit already pending")
+        elif limit_attempts < LIMIT_MAX_ATTEMPTS:
             limit_price = best_bid + LIMIT_PRICE_BUFFER
             logger.info(
                 f"[LIMIT-SELL] {slug[:40]}... spread=${spread:.4f} > ${LIMIT_SPREAD_THRESHOLD}, "
@@ -1657,6 +1670,11 @@ def trailing_stop_check():
                 del positions[slug]
                 save_json(POSITIONS_FILE, positions)
                 logger.info(f"[SKIP-RESOLVED] {slug[:40]}... already resolved in hypothesis_db, removed from positions")
+                try:
+                    from bayesian_updater import cleanup_slug
+                    cleanup_slug(slug)
+                except Exception:
+                    pass
             continue
 
         book = get_order_book(slug)
@@ -1867,6 +1885,11 @@ def trailing_stop_check():
             if slug in positions:
                 del positions[slug]
                 save_json(POSITIONS_FILE, positions)
+                try:
+                    from bayesian_updater import cleanup_slug
+                    cleanup_slug(slug)
+                except Exception:
+                    pass
         else:
             p.pop("selling_in_progress", None)
             positions[slug] = p
@@ -1878,6 +1901,11 @@ def trailing_stop_check():
     for s in stale:
         if s in positions:
             del positions[s]
+            try:
+                from bayesian_updater import cleanup_slug
+                cleanup_slug(s)
+            except Exception:
+                pass
             logger.info(f"[CLEANUP] Removed stale position: {s}")
     if stale:
         save_json(POSITIONS_FILE, positions)
@@ -2163,7 +2191,7 @@ Rules:
         time_score = 5
     else:
         time_score = 0
-    signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster)
+    signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings)
 
     try:
         from social_buzz import compute_buzz_score
@@ -2572,7 +2600,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         else:
             time_score = 0
 
-        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster)
+        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings)
 
         try:
             from social_buzz import compute_buzz_score
@@ -2601,6 +2629,10 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
                 confidence = min(confidence + 0.10, 0.95)
                 min_signal = max(min_signal - 10, 35)
                 logger.info(f"[META-OVERRIDE-BATCH] {slug[:30]}... p_model={p_model:.1%} from metaculus={metaculus_prob_val:.1%}")
+
+        prob_ratio = p_model / market_price if market_price > 0 else 0
+        ratio_score = min(prob_ratio / 3.0, 1.0) * 25
+        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + batch_buzz
 
         action = "BUY" if signal_score >= min_signal and confidence >= settings.get("min_confidence", MIN_CONFIDENCE) and prob_ratio >= MIN_PROB_RATIO else "SKIP"
 
@@ -2985,7 +3017,7 @@ def _main_inner():
     markets = fetch_markets()
     db = load_hypothesis_db()
     existing_slugs = {h["slug"] for h in db.get("hypotheses", []) if not h.get("resolved")}
-    position_slugs = {p.get("slug", "") for p in portfolio}
+    position_slugs = {p.get("market_slug", "") for p in portfolio}
     gamma_candidates = fetch_gamma_dotm_candidates(existing_slugs | position_slugs)
     seen = {m["slug"] for m in markets}
     for gc in gamma_candidates:
@@ -3014,7 +3046,7 @@ def _main_inner():
             break
         if available_balance < 5:
             break
-        can_pass, _ = check_cluster_limits(m["clusters"], current_positions_for_clusters)
+        can_pass, _ = check_cluster_limits(m["clusters"], current_positions_for_clusters, portfolio_value=total_balance)
         if not can_pass:
             continue
         if m["slug"] in position_slugs:
@@ -3045,7 +3077,7 @@ def _main_inner():
         if available_balance < 5:
             break
 
-        can_pass, reason = check_cluster_limits(m["clusters"], current_positions_for_clusters)
+        can_pass, reason = check_cluster_limits(m["clusters"], current_positions_for_clusters, portfolio_value=total_balance)
         if not can_pass:
             continue
 
@@ -3053,6 +3085,7 @@ def _main_inner():
             m["clusters"][0] if m["clusters"] else "other",
             load_json(POSITIONS_FILE, {}),
             balance,
+            new_investment=estimated_size,
         )
         if not corr_ok:
             logger.info(f"[CORR-SKIP] {m['slug'][:40]}... {corr_reason}")
@@ -3123,7 +3156,7 @@ def _main_inner():
         else:
             print(f"   📰 News cache fresh for cluster '{cluster_key}', skipping news check")
 
-        if execute_trade(m, estimated_size, factors, analysis, balance):
+        if execute_trade(m, estimated_size, factors, analysis, total_balance):
             candidates_bought += 1
             available_balance -= estimated_size
             cluster = m.get("clusters", ["other"])[0]

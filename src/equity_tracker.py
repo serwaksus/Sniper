@@ -61,7 +61,7 @@ def log_equity_snapshot():
 
     cash = float(balance.get("cash", 0))
     positions_value = sum(float(p.get("current_value", 0)) for p in portfolio)
-    total_equity = cash + positions_value
+    total_equity = balance.get("total_value", cash + positions_value) if isinstance(balance, dict) else cash + positions_value
     unrealized_pnl = sum(float(p.get("unrealized_pnl", 0)) for p in portfolio)
 
     snapshot = {

@@ -35,6 +35,9 @@ def log_calibration_entry(slug: str, question: str, p_model: float,
     if not isinstance(log, dict):
         log = {"entries": []}
 
+    if any(e.get("slug") == slug for e in log.get("entries", [])):
+        return
+
     actual_bin = 1.0 if actual_outcome == "YES" else 0.0
 
     log["entries"].append({
@@ -98,7 +101,7 @@ def compute_calibration_curve(bins: int = 10) -> Dict:
             })
 
     brier = sum((e["p_model"] - e["actual_bin"]) ** 2 for e in actual_outcomes) / len(actual_outcomes)
-    brier_cal = sum((e["p_calibrated"] - e["actual_bin"]) ** 2 for e in actual_outcomes if e.get("p_calibrated")) / max(1, len([e for e in actual_outcomes if e.get("p_calibrated")]))
+    brier_cal = sum((e["p_calibrated"] - e["actual_bin"]) ** 2 for e in actual_outcomes if e.get("p_calibrated") is not None) / max(1, len([e for e in actual_outcomes if e.get("p_calibrated") is not None]))
 
     low_p = [e for e in actual_outcomes if e["p_model"] < 0.15]
     if low_p:

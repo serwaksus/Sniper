@@ -274,10 +274,6 @@ def fetch_telegram(keywords: List[str]) -> Dict:
         return {"count": count, "channels_checked": len(channels), "status": "ok"}
     except ImportError:
         return {"count": 0, "status": "telethon_not_installed"}
-    except _TelegramTimeout:
-        return {"count": 0, "status": "timeout"}
-    except ImportError:
-        return {"count": 0, "status": "telethon_not_installed"}
     except Exception as e:
         logger.debug(f"[BUZZ-TELEGRAM] Error: {e}")
         return {"count": 0, "status": f"error: {e}"}
@@ -352,8 +348,8 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> Dict:
         weights_used += 0.10
     total_weight += 0.10
 
-    if weights_used > 0 and weights_used < total_weight:
-        total_buzz = total_buzz / weights_used * total_weight
+    if weights_used > 0 and sources_active < 2:
+        total_buzz = total_buzz * 0.7
 
     buzz_score = round(total_buzz * 20, 1)
 

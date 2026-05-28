@@ -208,17 +208,6 @@ def check_market_news(market: Dict) -> Tuple[bool, str]:
 
     clusters = market.get("clusters", ["other"])
     cluster_key = clusters[0] if clusters else "other"
-    try:
-        from utils import load_json, save_json
-        cache = load_json("/root/dotm-sniper/source_cache.json", {"metaculus": {}, "news": {}, "last_update": None})
-        cache.setdefault("news", {})[cluster_key] = {
-            "timestamp": datetime.now().isoformat(),
-            "headlines_count": len(headlines),
-            "passed": None,
-        }
-        save_json("/root/dotm-sniper/source_cache.json", cache)
-    except Exception:
-        pass
 
     if not headlines:
         return True, "No fresh news — no contradiction found"
