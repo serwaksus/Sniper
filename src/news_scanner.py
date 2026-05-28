@@ -7,10 +7,6 @@ import os
 import re
 import sys
 import requests
-import subprocess
-import json
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -24,7 +20,7 @@ def load_env():
     """Load environment variables from .env file"""
     env_path = "/root/dotm-sniper/.env"
     if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
+        with open(env_path) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
@@ -34,7 +30,7 @@ def load_env():
 
 load_env()
 
-def fetch_recent_news(market_keywords: List[str], max_results: int = 5, max_age_days: int = None) -> Dict:
+def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_days: int = None) -> dict:
     """
     Search for recent news headlines based on market keywords.
     Returns dict with headlines, sources, and timestamps.
@@ -80,7 +76,7 @@ def fetch_recent_news(market_keywords: List[str], max_results: int = 5, max_age_
     return _fetch_ddg_news_fallback(market_keywords, max_results, max_age_days)
 
 
-def _fetch_ddg_news_fallback(keywords: List[str], max_results: int, max_age_days: int = 30) -> Dict:
+def _fetch_ddg_news_fallback(keywords: list[str], max_results: int, max_age_days: int = 30) -> dict:
     """
     Fallback using DuckDuckGo HTML news search
     when Tavily API is not available.
@@ -112,7 +108,7 @@ def _fetch_ddg_news_fallback(keywords: List[str], max_results: int, max_age_days
     return {"headlines": [], "sources": [], "query": "", "found": False}
 
 
-def extract_keywords(question: str) -> List[str]:
+def extract_keywords(question: str) -> list[str]:
     """Extract meaningful keywords from market question for news search"""
     import re
     stop_words = {
@@ -124,8 +120,8 @@ def extract_keywords(question: str) -> List[str]:
     return [w for w in words if w not in stop_words][:8]
 
 
-def news_sanity_check(market_title: str, news_headlines: List[str],
-                      metaculus_prob: Optional[float] = None) -> Tuple[bool, str]:
+def news_sanity_check(market_title: str, news_headlines: list[str],
+                      metaculus_prob: float | None = None) -> tuple[bool, str]:
     """
     LLM-powered sanity check using news headlines.
 
@@ -193,7 +189,7 @@ def news_sanity_check(market_title: str, news_headlines: List[str],
         content = raw_content.strip().upper() if raw_content else ""
 
         if re.search(r'\bBLOCK\b', content):
-            return False, f"News contain breaking confirmation/refutation"
+            return False, "News contain breaking confirmation/refutation"
         elif re.search(r'\bPASS\b', content):
             return True, "News neutral, trade allowed"
         else:
@@ -203,7 +199,7 @@ def news_sanity_check(market_title: str, news_headlines: List[str],
         return True, f"LLM error: {str(e)[:50]}, default PASS"
 
 
-def check_market_news(market: Dict) -> Tuple[bool, str]:
+def check_market_news(market: dict) -> tuple[bool, str]:
     keywords = extract_keywords(market.get("question", ""))
     if not keywords:
         return True, "No keywords extracted"

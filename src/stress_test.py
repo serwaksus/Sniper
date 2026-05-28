@@ -3,14 +3,11 @@
 Monte Carlo stress test and competitive edge monitor for DOTM Sniper.
 Simulates worst-case scenarios, estimates risk of ruin, and tracks edge degradation.
 """
-import json
 import os
 import sys
-import math
 import random
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
+from datetime import datetime
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,7 +21,7 @@ CALIBRATION_LOG = "/root/dotm-sniper/calibration_log.json"
 logger = logging.getLogger(__name__)
 
 
-def _get_live_stats() -> Dict:
+def _get_live_stats() -> dict:
     db = load_json(HYPOTHESIS_DB, {"resolved": []})
     if not isinstance(db, dict):
         db = {"resolved": []}
@@ -62,7 +59,7 @@ def monte_carlo_simulation(
     fee_per_trade: float = 0.02,
     n_simulations: int = 10000,
     stop_if_ruined: bool = True,
-) -> Dict:
+) -> dict:
     ruin_threshold = 0.10 * start_balance
     results = {
         "final_balances": [],
@@ -167,7 +164,7 @@ def monte_carlo_simulation(
     }
 
 
-def check_edge_degradation(quarterly_min_trades: int = 10) -> Dict:
+def check_edge_degradation(quarterly_min_trades: int = 10) -> dict:
     db = load_json(HYPOTHESIS_DB, {"resolved": []})
     if not isinstance(db, dict):
         db = {"resolved": []}

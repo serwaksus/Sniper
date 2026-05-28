@@ -4,16 +4,13 @@ Calibration Feedback Module for DOTM Sniper.
 Tracks p_model vs actual outcomes, computes calibration metrics,
 detects over/underestimation, and alerts on model drift.
 """
-import json
 import os
 import sys
 import logging
 import math
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -61,7 +58,7 @@ def log_calibration_entry(slug: str, question: str, p_model: float,
     save_json(CALIBRATION_LOG, log)
 
 
-def compute_calibration_curve(bins: int = 10) -> Dict:
+def compute_calibration_curve(bins: int = 10) -> dict:
     log = load_json(CALIBRATION_LOG, {"entries": []})
     if not isinstance(log, dict):
         log = {"entries": []}
@@ -155,7 +152,7 @@ def compute_calibration_curve(bins: int = 10) -> Dict:
     }
 
 
-def detect_model_drift(window_days: int = 90, min_trades: int = 10) -> Optional[str]:
+def detect_model_drift(window_days: int = 90, min_trades: int = 10) -> str | None:
     log = load_json(CALIBRATION_LOG, {"entries": []})
     if not isinstance(log, dict):
         return None
@@ -225,7 +222,7 @@ def sync_from_hypothesis_db():
     return added
 
 
-def get_edge_report() -> Dict:
+def get_edge_report() -> dict:
     stats = compute_calibration_curve()
     if "error" in stats:
         return stats
@@ -251,7 +248,7 @@ def _sigmoid(x):
     return 1.0 / (1.0 + math.exp(-x))
 
 
-def _train_platt_cluster(p_models: List[float], outcomes: List[float]) -> Optional[Dict]:
+def _train_platt_cluster(p_models: list[float], outcomes: list[float]) -> dict | None:
     if len(p_models) < MIN_PLATT_SAMPLES:
         return None
 
@@ -275,7 +272,7 @@ def _train_platt_cluster(p_models: List[float], outcomes: List[float]) -> Option
     return {"a": round(a, 6), "b": round(b, 6), "samples": len(p_models)}
 
 
-def train_platt_models() -> Dict:
+def train_platt_models() -> dict:
     log = load_json(CALIBRATION_LOG, {"entries": []})
     if not isinstance(log, dict):
         log = {"entries": []}
@@ -324,7 +321,7 @@ def train_platt_models() -> Dict:
     return models
 
 
-def get_platt_calibrated(p_model: float, cluster: str = "other") -> Optional[float]:
+def get_platt_calibrated(p_model: float, cluster: str = "other") -> float | None:
     if not os.path.exists(PLATT_MODEL_FILE):
         return None
     data = load_json(PLATT_MODEL_FILE, None)

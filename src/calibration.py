@@ -2,11 +2,9 @@
 Isotonic Regression Calibrator for DOTM Sniper
 Learns optimal p_model -> p_calibrated mapping from historical data
 """
-import json
 import os
 import sys
 import logging
-import tempfile
 import numpy as np
 from sklearn.isotonic import IsotonicRegression
 

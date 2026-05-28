@@ -3,13 +3,11 @@
 Correlation matrix for DOTM Sniper positions.
 Tracks pairwise price correlations and limits exposure to correlated clusters.
 """
-import json
 import os
 import sys
 import math
 import logging
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -39,7 +37,7 @@ CORRELATED_GROUPS = {
 MAX_CORRELATED_GROUP_PCT = 0.25
 
 
-def _get_price_series(slug: str, min_points: int = 5) -> List[float]:
+def _get_price_series(slug: str, min_points: int = 5) -> list[float]:
     try:
         history = load_json(PRICE_HISTORY_FILE, {})
         if not isinstance(history, dict):
@@ -52,7 +50,7 @@ def _get_price_series(slug: str, min_points: int = 5) -> List[float]:
         return []
 
 
-def compute_pairwise_correlation(slug_a: str, slug_b: str) -> Optional[float]:
+def compute_pairwise_correlation(slug_a: str, slug_b: str) -> float | None:
     series_a = _get_price_series(slug_a)
     series_b = _get_price_series(slug_b)
 
@@ -87,7 +85,7 @@ def compute_pairwise_correlation(slug_a: str, slug_b: str) -> Optional[float]:
     return max(-1.0, min(1.0, corr))
 
 
-def get_correlated_exposure(positions: Dict, balance: float) -> Dict[str, float]:
+def get_correlated_exposure(positions: dict, balance: float) -> dict[str, float]:
     if not positions or balance <= 0:
         return {}
 
@@ -107,8 +105,8 @@ def get_correlated_exposure(positions: Dict, balance: float) -> Dict[str, float]
     return group_exposure
 
 
-def check_correlation_limit(new_cluster: str, positions: Dict, balance: float,
-                            new_investment: float = 0) -> Tuple[bool, str]:
+def check_correlation_limit(new_cluster: str, positions: dict, balance: float,
+                            new_investment: float = 0) -> tuple[bool, str]:
     if not positions or balance <= 0:
         return True, "ok"
 

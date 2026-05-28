@@ -5,20 +5,18 @@ No look-ahead bias, real slippage, portfolio constraints, full exit logic.
 Chronological loop: exits are checked before new opens on each event day,
 so max_positions cannot fill up before any exits can occur.
 """
-import json
 import os
 import sys
 import logging
 import random
 import hashlib
-from typing import Dict, List, Optional
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data_loader import fetch_resolved_markets, generate_price_series, generate_order_book
+from data_loader import fetch_resolved_markets, generate_price_series
 from execution import simulate_buy, simulate_sell, simulate_tp_ladder
-from portfolio import PortfolioTracker, Position, CONVERGENCE_TP
+from portfolio import PortfolioTracker, CONVERGENCE_TP
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +28,10 @@ ADVISOR_VETO_RATE = 0.20
 NEWS_BLOCK_RATE = 0.05
 
 
-def _estimate_signal(market: Dict, use_metaculus: bool = True,
+def _estimate_signal(market: dict, use_metaculus: bool = True,
                      signal_threshold: float = SIGNAL_THRESHOLD,
                      min_confidence: float = MIN_CONFIDENCE,
-                     min_prob_ratio: float = MIN_PROB_RATIO) -> Dict:
+                     min_prob_ratio: float = MIN_PROB_RATIO) -> dict:
     """
     Estimate p_model from market properties without LLM (avoids look-ahead).
     Uses structural features: price level, volume, time-to-expiry, category.
@@ -83,7 +81,7 @@ def _estimate_signal(market: Dict, use_metaculus: bool = True,
     }
 
 
-def _simulate_advisor_veto(signal: Dict, veto_rate: float = ADVISOR_VETO_RATE) -> bool:
+def _simulate_advisor_veto(signal: dict, veto_rate: float = ADVISOR_VETO_RATE) -> bool:
     """Simulate advisor pre-check. ~30% veto rate based on live data."""
     if signal["confidence"] < 0.70:
         return random.random() < 0.50
@@ -107,7 +105,7 @@ def run_backtest(
     seed: int = 42,
     markets: list = None,
     profile: dict = None,
-) -> Dict:
+) -> dict:
     """
     Run realistic event-driven backtest with a single chronological loop.
     On each event day: check exits first, then try to open new positions.

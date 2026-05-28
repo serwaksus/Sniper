@@ -22,7 +22,6 @@ import sys
 import time
 import logging
 import argparse
-import re
 import random
 import subprocess
 import requests
@@ -35,12 +34,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from dotm_sniper import (
     load_json, save_json, parse_llm_json, normalize_probability,
-    detect_clusters, get_metaculus_forecast, check_metaculus_gap,
+    detect_clusters, check_metaculus_gap,
     URL, HEADERS, MODEL_MAIN, ADVISOR_MODEL,
-    MAX_P_MODEL_RATIO, MIN_P_MODEL, MAX_PRICE,
-    ALLOWED_CLUSTERS, MIN_VOLUME,
-    get_settings, MIN_CONFIDENCE, MIN_TTL_HOURS,
-    calibrate_prediction, _cluster_score_adjustment,
+    MAX_P_MODEL_RATIO, MIN_P_MODEL, MIN_VOLUME,
+    get_settings, MIN_CONFIDENCE, calibrate_prediction, _cluster_score_adjustment,
 )
 
 from utils import load_env_file
@@ -189,7 +186,6 @@ def _fetch_active_dotm_markets_pm_trader(limit=200):
                     now = datetime.now()
                     if end_date:
                         try:
-                            from datetime import timedelta
                             end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
                             ttl_hours = max(0, (end - now).total_seconds() / 3600)
                         except Exception:
@@ -792,7 +788,7 @@ def run_backtest_live(count=100, skip_advisor=False, use_calibrator=False):
         final_action = analysis["action"]
         if final_action == "BUY" and not advisor_approved:
             final_action = "SKIP"
-            print(f"  -> VETOED by advisor")
+            print("  -> VETOED by advisor")
 
         actual_outcome = 1 if m["resolution"] == "YES" else 0
         p_model = analysis.get("p_model", 0)
@@ -1014,7 +1010,7 @@ def run_backtest_live_active(count=100, skip_advisor=False):
         final_action = analysis["action"]
         if final_action == "BUY" and not advisor_approved:
             final_action = "SKIP"
-            print(f"  -> VETOED by advisor")
+            print("  -> VETOED by advisor")
 
         if final_action == "BUY":
             buys += 1
@@ -1076,7 +1072,7 @@ def run_backtest_live_active(count=100, skip_advisor=False):
         total = cs["buys"] + cs["skips"]
         print(f"    {cluster:20s}: {total:3d} total, {cs['buys']:3d} buys")
     print()
-    print(f"  Run '--check' later to resolve pending predictions")
+    print("  Run '--check' later to resolve pending predictions")
     print(f"  Results saved to: {BACKTEST_OUTPUT}")
     print("=" * 60)
 
@@ -1131,7 +1127,7 @@ def run_backtest_sim(count=50, skip_advisor=False):
         final_action = analysis["action"]
         if final_action == "BUY" and not advisor_approved:
             final_action = "SKIP"
-            print(f"  -> VETOED by advisor")
+            print("  -> VETOED by advisor")
 
         actual_outcome = 1 if m["resolution"] == "YES" else 0
         p_model = analysis.get("p_model", 0)

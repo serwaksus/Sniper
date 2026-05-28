@@ -3,8 +3,6 @@
 Backtest v2 Portfolio Tracker — tracks positions, equity curve, drawdown, Sharpe.
 """
 import logging
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -72,26 +70,26 @@ class PortfolioTracker:
     def __init__(self, starting_balance: float = 500.0, profile: dict = None):
         self.starting_balance = starting_balance
         self.balance = starting_balance
-        self.positions: Dict[str, Position] = {}
-        self.equity_curve: List[Dict] = []
-        self.trades: List[Dict] = []
-        self.rejected_trades: List[Dict] = []
-        self.cluster_exposure: Dict[str, float] = {}
+        self.positions: dict[str, Position] = {}
+        self.equity_curve: list[dict] = []
+        self.trades: list[dict] = []
+        self.rejected_trades: list[dict] = []
+        self.cluster_exposure: dict[str, float] = {}
         self.step = 0
         self._profile = profile or {}
 
-    def equity(self, prices: Dict[str, float]) -> float:
+    def equity(self, prices: dict[str, float]) -> float:
         pos_value = sum(
             pos.current_value(prices.get(pos.slug, 0))
             for pos in self.positions.values()
         )
         return self.balance + pos_value
 
-    def record_equity(self, prices: Dict[str, float], timestamp: str = ""):
+    def record_equity(self, prices: dict[str, float], timestamp: str = ""):
         eq = self.equity(prices)
         peak = max((e["equity"] for e in self.equity_curve), default=eq)
         drawdown = (eq - peak) / peak if peak > 0 else 0
-        
+
         self.equity_curve.append({
             "step": self.step,
             "timestamp": timestamp,
@@ -101,7 +99,7 @@ class PortfolioTracker:
             "drawdown": drawdown,
         })
 
-    def can_open_position(self, cluster: str, amount: float) -> Tuple[bool, str]:
+    def can_open_position(self, cluster: str, amount: float) -> tuple[bool, str]:
         tier = get_tier(self.balance + sum(p.cost for p in self.positions.values()))
         max_pos = self._profile.get("max_positions", tier["max_positions"])
         if len(self.positions) >= max_pos:
@@ -139,16 +137,16 @@ class PortfolioTracker:
                        market_price: float = 0, fee: float = 0):
         if slug not in self.positions:
             return
-        
+
         pos = self.positions[slug]
         net_proceeds = proceeds - fee
         pnl_abs = net_proceeds - pos.cost
         pnl_pct = (net_proceeds - pos.cost) / pos.cost if pos.cost > 0 else 0
-        
+
         self.balance += net_proceeds
         cluster = pos.cluster
         self.cluster_exposure[cluster] = max(0, self.cluster_exposure.get(cluster, 0) - pos.cost)
-        
+
         self.trades.append({
             "slug": slug,
             "outcome": pos.outcome,
@@ -162,7 +160,7 @@ class PortfolioTracker:
             "reason": reason,
             "cluster": cluster,
         })
-        
+
         del self.positions[slug]
 
     def position_size(self, p_model: float, market_price: float, cluster: str = "other",
@@ -182,7 +180,6 @@ class PortfolioTracker:
 
         kelly_frac = self._profile.get("kelly_fraction", tier["kelly"])
         base_pct = self._profile.get("base_pct", tier["base_pct"])
-        other_pct = self._profile.get("other_pct", base_pct + 0.01)
         cap_pct = self._profile.get("max_pct", MAX_POS_PCT)
 
         kelly_with_conf = kelly_full * kelly_frac
@@ -206,31 +203,31 @@ class PortfolioTracker:
             return
         pos = self.positions[slug]
         pos.high_price = max(pos.high_price, market_price)
-        
+
         if pos.high_price > pos.entry_price * (1 + TRAILING_ACTIVATION):
             pos.trailing_on = True
             pos.stop_loss = pos.high_price * (1 - TRAILING_STOP)
 
-    def summary(self) -> Dict:
+    def summary(self) -> dict:
         if not self.trades:
             return {"total_trades": 0}
-        
+
         wins = [t for t in self.trades if t["pnl_abs"] > 0]
         losses = [t for t in self.trades if t["pnl_abs"] <= 0]
-        
+
         avg_win = sum(t["pnl_pct"] for t in wins) / len(wins) if wins else 0
         avg_loss = sum(t["pnl_pct"] for t in losses) / len(losses) if losses else 0
         total_pnl = sum(t["pnl_abs"] for t in self.trades)
-        
+
         max_dd = min((e["drawdown"] for e in self.equity_curve), default=0)
-        
+
         returns = []
         for i in range(1, len(self.equity_curve)):
             prev = self.equity_curve[i-1]["equity"]
             curr = self.equity_curve[i]["equity"]
             if prev > 0:
                 returns.append(curr / prev - 1)
-        
+
         sharpe = 0
         if returns:
             avg_ret = sum(returns) / len(returns)
@@ -241,17 +238,17 @@ class PortfolioTracker:
                 n_days = max(1, n_steps)
                 annualization = min((365 / n_days) ** 0.5, 252 ** 0.5)
                 sharpe = avg_ret / std * annualization
-        
+
         reasons = {}
         for t in self.trades:
             r = t["reason"]
             reasons[r] = reasons.get(r, 0) + 1
-        
+
         rejected_reasons = {}
         for r in self.rejected_trades:
             reason = r.get("reason", "unknown")
             rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
-        
+
         return {
             "total_trades": len(self.trades),
             "wins": len(wins),

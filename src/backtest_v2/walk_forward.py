@@ -8,7 +8,6 @@ import json
 import os
 import sys
 import logging
-from typing import Dict, List
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,7 +26,7 @@ def run_is_oos_split(
     oos_months: tuple = ("2025-01", "2026-05"),
     max_markets: int = 2000,
     force_refresh: bool = False,
-) -> Dict:
+) -> dict:
     """
     In-Sample / Out-of-Sample split.
     IS: 2024 data (parameter tuning, calibration).
@@ -105,7 +104,7 @@ def run_is_oos_split(
     return report
 
 
-def split_by_month(markets: List[Dict], min_train: int = 20) -> List[Dict]:
+def split_by_month(markets: list[dict], min_train: int = 20) -> list[dict]:
     """
     Split markets into monthly buckets.
     Returns list of {month_key, markets}.
@@ -116,7 +115,7 @@ def split_by_month(markets: List[Dict], min_train: int = 20) -> List[Dict]:
         if not created:
             continue
         by_month.setdefault(created, []).append(m)
-    
+
     months = sorted(by_month.keys())
     buckets = []
     for month in months:
@@ -125,7 +124,7 @@ def split_by_month(markets: List[Dict], min_train: int = 20) -> List[Dict]:
                 "month": month,
                 "markets": by_month[month],
             })
-    
+
     return buckets
 
 
@@ -133,44 +132,44 @@ def run_walk_forward(
     starting_balance: float = 500.0,
     max_markets: int = 500,
     force_refresh: bool = False,
-) -> Dict:
+) -> dict:
     """
     Walk-forward validation with expanding window.
     Each fold: train on all data up to month N, test on month N+1.
     """
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    
+
     markets = fetch_resolved_markets(
         max_markets=max_markets,
         force_refresh=force_refresh,
     )
-    
+
     if not markets:
         return {"error": "no markets"}
-    
+
     buckets = split_by_month(markets)
-    
+
     if len(buckets) < 2:
         logger.warning("[WALK-FORWARD] Not enough monthly data, running single backtest")
         return run_backtest(starting_balance=starting_balance, max_markets=max_markets,
                             markets=markets)
-    
+
     fold_results = []
     cumulative_pnl = 0.0
     cumulative_trades = 0
     cumulative_wins = 0
-    
+
     for i in range(1, len(buckets)):
         test_month = buckets[i]["month"]
         test_markets = buckets[i]["markets"]
-        
+
         train_months = [b["month"] for b in buckets[:i]]
         train_size = sum(len(b["markets"]) for b in buckets[:i])
-        
+
         logger.info(f"[WALK-FORWARD] Fold {i}/{len(buckets)-1}: "
                      f"train={train_months[0]}..{train_months[-1]} ({train_size} markets), "
                      f"test={test_month} ({len(test_markets)} markets)")
-        
+
         result = run_backtest(
             starting_balance=starting_balance,
             max_markets=len(test_markets),
@@ -179,7 +178,7 @@ def run_walk_forward(
             seed=42 + i,
             markets=test_markets,
         )
-        
+
         fold_results.append({
             "fold": i,
             "train_months": f"{train_months[0]}..{train_months[-1]}",
@@ -188,11 +187,11 @@ def run_walk_forward(
             "test_size": len(test_markets),
             **result,
         })
-        
+
         cumulative_pnl += result.get("total_pnl", 0)
         cumulative_trades += result.get("total_trades", 0)
         cumulative_wins += result.get("wins", 0)
-    
+
     overall = {
         "method": "walk_forward",
         "folds": len(fold_results),
@@ -202,12 +201,12 @@ def run_walk_forward(
         "fold_results": fold_results,
         "timestamp": datetime.now().isoformat(),
     }
-    
+
     results_path = os.path.join(RESULTS_DIR, "walk_forward_results.json")
     with open(results_path, 'w') as f:
         json.dump(overall, f, indent=2, default=str)
-    
+
     logger.info(f"[WALK-FORWARD] Done: {len(fold_results)} folds, "
                 f"PnL=${cumulative_pnl:.2f}, WR={overall['cumulative_win_rate']:.1%}")
-    
+
     return overall

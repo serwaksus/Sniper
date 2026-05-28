@@ -1,0 +1,7 @@
+[lint]
+select = ["E", "F", "W", "B", "SIM", "UP"]
+ignore = ["E501", "SIM108", "SIM105"]
+
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["F401", "F841"]

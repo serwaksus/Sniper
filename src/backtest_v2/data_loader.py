@@ -11,7 +11,6 @@ import time
 import logging
 import random
 import requests
-from typing import List, Dict, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -44,7 +43,7 @@ def _parse_float(val, default=0.0):
         return default
 
 
-def _is_resolved(m: Dict) -> bool:
+def _is_resolved(m: dict) -> bool:
     prices_raw = m.get("outcomePrices", "[]")
     try:
         prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
@@ -52,12 +51,12 @@ def _is_resolved(m: Dict) -> bool:
             p0, p1 = float(prices[0]), float(prices[1])
             if (p0 >= 0.95 and p1 <= 0.05) or (p1 >= 0.95 and p0 <= 0.05):
                 return True
-    except:
+    except Exception:
         pass
     return False
 
 
-def _get_resolution(m: Dict) -> str:
+def _get_resolution(m: dict) -> str:
     prices_raw = m.get("outcomePrices", "[]")
     try:
         prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
@@ -68,12 +67,12 @@ def _get_resolution(m: Dict) -> str:
                 return "YES"
             elif p1 > 0.5:
                 return "NO"
-    except:
+    except Exception:
         pass
     return "UNKNOWN"
 
 
-def _estimate_entry_price(m: Dict) -> float:
+def _estimate_entry_price(m: dict) -> float:
     question = m.get("question", "").lower()
     vol = _parse_float(m.get("volumeNum") or m.get("volume", 0))
 
@@ -121,8 +120,8 @@ def _detect_category(question: str) -> str:
     return "other"
 
 
-def _parse_market_record(m: Dict, min_volume: float, min_ttl_days: float,
-                         max_ttl_days: float, end_date_after: str) -> Optional[Dict]:
+def _parse_market_record(m: dict, min_volume: float, min_ttl_days: float,
+                         max_ttl_days: float, end_date_after: str) -> dict | None:
     if not _is_resolved(m):
         return None
 
@@ -140,7 +139,7 @@ def _parse_market_record(m: Dict, min_volume: float, min_ttl_days: float,
 
     try:
         ttl = (datetime.fromisoformat(ended) - datetime.fromisoformat(created)).days
-    except:
+    except Exception:
         ttl = 999
 
     if ttl == 0 and min_ttl_days <= 1:
@@ -159,7 +158,7 @@ def _parse_market_record(m: Dict, min_volume: float, min_ttl_days: float,
     outcomes_raw = m.get("outcomes", "[]")
     try:
         outcomes = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
-    except:
+    except Exception:
         outcomes = ["Yes", "No"]
 
     outcome = outcomes[0].lower() if outcomes else "yes"
@@ -179,7 +178,7 @@ def _parse_market_record(m: Dict, min_volume: float, min_ttl_days: float,
     }
 
 
-def _generate_month_ranges(start: str, end: str) -> List[tuple]:
+def _generate_month_ranges(start: str, end: str) -> list[tuple]:
     result = []
     y, m = int(start[:4]), int(start[5:7])
     ey, em = int(end[:4]), int(end[5:7])
@@ -206,7 +205,7 @@ def fetch_resolved_markets(
     end_date_before: str = "2026-06-01",
     force_refresh: bool = False,
     seed: int = 42,
-) -> List[Dict]:
+) -> list[dict]:
     """
     Fetch resolved markets across monthly date ranges for diversity.
     """
@@ -218,7 +217,7 @@ def fetch_resolved_markets(
     if not force_refresh and os.path.exists(cache_file):
         age = time.time() - os.path.getmtime(cache_file)
         if age < 86400:
-            with open(cache_file, 'r') as f:
+            with open(cache_file) as f:
                 cached = json.load(f)
             logger.info(f"[DATA] Loaded {len(cached)} cached markets")
             return cached
@@ -291,7 +290,7 @@ def fetch_resolved_markets(
     return results
 
 
-def generate_price_series(market: Dict, num_steps: int = 30) -> List[float]:
+def generate_price_series(market: dict, num_steps: int = 30) -> list[float]:
     """
     Generate realistic price path calibrated from live Polymarket DOTM data.
     
@@ -343,7 +342,7 @@ def generate_price_series(market: Dict, num_steps: int = 30) -> List[float]:
     return prices
 
 
-def generate_order_book(entry_price: float, liquidity: float, seed: int = 0) -> Dict:
+def generate_order_book(entry_price: float, liquidity: float, seed: int = 0) -> dict:
     """
     Generate realistic order book calibrated from live Polymarket CLOB data.
     

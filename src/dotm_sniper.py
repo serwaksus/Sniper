@@ -9,15 +9,22 @@ v5.3.0 Changelog:
 - Added [SIGNAL-BATCH] logging for batch analysis visibility
 - Fixed Renan Santos missing from hypothesis_db
 """
-import subprocess, json, requests, time, re, os, sys, logging, fcntl
-from datetime import datetime
+import subprocess
+import json
+import requests
+import time
+import re
+import os
+import sys
+import logging
+from datetime import datetime, timedelta
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 
-from news_scanner import check_market_news, extract_keywords, fetch_recent_news
-from utils import load_json, save_json, _lock_file, _unlock_file, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt, check_and_write_pid, cleanup_pid_file
+from news_scanner import check_market_news, extract_keywords
+from utils import load_json, save_json, sanitize_for_prompt, check_and_write_pid, cleanup_pid_file
 from equity_tracker import log_equity_snapshot, log_trade
 from calibration_tracker import log_calibration_entry, detect_model_drift
 from correlation_matrix import check_correlation_limit
@@ -480,19 +487,19 @@ def _calculate_metaculus_match(pm_question, result):
     from fuzzywuzzy import fuzz
     pm_lower = pm_question.lower()
     meta_title = (result.get("title", "") or result.get("short_title", "")).lower()
-    
+
     # Score components
     pm_words = set(re.sub(r'[^\w\s]', ' ', pm_lower).split())
     meta_words = set(re.sub(r'[^\w\s]', ' ', meta_title).split())
-    
+
     # 1. Word overlap (basic)
-    stop = {"will", "the", "a", "an", "be", "by", "of", "in", "on", "at", "to", "for", "is", "are", "was", "were", "before", "after", "any", "this", "that", "before"}
+    stop = {"will", "the", "a", "an", "be", "by", "of", "in", "on", "at", "to", "for", "is", "are", "was", "were", "before", "after", "any", "this", "that"}
     pm_clean = pm_words - stop
     meta_clean = meta_words - stop
-    
+
     overlap = len(pm_clean & meta_clean)
     base_score = overlap / max(len(pm_clean), 1) if pm_clean else 0
-    
+
     # 2. Substring bonus - important for multi-word concepts
     key_phrases = ["ai safety", "artificial intelligence", "anthropic", "ukraine", "nato", "nuclear", "china", "taiwan", "trump", "fed", "powell", "bitcoin"]
     substring_bonus = 0
@@ -501,7 +508,7 @@ def _calculate_metaculus_match(pm_question, result):
             substring_bonus += 0.15
         elif phrase in pm_lower and phrase.split()[0] in meta_title:
             substring_bonus += 0.05
-    
+
     # 3. Number/date match bonus
     pm_nums = set(w for w in pm_clean if any(c.isdigit() for c in w))
     meta_nums = set(w for w in meta_clean if any(c.isdigit() for c in w))
@@ -512,7 +519,7 @@ def _calculate_metaculus_match(pm_question, result):
     similarity = fuzz.partial_ratio(pm_lower, meta_title) / 100.0
     if similarity > 0.70:
         base_score += 0.15
-    
+
     return min(base_score + substring_bonus, 1.0)
 
 def get_time_decay_threshold(end_date_str):
@@ -953,18 +960,18 @@ def backtest_recent(n=20):
     """
     db = load_hypothesis_db()
     resolved = db.get("resolved", [])
-    
+
     if len(resolved) < 5:
         return {"error": f"Only {len(resolved)} resolved, need at least 5", "recommendation": "skip"}
-    
+
     recent = [h for h in resolved[-n:] if h.get("outcome") in ("YES", "NO")]
     if len(recent) < 5:
         return {"error": f"Only {len(recent)} with YES/NO outcome", "recommendation": "skip"}
-    
+
     wins = 0
     total_pnl = 0
     brier_sum = 0
-    
+
     for h in recent:
         p_model = h.get("p_model", 0.5)
         market_price = h.get("market_price", 0.5)
@@ -983,39 +990,39 @@ def backtest_recent(n=20):
 
         total_pnl += pnl
         brier_sum += (p_model - outcome) ** 2
-    
+
     winrate = wins / len(recent)
     avg_brier = brier_sum / len(recent)
     avg_pnl = total_pnl / len(recent)
-    
+
     # Evaluate thresholds
     current_signal_threshold = get_settings().get("signal_threshold", 55)
     current_min_p = get_settings().get("min_p_model", MIN_P_MODEL)
-    
+
     # Calculate what would happen with different thresholds
     recommendations = []
-    
+
     if winrate < 0.40:
         recommendations.append({
             "issue": "winrate_too_low",
             "current": winrate,
             "suggestion": "Raise MIN_PROB_RATIO or MIN_P_MODEL to be more selective"
         })
-    
+
     if avg_brier > 0.20:
         recommendations.append({
             "issue": "poor_calibration",
             "current": avg_brier,
             "suggestion": "Improve p_model estimation or use market price as stronger prior"
         })
-    
+
     if avg_pnl < 0:
         recommendations.append({
             "issue": "negative_avg_pnl",
             "current": avg_pnl,
             "suggestion": "Reduce position sizes or increase threshold"
         })
-    
+
     # Winrate by cluster
     cluster_wins = defaultdict(lambda: {"wins": 0, "total": 0})
     for h in recent:
@@ -1023,12 +1030,12 @@ def backtest_recent(n=20):
             cluster_wins[c]["total"] += 1
             if h.get("outcome") == "YES":
                 cluster_wins[c]["wins"] += 1
-    
+
     cluster_performance = {}
     for c, stats in cluster_wins.items():
         if stats["total"] >= 3:
             cluster_performance[c] = stats["wins"] / stats["total"]
-    
+
     result = {
         "n_analyzed": len(recent),
         "winrate": winrate,
@@ -1038,11 +1045,11 @@ def backtest_recent(n=20):
         "recommendations": recommendations,
         "recommendation": "use_current" if not recommendations else "adjust_thresholds"
     }
-    
+
     logger.info(f"[BACKTEST] n={len(recent)}, winrate={winrate:.1%}, brier={avg_brier:.3f}, pnl={avg_pnl:.2f}")
     for r in recommendations:
         logger.info(f"[BACKTEST] REC: {r['issue']} -> {r['suggestion']}")
-    
+
     return result
 
 
@@ -2897,7 +2904,7 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
             else:
                 print(f"   ⚠️  TP rung @{price:.2f} failed")
         if not ladder_results:
-            print(f"   ⚠️  TP ladder placement failed, will rely on trailing_stop_check()")
+            print("   ⚠️  TP ladder placement failed, will rely on trailing_stop_check()")
     else:
         logger.warning(f"[SMART-EXIT] Zero shares for {market['slug']}, skipping TP")
 
@@ -3112,7 +3119,7 @@ def _main_inner():
         print(f"   📈 P_model: {analysis['p_model']:.1%} | Ratio: {analysis.get('prob_ratio', 0):.2f}x | Conf: {analysis['confidence']:.2f}")
 
         if analysis["action"] == "SKIP":
-            print(f"   ⏭️ Below threshold")
+            print("   ⏭️ Below threshold")
             continue
 
         factors = analysis.get("factors", [])
@@ -3127,7 +3134,7 @@ def _main_inner():
         )
 
         if estimated_size <= 0:
-            print(f"   ⏭️ Kelly edge negative, skipping")
+            print("   ⏭️ Kelly edge negative, skipping")
             continue
 
         corr_ok, corr_reason = check_correlation_limit(

@@ -4,13 +4,11 @@ Bayesian posterior updater for DOTM Sniper.
 Maintains log-odds prior per position, updates with news likelihood ratios.
 Replaces expensive LLM calls with fast Bayesian computation.
 """
-import json
 import os
 import sys
 import math
 import logging
 from datetime import datetime
-from typing import Dict, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -68,7 +66,7 @@ def init_posterior(slug: str, p_model: float, p_market: float):
     logger.info(f"[BAYES] Init {slug[:40]}... prior={p_model:.1%}, logodds={prior_logodds:.2f}")
 
 
-def update_posterior(slug: str, news_category: str, llm_assessment: Optional[str] = None) -> Optional[float]:
+def update_posterior(slug: str, news_category: str, llm_assessment: str | None = None) -> float | None:
     state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
     if not isinstance(state, dict):
         state = {"positions": {}}
@@ -116,7 +114,7 @@ def update_posterior(slug: str, news_category: str, llm_assessment: Optional[str
     return new_prob
 
 
-def should_exit(slug: str, threshold_ratio: float = 0.40) -> Tuple[bool, str]:
+def should_exit(slug: str, threshold_ratio: float = 0.40) -> tuple[bool, str]:
     state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
     if not isinstance(state, dict):
         return False, "no_state"

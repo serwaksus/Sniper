@@ -5,7 +5,7 @@ import os
 import sys
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -106,7 +106,7 @@ def log_trade(event_type: str, slug: str, question: str,
               entry_price: float = 0, exit_price: float = 0,
               shares: float = 0, invested: float = 0,
               pnl_pct: float = 0, pnl_abs: float = 0,
-              reason: str = "", extra: Optional[Dict] = None):
+              reason: str = "", extra: dict | None = None):
     journal = load_json(TRADES_JOURNAL_FILE, {"trades": []})
     if not isinstance(journal, dict):
         journal = {"trades": []}
@@ -132,7 +132,7 @@ def log_trade(event_type: str, slug: str, question: str,
     logger.info(f"[JOURNAL] {event_type}: {slug[:40]} pnl={pnl_pct:+.1f}% reason={reason}")
 
 
-def get_daily_summary() -> Dict[str, Any]:
+def get_daily_summary() -> dict[str, Any]:
     curve = load_json(EQUITY_FILE, {"snapshots": []})
     if not isinstance(curve, dict):
         curve = {"snapshots": []}
@@ -238,7 +238,7 @@ def main():
         logger.warning("[DAILY] Telegram not configured")
         return
 
-    msg = f"📊 <b>Daily Summary</b>\n"
+    msg = "📊 <b>Daily Summary</b>\n"
     msg += f"🕐 {now.strftime('%Y-%m-%d %H:%M')}\n\n"
     msg += f"💰 <b>Equity: ${summary['equity_now']:.2f}</b>\n"
     msg += f"   Daily: {'+' if summary['daily_change'] >= 0 else ''}"

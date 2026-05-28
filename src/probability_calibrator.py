@@ -89,7 +89,7 @@ class ProbabilityCalibrator:
     def load(self, path=CALIBRATOR_MODEL_PATH):
         if not os.path.exists(path):
             return False
-        with open(path, "r") as f:
+        with open(path) as f:
             data = json.load(f)
         self.global_model = data.get("global_model")
         self.cluster_models = data.get("cluster_models", {})
@@ -109,7 +109,7 @@ def load_calibrator(path=CALIBRATOR_MODEL_PATH):
 
 def train_from_baseline(baseline_path=BACKTEST_BASELINE_PATH,
                         output_path=CALIBRATOR_MODEL_PATH):
-    with open(baseline_path, "r") as f:
+    with open(baseline_path) as f:
         stats = json.load(f)
     results = stats.get("results", [])
     resolved = [r for r in results if r.get("status") == "resolved"]
@@ -130,7 +130,7 @@ def train_from_baseline(baseline_path=BACKTEST_BASELINE_PATH,
 
 def evaluate_improvement(baseline_path=BACKTEST_BASELINE_PATH,
                          model_path=CALIBRATOR_MODEL_PATH):
-    with open(baseline_path, "r") as f:
+    with open(baseline_path) as f:
         stats = json.load(f)
     results = [r for r in stats.get("results", []) if r.get("status") == "resolved"]
 
@@ -187,7 +187,7 @@ def evaluate_improvement(baseline_path=BACKTEST_BASELINE_PATH,
     print(f"  Brier (base rate): {brier_baseline:.4f}")
     print(f"  Calibrated vs base rate: {'BETTER' if avg_after < brier_baseline else 'WORSE'}")
 
-    print(f"\n  Per-cluster Brier improvement:")
+    print("\n  Per-cluster Brier improvement:")
     for cluster in sorted(brier_per_cluster, key=lambda c: -len(brier_per_cluster[c]["before"])):
         bb = brier_per_cluster[cluster]["before"]
         ba = brier_per_cluster[cluster]["after"]
@@ -195,7 +195,7 @@ def evaluate_improvement(baseline_path=BACKTEST_BASELINE_PATH,
         avg_a = sum(ba) / len(ba)
         print(f"    {cluster:20s} n={len(bb):4d}  {avg_b:.4f} → {avg_a:.4f}  ({avg_b-avg_a:+.4f})")
 
-    print(f"\n  Calibration curve (global):")
+    print("\n  Calibration curve (global):")
     if cal.global_model:
         X = cal.global_model["X_thresholds"]
         y = cal.global_model["y_thresholds"]

@@ -21,7 +21,6 @@ Data source: backtest_stats.json (local, no external API calls).
 Usage:
     python3 src/dotm_optimizer.py
 """
-import json
 import os
 import sys
 import random
@@ -318,7 +317,7 @@ def print_report(best_is, is_grid, oos_result, mc_result, n_is, n_oos):
             f"{r['winrate']*100:>5.1f}%  {r['avg_ev']:>+7.2f}  {rank:>4d}{marker}"
         )
 
-    print(f"\n  BEST IN-SAMPLE COMBINATION:")
+    print("\n  BEST IN-SAMPLE COMBINATION:")
     print(f"    Signal Score Threshold >= {best_is['composite_threshold']}")
     print(f"    Confidence Threshold  >= {best_is['min_confidence']:.2f}")
     print(f"    (mapped from volume filter ${best_is['volume_threshold']:,})")
@@ -356,7 +355,7 @@ def print_report(best_is, is_grid, oos_result, mc_result, n_is, n_oos):
     print(f"    P5  Final Capital:      {mc_result['p5_final_capital']:.2f}x")
     print(f"    P95 Final Capital:      {mc_result['p95_final_capital']:.2f}x")
     print(f"    3.5% Position Safe?     {'YES' if safe else 'NO'}")
-    print(f"      (ruin<5% AND worst_dd<50%)")
+    print("      (ruin<5% AND worst_dd<50%)")
 
     print(f"\n{'═' * W}")
     if oos_result["trades"] == 0:
@@ -374,7 +373,7 @@ def print_report(best_is, is_grid, oos_result, mc_result, n_is, n_oos):
     else:
         print("  VERDICT: NEEDS CALIBRATION")
         print(f"    OOS Winrate {oos_result['winrate']:.1%} < 60% - model overfits IS data")
-        print(f"    Recommendation: raise composite threshold or add filters")
+        print("    Recommendation: raise composite threshold or add filters")
     print(f"{'═' * W}\n")
 
 

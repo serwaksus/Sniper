@@ -7,7 +7,7 @@ import logging
 import html
 import requests
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Any
 
 LOG_FILE = "/root/dotm-sniper/report.log"
 logging.basicConfig(
@@ -63,9 +63,9 @@ class TelegramReporter:
         return False
 
     def alert_new_position(self, market_slug: str, question: str, entry_price: float,
-                          amount: float, metaculus_prob: Optional[float] = None,
-                          factors: Optional[List[Dict]] = None, reasoning: Optional[str] = None):
-        msg = f"🚨 <b>New Position</b>\n\n"
+                          amount: float, metaculus_prob: float | None = None,
+                          factors: list[dict] | None = None, reasoning: str | None = None):
+        msg = "🚨 <b>New Position</b>\n\n"
         msg += f"📌 {html.escape(str(question[:55]))}...\n\n"
         msg += f"💰 Entry: <b>${entry_price:.3f}</b>\n"
         msg += f"💵 Size: ${amount:.2f}\n"
@@ -75,7 +75,7 @@ class TelegramReporter:
         if factors:
             supporting = [f for f in factors if f.get('direction') == 'supports']
             if supporting:
-                msg += f"\n📋 <b>Why this trade:</b>\n"
+                msg += "\n📋 <b>Why this trade:</b>\n"
                 for f in supporting[:3]:
                     source = f.get('source', 'analysis')
                     weight = f.get('weight', 'medium')
@@ -91,33 +91,33 @@ class TelegramReporter:
         self._send(msg)
 
     def alert_take_profit(self, market_slug: str, question: str, pnl_pct: float, pnl_abs: float):
-        msg = f"✅ <b>Take Profit</b>\n\n"
+        msg = "✅ <b>Take Profit</b>\n\n"
         msg += f"📌 {html.escape(str(question[:50]))}...\n\n"
         msg += f"📈 P&L: <b>+{pnl_pct:.1f}%</b> (${pnl_abs:.2f})\n"
         self._send(msg)
 
     def alert_stop_loss(self, market_slug: str, question: str, pnl_pct: float, pnl_abs: float):
-        msg = f"❌ <b>Stop Loss</b>\n\n"
+        msg = "❌ <b>Stop Loss</b>\n\n"
         msg += f"📌 {html.escape(str(question[:50]))}...\n\n"
         msg += f"📉 P&L: <b>{pnl_pct:.1f}%</b> (${pnl_abs:.2f})\n"
         self._send(msg)
 
     def alert_convergence(self, market_slug: str, question: str, pnl_pct: float,
                           pnl_abs: float, convergence_ratio: float):
-        msg = f"🎯 <b>Gap Convergence</b> (edge captured)\n\n"
+        msg = "🎯 <b>Gap Convergence</b> (edge captured)\n\n"
         msg += f"📌 {html.escape(str(question[:50]))}...\n\n"
         msg += f"📈 P&L: <b>+{pnl_pct:.1f}%</b> (${pnl_abs:.2f})\n"
         msg += f"📊 Convergence: {convergence_ratio:.0%}\n"
         self._send(msg)
 
     def alert_news_blocked(self, market_slug: str, question: str, reason: str):
-        msg = f"🚨 <b>Trade Blocked by News API</b>\n\n"
+        msg = "🚨 <b>Trade Blocked by News API</b>\n\n"
         msg += f"📌 {html.escape(str(question[:50]))}...\n\n"
         msg += f"⚠️ Reason: {html.escape(str(reason))}\n"
         self._send(msg)
 
-    def send_daily_report(self, balance_data: Dict[str, Any], portfolio: List[Dict[str, Any]],
-                         history_summary: Dict[str, Any], top_markets: List[Dict[str, Any]]):
+    def send_daily_report(self, balance_data: dict[str, Any], portfolio: list[dict[str, Any]],
+                         history_summary: dict[str, Any], top_markets: list[dict[str, Any]]):
         import pytz
         msk_tz = pytz.timezone("Europe/Moscow")
         now_msk = datetime.now(msk_tz)
@@ -126,7 +126,7 @@ class TelegramReporter:
         pnl = balance_data.get("pnl", 0) if balance_data else 0
         starting = balance_data.get("starting_balance", 500) if balance_data else 500
 
-        msg = f"📊 <b>DOTM Sniper Report</b>\n"
+        msg = "📊 <b>DOTM Sniper Report</b>\n"
         msg += f"🕐 {now_msk.strftime('%H:%M')} МСК\n\n"
         msg += f"💰 Balance: <b>${total_value:.2f}</b>\n"
         msg += f"   Cash: ${cash:.2f}\n"
@@ -194,7 +194,7 @@ def load_history():
     HISTORY_FILE = "/root/dotm-sniper/trades_history.json"
     if os.path.exists(HISTORY_FILE):
         try:
-            with open(HISTORY_FILE, 'r') as f:
+            with open(HISTORY_FILE) as f:
                 return json.load(f)
         except Exception:
             pass

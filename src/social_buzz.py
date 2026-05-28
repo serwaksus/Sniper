@@ -14,13 +14,10 @@ import os
 import sys
 import json
 import time
-import math
 import logging
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
-from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -45,15 +42,15 @@ load_env_file()
 
 
 
-def _get_cache() -> Dict:
+def _get_cache() -> dict:
     return load_json(BUZZ_CACHE_FILE, {"entries": {}})
 
 
-def _save_cache(cache: Dict):
+def _save_cache(cache: dict):
     save_json(BUZZ_CACHE_FILE, cache)
 
 
-def _get_cached(slug: str) -> Optional[Dict]:
+def _get_cached(slug: str) -> dict | None:
     cache = _get_cache()
     entry = cache.get("entries", {}).get(slug)
     if not entry:
@@ -67,7 +64,7 @@ def _get_cached(slug: str) -> Optional[Dict]:
     return None
 
 
-def _set_cached(slug: str, result: Dict):
+def _set_cached(slug: str, result: dict):
     cache = _get_cache()
     if not isinstance(cache, dict):
         cache = {"entries": {}}
@@ -77,7 +74,7 @@ def _set_cached(slug: str, result: Dict):
     _save_cache(cache)
 
 
-def extract_keywords_llm(question: str) -> List[str]:
+def extract_keywords_llm(question: str) -> list[str]:
     API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
     if not API_KEY:
         return _extract_keywords_simple(question)
@@ -115,7 +112,7 @@ Keywords:"""
     return _extract_keywords_simple(question)
 
 
-def _extract_keywords_simple(question: str) -> List[str]:
+def _extract_keywords_simple(question: str) -> list[str]:
     import re
     stop = {"will", "the", "a", "an", "in", "on", "by", "of", "to", "for", "and",
             "or", "is", "are", "be", "it", "this", "that", "from", "with", "before",
@@ -135,7 +132,7 @@ _GDELT_LAST_FAIL = 0.0
 _GDELT_COOLDOWN = 600
 
 
-def fetch_gdelt(keywords: List[str]) -> Dict:
+def fetch_gdelt(keywords: list[str]) -> dict:
     global _GDELT_LAST_FAIL
     if (time.time() - _GDELT_LAST_FAIL) < _GDELT_COOLDOWN:
         return {"count": 0, "tone": 0, "status": "cooldown"}
@@ -185,7 +182,7 @@ def fetch_gdelt(keywords: List[str]) -> Dict:
         return {"count": 0, "tone": 0, "status": f"error: {e}"}
 
 
-def fetch_google_news(keywords: List[str]) -> Dict:
+def fetch_google_news(keywords: list[str]) -> dict:
     query = " ".join(keywords[:3])
     try:
         resp = requests.get(GOOGLE_NEWS_URL, params={
@@ -219,7 +216,7 @@ def fetch_google_news(keywords: List[str]) -> Dict:
         return {"count": 0, "status": f"error: {e}"}
 
 
-def fetch_telegram(keywords: List[str]) -> Dict:
+def fetch_telegram(keywords: list[str]) -> dict:
     api_id = os.environ.get("TELEGRAM_API_ID", "")
     api_hash = os.environ.get("TELEGRAM_API_HASH", "")
     if not api_id or not api_hash:
@@ -283,7 +280,7 @@ def fetch_telegram(keywords: List[str]) -> Dict:
         return {"count": 0, "status": f"error: {e}"}
 
 
-def fetch_reddit(keywords: List[str]) -> Dict:
+def fetch_reddit(keywords: list[str]) -> dict:
     query = " ".join(keywords[:3])
     try:
         resp = requests.get(REDDIT_URL, params={
@@ -304,7 +301,7 @@ def fetch_reddit(keywords: List[str]) -> Dict:
         return {"count": 0, "status": f"error: {e}"}
 
 
-def compute_buzz_score(slug: str, question: str, force: bool = False) -> Dict:
+def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
     if not force:
         cached = _get_cached(slug)
         if cached:

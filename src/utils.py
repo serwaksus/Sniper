@@ -8,7 +8,6 @@ import os
 import fcntl
 import tempfile
 import logging
-import threading
 
 logger = logging.getLogger(__name__)
 
