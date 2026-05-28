@@ -2107,11 +2107,17 @@ Rules:
 
     if metaculus_gap and metaculus_gap.get("signal_strength", 0) > 0.3:
         p_model_metaculus = metaculus_gap["metaculus_prob"]
-        p_model = max(p_model_llm, p_model_metaculus)
         if p_model_metaculus > p_model_llm:
+            p_model = p_model_metaculus
             logger.info(
                 f"[METACULUS-OVERRIDE] LLM={p_model_llm:.1%} < Metaculus={p_model_metaculus:.1%}, "
                 f"using Metaculus (gap={metaculus_gap['gap']:.1%}, signal={metaculus_gap['signal_strength']:.2f})"
+            )
+        else:
+            p_model = 0.6 * p_model_metaculus + 0.4 * p_model_llm
+            logger.info(
+                f"[METACULUS-BLEND] LLM={p_model_llm:.1%} > Metaculus={p_model_metaculus:.1%}, "
+                f"blended to {p_model:.1%} (60/40 meta/llm)"
             )
         source_signal = "metaculus_override"
         confidence = min(confidence + 0.10, 0.95)
@@ -3077,16 +3083,6 @@ def _main_inner():
         if not can_pass:
             continue
 
-        corr_ok, corr_reason = check_correlation_limit(
-            m["clusters"][0] if m["clusters"] else "other",
-            load_json(POSITIONS_FILE, {}),
-            balance,
-            new_investment=estimated_size,
-        )
-        if not corr_ok:
-            logger.info(f"[CORR-SKIP] {m['slug'][:40]}... {corr_reason}")
-            continue
-
         if m["slug"] in position_slugs:
             continue
 
@@ -3120,6 +3116,16 @@ def _main_inner():
 
         if estimated_size <= 0:
             print(f"   ⏭️ Kelly edge negative, skipping")
+            continue
+
+        corr_ok, corr_reason = check_correlation_limit(
+            m["clusters"][0] if m["clusters"] else "other",
+            load_json(POSITIONS_FILE, {}),
+            balance,
+            new_investment=estimated_size,
+        )
+        if not corr_ok:
+            logger.info(f"[CORR-SKIP] {m['slug'][:40]}... {corr_reason}")
             continue
 
         can_size, size_reason = check_category_limits(

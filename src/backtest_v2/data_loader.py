@@ -330,27 +330,15 @@ def generate_price_series(market: Dict, num_steps: int = 30) -> List[float]:
 
     for step in range(1, num_steps + 1):
         progress = step / num_steps
-        remaining = max(0.01, 1.0 - progress)
-
-        mr_strength = 0.02 / remaining
-        if resolution > 0.5:
-            drift = mr_strength * max(0, resolution - prices[-1]) * 0.1
-        else:
-            drift = mr_strength * min(0, resolution - prices[-1]) * 0.1
 
         shock = random.gauss(0, daily_vol * dt ** 0.5)
 
         if random.random() < 0.05:
             shock += random.gauss(0, daily_vol * 0.3)
 
-        new_price = prices[-1] * (1 + drift + shock)
+        new_price = prices[-1] * (1 + shock)
         new_price = max(0.001, min(0.99, new_price))
         prices.append(new_price)
-
-    convergence_steps = min(3, num_steps)
-    for i in range(max(0, num_steps - convergence_steps + 1), num_steps + 1):
-        w = (i - (num_steps - convergence_steps + 1)) / convergence_steps
-        prices[i] = prices[i] * (1 - w) + resolution * w
 
     return prices
 

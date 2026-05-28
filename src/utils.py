@@ -53,16 +53,27 @@ def load_json(path, default):
         fd = os.open(path, os.O_RDONLY)
     except OSError:
         return default
+    _lock_file(fd, exclusive=False)
+    fd_owned = False
     try:
-        _lock_file(fd, exclusive=False)
-        with os.fdopen(fd, 'r') as f:
-            return _normalize_keys(json.load(f))
-    except Exception:
+        f = os.fdopen(fd, 'r')
+        fd_owned = True
         try:
-            os.close(fd)
+            return _normalize_keys(json.load(f))
+        finally:
+            f.close()
+    except Exception:
+        if not fd_owned:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        return default
+    finally:
+        try:
+            _unlock_file(fd)
         except OSError:
             pass
-        return default
 
 
 def save_json(path, data):

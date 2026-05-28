@@ -222,9 +222,19 @@ HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/js
 def get_bot_status():
     try:
         res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15, start_new_session=True)
+        balance_data = {}
         if res.returncode == 0 and res.stdout:
-            data = json.loads(res.stdout).get("data", {})
-            return {"portfolio": [], "balance": data}
+            balance_data = json.loads(res.stdout).get("data", {})
+
+        portfolio = []
+        try:
+            res_p = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
+            if res_p.returncode == 0 and res_p.stdout:
+                portfolio = [p for p in json.loads(res_p.stdout).get("data", []) if float(p.get("shares", 0)) > 0.001]
+        except Exception:
+            pass
+
+        return {"portfolio": portfolio, "balance": balance_data}
     except Exception:
         pass
     return {"portfolio": [], "balance": {}}

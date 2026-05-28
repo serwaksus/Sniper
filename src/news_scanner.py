@@ -4,11 +4,16 @@ News Scanner - Fresh news reality check before trading.
 Uses Tavily API for real-time news search.
 """
 import os
+import re
+import sys
 import requests
 import subprocess
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from utils import load_json, save_json
 
 TAVILY_API_URL = "https://api.tavily.com/search"
 
@@ -221,7 +226,7 @@ def check_market_news(market: Dict) -> Tuple[bool, str]:
 
     try:
         cache = load_json("/root/dotm-sniper/source_cache.json", {})
-        cache.setdefault("news", {})[cluster_key]["passed"] = passed
+        cache.setdefault("news", {}).setdefault(cluster_key, {})["passed"] = passed
         save_json("/root/dotm-sniper/source_cache.json", cache)
     except Exception:
         pass

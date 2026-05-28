@@ -262,7 +262,9 @@ def simulate_tp_ladder(
         
         eff_price, filled, proceeds = walk_the_book_sell(bids, rung_shares)
         if filled > 0:
-            total_proceeds += proceeds
+            fee = proceeds * FEE_PCT
+            net_proceeds = proceeds - fee
+            total_proceeds += net_proceeds
             total_shares_sold += filled
             allocated += filled
             rungs_filled += 1

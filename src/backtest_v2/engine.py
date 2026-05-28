@@ -236,6 +236,9 @@ def run_backtest(
                     pos.tp_ladder_filled = True
                     pos.tp_ladder_results = tp_result
                     pos.shares_after_tp = tp_result["shares_held_to_expiry"]
+                    sold_pct = tp_result["total_shares_sold"] / pos.shares if pos.shares > 0 else 0
+                    cost_recovered = pos.cost * sold_pct
+                    pos.cost -= cost_recovered
                     portfolio.balance += tp_result["total_proceeds"]
 
             if not sold and days_held >= ttl_days:
