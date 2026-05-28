@@ -312,20 +312,24 @@ def reconcile_positions():
             tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in TP_LADDER_PRICES)), None)
             
             if tp_order:
-                filled = tp_order.get("filled", 0)
-                total = tp_order.get("shares", 0)
+                order_shares = tp_order.get("shares", 0)
+                recorded_shares_at_tp = pos_data.get("shares_at_tp_open", order_shares)
+                current_shares_at_check = current_shares
                 
-                if 0 < filled < total:
-                    logger.warning(f"[HERMES] PARTIAL FILL for {slug[:40]}...: {filled}/{total}")
+                if current_shares_at_check < recorded_shares_at_tp and order_shares > 0:
+                    filled = recorded_shares_at_tp - current_shares_at_check
+                    total = order_shares
                     
-                    if filled > 0:
+                    if filled > 0 and filled < total:
+                        logger.warning(f"[HERMES] PARTIAL FILL for {slug[:40]}...: {filled}/{total} (inferred from shares)")
+                        
                         fill_price = tp_order.get("price", TP_LIMIT_PRICE)
                         sold_value = filled * fill_price
                         pos_data["shares"] = current_shares
                         pos_data["partial_fills"] = pos_data.get("partial_fills", 0) + filled
                         pos_data["partial_proceeds"] = pos_data.get("partial_proceeds", 0) + sold_value
                         
-                        logger.info(f"[HERMES] Updated shares to {current_shares} (portfolio already reflects partial fill), partial proceeds ${sold_value:.2f}")
+                        logger.info(f"[HERMES] Updated shares to {current_shares} (portfolio reflects partial fill), proceeds ${sold_value:.2f}")
                         pos_modified = True
                         
                         _notify_partial_fill(slug, pos_data, filled, fill_price)
@@ -613,6 +617,7 @@ Return ONLY JSON:
                     bayes_exit, bayes_reason = bayesian_should_exit(slug)
                     if bayes_exit:
                         logger.warning(f"[HERMES] BAYESIAN EXIT for {slug[:40]}...: {bayes_reason}")
+                        _update_and_check_status(slug, True, "DIVERGENCE")
                         _execute_emergency_exit(slug, pos_data, bayes_reason)
                 except Exception as be:
                     logger.warning(f"[HERMES] Bayesian update failed for {slug}: {be}")

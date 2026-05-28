@@ -199,7 +199,7 @@ def run_backtest(
 
             sold = False
 
-            metaculus_prob = pos.p_model * 1.5
+            metaculus_prob = min(pos.p_model * 1.5, 1.0)
             if price > 0 and metaculus_prob > 0:
                 convergence = price / metaculus_prob
                 if convergence >= CONVERGENCE_TP:

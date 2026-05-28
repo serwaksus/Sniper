@@ -1055,7 +1055,7 @@ def get_order_book(slug):
         bids = data.get("data", {}).get("bids", [])
         best_ask = float(asks[0].get("price", 0)) if asks and asks[0].get("price") is not None else None
         best_bid = float(bids[0].get("price", 0)) if bids and bids[0].get("price") is not None else None
-        if best_bid and best_ask:
+        if best_bid is not None and best_ask is not None:
             mid_price = (best_bid + best_ask) / 2
         else:
             mid_price = best_ask or best_bid
@@ -1467,7 +1467,10 @@ def _place_tp_ladder(slug, outcome, total_shares):
     ladder = [(0.50, 0.75), (0.30, 0.85)]
     results = []; allocated = 0
     for pct, price in ladder:
-        shares = max(round(5.0 / price), round(total_shares * pct), 1)
+        shares = round(total_shares * pct)
+        shares = max(shares, 1)
+        if shares * price < 5.0:
+            shares = max(round(5.0 / price), 1)
         if allocated + shares > total_shares: shares = total_shares - allocated
         if shares <= 0: continue
         if shares * price < 5.0:
@@ -1766,6 +1769,8 @@ def trailing_stop_check():
                         actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                         if _tr():
                             _tr().alert_convergence(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs, convergence)
+                    else:
+                        logger.warning(f"[CONVERGENCE-SELL] Failed to sell {slug[:40]}... method={method}")
                 except Exception as e:
                     logger.warning(f"[CONVERGENCE-SELL] Failed for {slug}: {e}")
             elif convergence >= CONVERGENCE_TAKE_PROFIT:
@@ -3001,7 +3006,10 @@ def _main_inner():
     if balance_data is None:
         print("⚠️ Could not fetch balance, skipping cycle")
         return
-    balance = balance_data.get("cash", 100)
+    balance = balance_data.get("cash", 0)
+    if balance <= 0:
+        print("⚠️ Balance reported as $0, skipping cycle")
+        return
     total_balance = balance_data.get("total_value", balance)
 
     tier = get_tier_params(total_balance)

@@ -213,7 +213,8 @@ def _load_env():
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, val = line.split('=', 1)
-                    os.environ.setdefault(key.strip(), val.strip())
+                    val = val.strip().strip('"').strip("'")
+                    os.environ.setdefault(key.strip(), val)
 
 _load_env()
 API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")

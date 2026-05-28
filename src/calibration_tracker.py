@@ -101,7 +101,11 @@ def compute_calibration_curve(bins: int = 10) -> Dict:
             })
 
     brier = sum((e["p_model"] - e["actual_bin"]) ** 2 for e in actual_outcomes) / len(actual_outcomes)
-    brier_cal = sum((e["p_calibrated"] - e["actual_bin"]) ** 2 for e in actual_outcomes if e.get("p_calibrated") is not None) / max(1, len([e for e in actual_outcomes if e.get("p_calibrated") is not None]))
+    cal_entries = [e for e in actual_outcomes if e.get("p_calibrated") is not None]
+    if cal_entries:
+        brier_cal = sum((e["p_calibrated"] - e["actual_bin"]) ** 2 for e in cal_entries) / len(cal_entries)
+    else:
+        brier_cal = None
 
     low_p = [e for e in actual_outcomes if e["p_model"] < 0.15]
     if low_p:
@@ -142,8 +146,8 @@ def compute_calibration_curve(bins: int = 10) -> Dict:
         "entries": len(entries),
         "resolved": total,
         "brier_raw": round(brier, 4),
-        "brier_calibrated": round(brier_cal, 4),
-        "improvement": round(brier - brier_cal, 4),
+        "brier_calibrated": round(brier_cal, 4) if brier_cal is not None else None,
+        "improvement": round(brier - brier_cal, 4) if brier_cal is not None else None,
         "overestimation_low_p": overestimation,
         "direction_accuracy": round(correct_direction / total, 3) if total else 0,
         "curve": buckets,

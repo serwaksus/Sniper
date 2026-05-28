@@ -60,7 +60,7 @@ def _get_cached(slug: str) -> Optional[Dict]:
         return None
     try:
         ts = datetime.fromisoformat(entry["timestamp"])
-        if (datetime.now() - ts).total_seconds() < BUZZ_CACHE_TTL:
+        if (datetime.now(timezone.utc) - ts).total_seconds() < BUZZ_CACHE_TTL:
             return entry
     except (ValueError, KeyError):
         pass
@@ -71,7 +71,8 @@ def _set_cached(slug: str, result: Dict):
     cache = _get_cache()
     if not isinstance(cache, dict):
         cache = {"entries": {}}
-    result["timestamp"] = datetime.now().isoformat()
+    _utcnow = datetime.now(timezone.utc)
+    result["timestamp"] = _utcnow.isoformat()
     cache.setdefault("entries", {})[slug] = result
     _save_cache(cache)
 

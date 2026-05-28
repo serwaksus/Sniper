@@ -69,7 +69,7 @@ class TelegramReporter:
         msg += f"📌 {html.escape(str(question[:55]))}...\n\n"
         msg += f"💰 Entry: <b>${entry_price:.3f}</b>\n"
         msg += f"💵 Size: ${amount:.2f}\n"
-        if metaculus_prob:
+        if metaculus_prob is not None:
             msg += f"📊 Hermes estimate: {metaculus_prob:.0%}\n"
 
         if factors:

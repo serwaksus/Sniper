@@ -234,7 +234,10 @@ class PortfolioTracker:
             var = sum((r - avg_ret) ** 2 for r in returns) / len(returns)
             std = var ** 0.5
             if std > 0:
-                sharpe = avg_ret / std * (252 ** 0.5)
+                n_steps = len(self.equity_curve)
+                n_days = max(1, n_steps)
+                annualization = min((365 / n_days) ** 0.5, 252 ** 0.5)
+                sharpe = avg_ret / std * annualization
         
         reasons = {}
         for t in self.trades:
