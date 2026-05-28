@@ -8,6 +8,7 @@ Usage:
   python3 run_backtest.py --no-advisor     # skip advisor veto simulation
   python3 run_backtest.py --walk-forward   # walk-forward validation
   python3 run_backtest.py --refresh        # force refresh market data
+  python3 run_backtest.py --compare        # compare Conservative vs AggressiveMicro
 """
 import sys
 import os
@@ -27,6 +28,34 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+PROFILE_CONSERVATIVE = {
+    "name": "Conservative",
+    "kelly_fraction": 0.25,
+    "base_pct": 0.03,
+    "max_pct": 0.10,
+    "max_positions": 12,
+    "max_cluster_pct": 0.40,
+    "signal_threshold": 35,
+    "min_confidence": 0.50,
+    "min_prob_ratio": 1.8,
+    "advisor_veto_rate": 0.20,
+    "news_block_rate": 0.05,
+}
+
+PROFILE_AGGRESSIVE = {
+    "name": "AggressiveMicro",
+    "kelly_fraction": 0.50,
+    "base_pct": 0.05,
+    "max_pct": 0.15,
+    "max_positions": 6,
+    "max_cluster_pct": 0.45,
+    "signal_threshold": 45,
+    "min_confidence": 0.60,
+    "min_prob_ratio": 2.5,
+    "advisor_veto_rate": 0.10,
+    "news_block_rate": 0.03,
+}
 
 
 def print_results(summary: dict):
@@ -81,6 +110,82 @@ def print_results(summary: dict):
     print("=" * 60)
 
 
+def print_comparison(res_conservative: dict, res_aggressive: dict):
+    """Print side-by-side comparison of two backtest results."""
+    name_a = res_conservative.get("profile_name", "Conservative")
+    name_b = res_aggressive.get("profile_name", "AggressiveMicro")
+
+    col1 = 22
+    col2 = 15
+    col3 = 18
+
+    def fmt_pct(val):
+        return f"{val:+.1%}" if val < 0 else f"{val:.1%}"
+
+    def fmt_dollar(val):
+        return f"${val:,.0f}"
+
+    def row(label, va, vb, fmt="s"):
+        if fmt == "pct":
+            sa = fmt_pct(va) if va is not None else "N/A"
+            sb = fmt_pct(vb) if vb is not None else "N/A"
+        elif fmt == "dollar":
+            sa = fmt_dollar(va) if va is not None else "N/A"
+            sb = fmt_dollar(vb) if vb is not None else "N/A"
+        elif fmt == "pct_plain":
+            sa = f"{va:.1%}" if va is not None else "N/A"
+            sb = f"{vb:.1%}" if vb is not None else "N/A"
+        elif fmt == "f2":
+            sa = f"{va:.2f}" if va is not None else "N/A"
+            sb = f"{vb:.2f}" if vb is not None else "N/A"
+        else:
+            sa = str(va) if va is not None else "N/A"
+            sb = str(vb) if vb is not None else "N/A"
+        print(f"\u2551 {label:<{col1}} \u2502 {sa:>{col2}} \u2502 {sb:>{col3}} \u2551")
+
+    def divider():
+        h = "\u2500"
+        print(f"\u2551 {h * col1}\u253c{h * (col2 + 2)}\u253c{h * (col3 + 1)}\u2551")
+
+    w = col1 + col2 + col3 + 10
+
+    print()
+    print("\u2554" + "\u2550" * w + "\u2557")
+    title = f"BACKTEST COMPARISON: {name_a.upper()} vs {name_b.upper()}"
+    print(f"\u2551{title:^{w}}\u2551")
+    print("\u2560" + "\u2550" * w + "\u2563")
+
+    row("Metric", name_a, name_b)
+    divider()
+    row("Trades", res_conservative.get("total_trades", 0), res_aggressive.get("total_trades", 0))
+    row("Win rate", res_conservative.get("win_rate", 0), res_aggressive.get("win_rate", 0), fmt="pct_plain")
+    row("Avg win", res_conservative.get("avg_win_pct", 0), res_aggressive.get("avg_win_pct", 0), fmt="pct")
+    row("Avg loss", res_conservative.get("avg_loss_pct", 0), res_aggressive.get("avg_loss_pct", 0), fmt="pct")
+    row("Total P&L", res_conservative.get("total_pnl", 0), res_aggressive.get("total_pnl", 0), fmt="dollar")
+    row("Final equity", res_conservative.get("final_equity", 0), res_aggressive.get("final_equity", 0), fmt="dollar")
+    row("Max drawdown", res_conservative.get("max_drawdown", 0), res_aggressive.get("max_drawdown", 0), fmt="pct_plain")
+    row("Sharpe ratio", res_conservative.get("sharpe_ratio", 0), res_aggressive.get("sharpe_ratio", 0), fmt="f2")
+    row("Rejected trades", res_conservative.get("rejected_trades", 0), res_aggressive.get("rejected_trades", 0))
+    print("\u255a" + "\u2550" * w + "\u255d")
+
+    for label, res in [(name_a, res_conservative), (name_b, res_aggressive)]:
+        print(f"\n  Exit Reasons ({label}):")
+        if res.get("exit_reasons"):
+            for reason, count in sorted(res["exit_reasons"].items(), key=lambda x: -x[1]):
+                print(f"    {reason}: {count}")
+        else:
+            print("    (none)")
+
+        print(f"\n  Top Rejection Reasons ({label}):")
+        if res.get("rejected_reasons"):
+            for reason, count in sorted(res["rejected_reasons"].items(), key=lambda x: -x[1])[:5]:
+                print(f"    {reason}: {count}")
+        else:
+            print("    (none)")
+
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="DOTM Sniper Backtest v2")
     parser.add_argument("--balance", type=float, default=500.0, help="Starting balance")
@@ -92,6 +197,7 @@ def main():
     parser.add_argument("--refresh", action="store_true", help="Force refresh market data")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--save", type=str, default="", help="Save results to file")
+    parser.add_argument("--compare", action="store_true", help="Compare Conservative vs AggressiveMicro profiles")
     args = parser.parse_args()
     
     print(f"DOTM Sniper Backtest v2")
@@ -100,14 +206,52 @@ def main():
     print(f"  Advisor: {'OFF' if args.no_advisor else 'ON'}")
     print(f"  News: {'OFF' if args.no_news else 'ON'}")
     print(f"  Metaculus: {'OFF' if args.no_metaculus else 'ON'}")
+    if args.compare:
+        print(f"  Mode: COMPARE (Conservative vs AggressiveMicro)")
     print()
     
-    if args.walk_forward:
+    if args.compare:
+        results_conservative = run_backtest(
+            starting_balance=args.balance,
+            max_markets=args.max_markets,
+            use_advisor=not args.no_advisor,
+            use_news=not args.no_news,
+            use_metaculus=not args.no_metaculus,
+            force_refresh=args.refresh,
+            seed=args.seed,
+            profile=PROFILE_CONSERVATIVE,
+        )
+
+        markets_used = results_conservative.get("_markets")
+        results_aggressive = run_backtest(
+            starting_balance=args.balance,
+            max_markets=args.max_markets,
+            use_advisor=not args.no_advisor,
+            use_news=not args.no_news,
+            use_metaculus=not args.no_metaculus,
+            force_refresh=args.refresh,
+            seed=args.seed,
+            markets=markets_used,
+            profile=PROFILE_AGGRESSIVE,
+        )
+
+        print_comparison(results_conservative, results_aggressive)
+
+        if args.save:
+            combined = {
+                "conservative": results_conservative,
+                "aggressive": results_aggressive,
+            }
+            with open(args.save, 'w') as f:
+                json.dump(combined, f, indent=2, default=str)
+            print(f"\nResults saved to {args.save}")
+    elif args.walk_forward:
         results = run_walk_forward(
             starting_balance=args.balance,
             max_markets=args.max_markets,
             force_refresh=args.refresh,
         )
+        print_results(results)
     else:
         results = run_backtest(
             starting_balance=args.balance,
@@ -118,13 +262,12 @@ def main():
             force_refresh=args.refresh,
             seed=args.seed,
         )
+        print_results(results)
     
-    print_results(results)
-    
-    if args.save:
-        with open(args.save, 'w') as f:
-            json.dump(results, f, indent=2, default=str)
-        print(f"\nResults saved to {args.save}")
+        if args.save:
+            with open(args.save, 'w') as f:
+                json.dump(results, f, indent=2, default=str)
+            print(f"\nResults saved to {args.save}")
 
 
 if __name__ == "__main__":

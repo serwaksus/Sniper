@@ -29,7 +29,10 @@ ADVISOR_VETO_RATE = 0.20
 NEWS_BLOCK_RATE = 0.05
 
 
-def _estimate_signal(market: Dict, use_metaculus: bool = True) -> Dict:
+def _estimate_signal(market: Dict, use_metaculus: bool = True,
+                     signal_threshold: float = SIGNAL_THRESHOLD,
+                     min_confidence: float = MIN_CONFIDENCE,
+                     min_prob_ratio: float = MIN_PROB_RATIO) -> Dict:
     """
     Estimate p_model from market properties without LLM (avoids look-ahead).
     Uses structural features: price level, volume, time-to-expiry, category.
@@ -68,7 +71,7 @@ def _estimate_signal(market: Dict, use_metaculus: bool = True) -> Dict:
         confidence += 0.05
     confidence = min(confidence, 0.90)
 
-    action = "BUY" if signal_score >= SIGNAL_THRESHOLD and confidence >= MIN_CONFIDENCE and prob_ratio >= MIN_PROB_RATIO else "SKIP"
+    action = "BUY" if signal_score >= signal_threshold and confidence >= min_confidence and prob_ratio >= min_prob_ratio else "SKIP"
 
     return {
         "p_model": p_model,
@@ -79,18 +82,18 @@ def _estimate_signal(market: Dict, use_metaculus: bool = True) -> Dict:
     }
 
 
-def _simulate_advisor_veto(signal: Dict) -> bool:
+def _simulate_advisor_veto(signal: Dict, veto_rate: float = ADVISOR_VETO_RATE) -> bool:
     """Simulate advisor pre-check. ~30% veto rate based on live data."""
     if signal["confidence"] < 0.70:
         return random.random() < 0.50
     if signal["prob_ratio"] < 2.5:
         return random.random() < 0.40
-    return random.random() < ADVISOR_VETO_RATE
+    return random.random() < veto_rate
 
 
-def _simulate_news_block() -> bool:
+def _simulate_news_block(block_rate: float = NEWS_BLOCK_RATE) -> bool:
     """Simulate news sanity check blocking. ~10% block rate."""
-    return random.random() < NEWS_BLOCK_RATE
+    return random.random() < block_rate
 
 
 def run_backtest(
@@ -102,6 +105,7 @@ def run_backtest(
     force_refresh: bool = False,
     seed: int = 42,
     markets: list = None,
+    profile: dict = None,
 ) -> Dict:
     """
     Run realistic event-driven backtest with a single chronological loop.
@@ -110,6 +114,12 @@ def run_backtest(
     Returns comprehensive performance metrics.
     """
     random.seed(seed)
+
+    _signal_threshold = profile.get("signal_threshold", SIGNAL_THRESHOLD) if profile else SIGNAL_THRESHOLD
+    _min_confidence = profile.get("min_confidence", MIN_CONFIDENCE) if profile else MIN_CONFIDENCE
+    _min_prob_ratio = profile.get("min_prob_ratio", MIN_PROB_RATIO) if profile else MIN_PROB_RATIO
+    _advisor_veto_rate = profile.get("advisor_veto_rate", ADVISOR_VETO_RATE) if profile else ADVISOR_VETO_RATE
+    _news_block_rate = profile.get("news_block_rate", NEWS_BLOCK_RATE) if profile else NEWS_BLOCK_RATE
 
     logger.info(f"[BACKTEST] Starting: balance=${starting_balance}, max_markets={max_markets}")
 
@@ -162,7 +172,7 @@ def run_backtest(
         event_days_set.add(max_day + extra)
     event_days = sorted(event_days_set)
 
-    portfolio = PortfolioTracker(starting_balance=starting_balance)
+    portfolio = PortfolioTracker(starting_balance=starting_balance, profile=profile)
     analyzed = 0
     processed = set()
 
@@ -268,17 +278,20 @@ def run_backtest(
                     logger.debug(f"[BACKTEST] Balance too low (${portfolio.balance:.2f}), stopping opens for today")
                     break
 
-                signal = _estimate_signal(market, use_metaculus=use_metaculus)
+                signal = _estimate_signal(market, use_metaculus=use_metaculus,
+                                          signal_threshold=_signal_threshold,
+                                          min_confidence=_min_confidence,
+                                          min_prob_ratio=_min_prob_ratio)
                 analyzed += 1
 
                 if signal["action"] != "BUY":
                     continue
 
-                if use_advisor and _simulate_advisor_veto(signal):
+                if use_advisor and _simulate_advisor_veto(signal, veto_rate=_advisor_veto_rate):
                     portfolio.rejected_trades.append({"slug": slug, "reason": "advisor_veto"})
                     continue
 
-                if use_news and _simulate_news_block():
+                if use_news and _simulate_news_block(block_rate=_news_block_rate):
                     portfolio.rejected_trades.append({"slug": slug, "reason": "news_block"})
                     continue
 
@@ -362,5 +375,9 @@ def run_backtest(
         "max_markets": max_markets,
         "seed": seed,
     }
+    if profile:
+        summary["profile_name"] = profile.get("name", "")
+
+    summary["_markets"] = markets
 
     return summary

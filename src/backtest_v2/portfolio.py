@@ -70,7 +70,7 @@ class Position:
 
 
 class PortfolioTracker:
-    def __init__(self, starting_balance: float = 500.0):
+    def __init__(self, starting_balance: float = 500.0, profile: dict = None):
         self.starting_balance = starting_balance
         self.balance = starting_balance
         self.positions: Dict[str, Position] = {}
@@ -79,6 +79,7 @@ class PortfolioTracker:
         self.rejected_trades: List[Dict] = []
         self.cluster_exposure: Dict[str, float] = {}
         self.step = 0
+        self._profile = profile or {}
 
     def equity(self, prices: Dict[str, float]) -> float:
         pos_value = sum(
@@ -103,19 +104,21 @@ class PortfolioTracker:
 
     def can_open_position(self, cluster: str, amount: float) -> Tuple[bool, str]:
         tier = get_tier(self.balance + sum(p.cost for p in self.positions.values()))
-        if len(self.positions) >= tier["max_positions"]:
-            return False, f"max_positions={tier['max_positions']}"
-        
+        max_pos = self._profile.get("max_positions", tier["max_positions"])
+        if len(self.positions) >= max_pos:
+            return False, f"max_positions={max_pos}"
+
+        max_cluster = self._profile.get("max_cluster_pct", MAX_CLUSTER_PCT)
         cluster_exposure = self.cluster_exposure.get(cluster, 0) + amount
         total_equity = self.balance + sum(
             p.cost for p in self.positions.values()
         )
-        if total_equity > 0 and cluster_exposure / total_equity > MAX_CLUSTER_PCT:
-            return False, f"cluster {cluster} exposure={cluster_exposure/total_equity:.1%} > {MAX_CLUSTER_PCT:.0%}"
-        
+        if total_equity > 0 and cluster_exposure / total_equity > max_cluster:
+            return False, f"cluster {cluster} exposure={cluster_exposure/total_equity:.1%} > {max_cluster:.0%}"
+
         if amount > self.balance:
             return False, f"amount=${amount:.2f} > balance=${self.balance:.2f}"
-        
+
         return True, "ok"
 
     def open_position(self, slug: str, question: str, outcome: str,
@@ -169,26 +172,31 @@ class PortfolioTracker:
         effective_price = best_ask if best_ask is not None else market_price
         if effective_price <= 0.001:
             return 0
-        
+
         b = (1 - effective_price) / effective_price
         p = p_model
         q = 1 - p
         kelly_full = (b * p - q) / b
-        
+
         if kelly_full <= 0:
             return 0
-        
-        kelly_with_conf = kelly_full * tier["kelly"]
-        
-        cap = tier["other_pct"] if cluster == "other" else tier["base_pct"]
-        
+
+        kelly_frac = self._profile.get("kelly_fraction", tier["kelly"])
+        base_pct = self._profile.get("base_pct", tier["base_pct"])
+        other_pct = self._profile.get("other_pct", base_pct + 0.01)
+        cap_pct = self._profile.get("max_pct", MAX_POS_PCT)
+
+        kelly_with_conf = kelly_full * kelly_frac
+
+        cap = other_pct if cluster == "other" else base_pct
+
         size_pct = min(kelly_with_conf, cap)
         kelly_dollars = round(self.balance * size_pct)
-        
+
         if kelly_dollars < 5:
             return 0
-        
-        kelly_dollars = min(kelly_dollars, round(self.balance * tier["max_pct"]))
+
+        kelly_dollars = min(kelly_dollars, round(self.balance * cap_pct))
         return kelly_dollars
 
     def update_trailing(self, slug: str, market_price: float):
