@@ -76,7 +76,6 @@ MAX_PRICE = 0.30
 MAX_CLUSTER_PCT = 0.30
 MAX_POSITIONS = 5
 BURN_IN_TRADES = 50
-HARD_STOP_LOSS = -0.30
 TRAILING_ACTIVATION = 0.30
 TRAILING_STOP = 0.25
 TAKE_PROFIT = 2.00
@@ -1601,10 +1600,7 @@ def _calculate_atr(slug: str, current_price: float) -> float:
 
 def _get_atr_stop(slug: str, entry_price: float, current_price: float) -> float:
     atr = _calculate_atr(slug, current_price)
-    stop = current_price - ATR_STOP_MULTIPLIER * atr
-    max_loss = entry_price * 0.50
-    floor = entry_price - max_loss
-    return max(stop, floor)
+    return current_price - ATR_STOP_MULTIPLIER * atr
 
 
 def _get_atr_trailing_stop(slug: str, high_price: float, current_price: float) -> float:

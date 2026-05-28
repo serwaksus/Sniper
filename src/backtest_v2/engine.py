@@ -218,13 +218,6 @@ def run_backtest(
                 else:
                     pos.trailing_confirmed = True
 
-            if not sold and pnl_pct <= -0.80:
-                sell_result = simulate_sell(price, pos.shares_after_tp, pos.entry_price, pos.liquidity, force_market=True)
-                if sell_result["filled"]:
-                    fee = sell_result.get("fee", sell_result["proceeds"] * 0.02)
-                    portfolio.close_position(slug, sell_result["proceeds"], "hard_stop_loss", price, fee=fee)
-                    sold = True
-
             if not sold and pnl_pct >= 1.50:
                 sell_result = simulate_sell(price, pos.shares_after_tp, pos.entry_price, pos.liquidity)
                 if sell_result["filled"]:
