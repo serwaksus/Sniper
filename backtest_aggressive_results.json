@@ -1,0 +1,324 @@
+{
+  "baseline": {
+    "full": {
+      "label": "Baseline (current)",
+      "total_trades": 12,
+      "wins": 4,
+      "losses": 8,
+      "win_rate": 0.3333333333333333,
+      "avg_win_pct": 4.695234619503147,
+      "avg_loss_pct": -0.8903610573754192,
+      "total_pnl": 91.95178937826384,
+      "total_pnl_pct": 0.18390357875652769,
+      "max_drawdown": -0.0012886130013905356,
+      "sharpe_ratio": 1.129312982820573,
+      "final_equity": 470.02350171659015,
+      "exit_reasons": {
+        "resolution": 12
+      },
+      "rejected": 767,
+      "ruin_steps": 0,
+      "analyzed": 1903
+    },
+    "walk_forward": {
+      "label": "Baseline (current)",
+      "folds": 5,
+      "total_trades": 60,
+      "win_rate": 0.31666666666666665,
+      "total_pnl": 566.696943511187,
+      "total_pnl_pct": 1.1333938870223739,
+      "max_drawdown": -0.001711433531855821,
+      "sharpe_ratio": 4.984850613285447,
+      "final_equity": 385.4752444371019,
+      "exit_reasons": {
+        "resolution": 60
+      },
+      "fold_details": [
+        {
+          "fold": 1,
+          "trades": 12,
+          "wr": 0.3333333333333333,
+          "pnl": 91.95178937826384,
+          "dd": -0.0012886130013905356,
+          "final_eq": 470.02350171659015
+        },
+        {
+          "fold": 2,
+          "trades": 12,
+          "wr": 0.16666666666666666,
+          "pnl": 41.102084241146656,
+          "dd": -0.001711433531855821,
+          "final_eq": 449.32200202751284
+        },
+        {
+          "fold": 3,
+          "trades": 12,
+          "wr": 0.3333333333333333,
+          "pnl": 132.81606266463623,
+          "dd": -0.001149976066339094,
+          "final_eq": 425.4094125301184
+        },
+        {
+          "fold": 4,
+          "trades": 12,
+          "wr": 0.4166666666666667,
+          "pnl": 208.42332835261988,
+          "dd": -0.0005343729141209078,
+          "final_eq": 406.5684662655777
+        },
+        {
+          "fold": 5,
+          "trades": 12,
+          "wr": 0.3333333333333333,
+          "pnl": 92.4036788745204,
+          "dd": -0.0005951257976617524,
+          "final_eq": 385.4752444371019
+        }
+      ]
+    },
+    "elapsed_sec": 0.3
+  },
+  "aggressive": {
+    "full": {
+      "label": "Aggressive",
+      "total_trades": 15,
+      "wins": 3,
+      "losses": 12,
+      "win_rate": 0.2,
+      "avg_win_pct": 3.7670320965953934,
+      "avg_loss_pct": -0.9128664547112061,
+      "total_pnl": 6.035513748899423,
+      "total_pnl_pct": 0.012071027497798847,
+      "max_drawdown": -0.017320594028801078,
+      "sharpe_ratio": -3.522334457808511,
+      "final_equity": 445.7356347376464,
+      "exit_reasons": {
+        "resolution": 15
+      },
+      "rejected": 1284,
+      "ruin_steps": 0,
+      "analyzed": 1903
+    },
+    "walk_forward": {
+      "label": "Aggressive",
+      "folds": 5,
+      "total_trades": 75,
+      "win_rate": 0.29333333333333333,
+      "total_pnl": 524.6439086747291,
+      "total_pnl_pct": 1.0492878173494582,
+      "max_drawdown": -0.017320594028801078,
+      "sharpe_ratio": 0.30021641332257987,
+      "final_equity": 303.7691733056116,
+      "exit_reasons": {
+        "resolution": 75
+      },
+      "fold_details": [
+        {
+          "fold": 1,
+          "trades": 15,
+          "wr": 0.2,
+          "pnl": 6.035513748899423,
+          "dd": -0.017320594028801078,
+          "final_eq": 445.7356347376464
+        },
+        {
+          "fold": 2,
+          "trades": 15,
+          "wr": 0.13333333333333333,
+          "pnl": -86.8189293885005,
+          "dd": -0.010495769304360296,
+          "final_eq": 398.4860312328651
+        },
+        {
+          "fold": 3,
+          "trades": 15,
+          "wr": 0.4,
+          "pnl": 245.48877709008,
+          "dd": -0.005452435939520035,
+          "final_eq": 364.56168568889456
+        },
+        {
+          "fold": 4,
+          "trades": 15,
+          "wr": 0.3333333333333333,
+          "pnl": 163.41970346348066,
+          "dd": -0.006385404318520922,
+          "final_eq": 331.02263031360303
+        },
+        {
+          "fold": 5,
+          "trades": 15,
+          "wr": 0.4,
+          "pnl": 196.51884376076958,
+          "dd": -0.0033791180379225873,
+          "final_eq": 303.7691733056116
+        }
+      ]
+    },
+    "elapsed_sec": 0.4
+  },
+  "high_roller": {
+    "full": {
+      "label": "High-Roller",
+      "total_trades": 20,
+      "wins": 4,
+      "losses": 16,
+      "win_rate": 0.2,
+      "avg_win_pct": 3.546023840002737,
+      "avg_loss_pct": -0.9160348850404253,
+      "total_pnl": -30.646579284867293,
+      "total_pnl_pct": -0.061293158569734586,
+      "max_drawdown": -0.040061378541543104,
+      "sharpe_ratio": -6.203068868299176,
+      "final_equity": 402.4894014882286,
+      "exit_reasons": {
+        "hard_stop": 1,
+        "resolution": 19
+      },
+      "rejected": 1198,
+      "ruin_steps": 0,
+      "analyzed": 1903
+    },
+    "walk_forward": {
+      "label": "High-Roller",
+      "folds": 5,
+      "total_trades": 100,
+      "win_rate": 0.28,
+      "total_pnl": 612.0914896020881,
+      "total_pnl_pct": 1.2241829792041763,
+      "max_drawdown": -0.040061378541543104,
+      "sharpe_ratio": 0.012800392203965005,
+      "final_equity": 216.98055502205585,
+      "exit_reasons": {
+        "hard_stop": 1,
+        "resolution": 99
+      },
+      "fold_details": [
+        {
+          "fold": 1,
+          "trades": 20,
+          "wr": 0.2,
+          "pnl": -30.646579284867293,
+          "dd": -0.040061378541543104,
+          "final_eq": 402.4894014882286
+        },
+        {
+          "fold": 2,
+          "trades": 20,
+          "wr": 0.2,
+          "pnl": -13.968082912179288,
+          "dd": -0.014468820048258888,
+          "final_eq": 337.602180418415
+        },
+        {
+          "fold": 3,
+          "trades": 20,
+          "wr": 0.3,
+          "pnl": 197.20250134637195,
+          "dd": -0.008727589252021625,
+          "final_eq": 290.81984887914587
+        },
+        {
+          "fold": 4,
+          "trades": 20,
+          "wr": 0.4,
+          "pnl": 264.49494643625906,
+          "dd": -0.00836338441400213,
+          "final_eq": 250.98689623097454
+        },
+        {
+          "fold": 5,
+          "trades": 20,
+          "wr": 0.3,
+          "pnl": 195.00870401650369,
+          "dd": -0.00485307903082284,
+          "final_eq": 216.98055502205585
+        }
+      ]
+    },
+    "elapsed_sec": 0.5
+  },
+  "yolo": {
+    "full": {
+      "label": "YOLO",
+      "total_trades": 30,
+      "wins": 6,
+      "losses": 24,
+      "win_rate": 0.2,
+      "avg_win_pct": 4.207783979835265,
+      "avg_loss_pct": -0.8716173082725399,
+      "total_pnl": -53.57771120070259,
+      "total_pnl_pct": -0.10715542240140517,
+      "max_drawdown": -0.10256973482343826,
+      "sharpe_ratio": -4.5951797235349146,
+      "final_equity": 356.02824686622205,
+      "exit_reasons": {
+        "hard_stop": 3,
+        "trailing_stop": 1,
+        "resolution": 26
+      },
+      "rejected": 139,
+      "ruin_steps": 0,
+      "analyzed": 1903
+    },
+    "walk_forward": {
+      "label": "YOLO",
+      "folds": 5,
+      "total_trades": 131,
+      "win_rate": 0.26717557251908397,
+      "total_pnl": 554.3792673969294,
+      "total_pnl_pct": 1.1087585347938589,
+      "max_drawdown": -0.10256973482343826,
+      "sharpe_ratio": -1.1644944983469923,
+      "final_equity": 161.54256397749998,
+      "exit_reasons": {
+        "hard_stop": 5,
+        "trailing_stop": 2,
+        "resolution": 124
+      },
+      "fold_details": [
+        {
+          "fold": 1,
+          "trades": 30,
+          "wr": 0.2,
+          "pnl": -53.57771120070259,
+          "dd": -0.10256973482343826,
+          "final_eq": 356.02824686622205
+        },
+        {
+          "fold": 2,
+          "trades": 30,
+          "wr": 0.26666666666666666,
+          "pnl": 39.18808054575245,
+          "dd": -0.015275356828220116,
+          "final_eq": 283.112705274283
+        },
+        {
+          "fold": 3,
+          "trades": 24,
+          "wr": 0.25,
+          "pnl": 178.56312311589917,
+          "dd": -0.015299898150639453,
+          "final_eq": 236.79197800115605
+        },
+        {
+          "fold": 4,
+          "trades": 26,
+          "wr": 0.38461538461538464,
+          "pnl": 254.3443532693424,
+          "dd": -0.026336571305539565,
+          "final_eq": 194.82048187357904
+        },
+        {
+          "fold": 5,
+          "trades": 21,
+          "wr": 0.23809523809523808,
+          "pnl": 135.86142166663797,
+          "dd": -0.047725176507579514,
+          "final_eq": 161.54256397749998
+        }
+      ]
+    },
+    "elapsed_sec": 0.4
+  }
+}
