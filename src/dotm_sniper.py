@@ -2740,6 +2740,9 @@ Rules:
             logger.warning("[ADVISOR] Empty response from reasoner, blocking trade")
             return False, "UNKNOWN", 0.0, "advisor_empty_response"
 
+        _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _project_root not in sys.path:
+            sys.path.insert(0, _project_root)
         from advisor_script import parse_llm_advisor_response
         result, parse_err = parse_llm_advisor_response(content, log_label="ADVISOR-PRE")
         if result is None:
