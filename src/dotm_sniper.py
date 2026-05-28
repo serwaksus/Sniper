@@ -241,7 +241,7 @@ def normalize_probability(p):
     if p is None:
         return 0
     p = float(p)
-    if p > 1.0:
+    if p > 100.0:
         p = p / 100.0
     return max(0.0, min(1.0, p))
 
@@ -2626,7 +2626,10 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
             gap = metaculus_prob_val - market_price
             signal_strength = gap / market_price if market_price > 0 else 0
             if signal_strength > 0.3:
-                p_model = max(p_model, metaculus_prob_val)
+                if metaculus_prob_val > p_model:
+                    p_model = metaculus_prob_val
+                else:
+                    p_model = 0.6 * metaculus_prob_val + 0.4 * p_model
                 source_signal = "metaculus_override"
                 confidence = min(confidence + 0.10, 0.95)
                 min_signal = max(min_signal - 10, 35)
