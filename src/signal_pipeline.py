@@ -444,6 +444,9 @@ def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=Non
         if calibrator.is_fitted:
             p_calibrated = calibrator.predict(p_model, cluster or "other")
             method = "isotonic"
+            if p_calibrated >= 0.90 and p_model < 0.50:
+                p_calibrated = p_model
+                method = "raw_overfit_guard"
 
     if method == "raw":
         if cluster != "other" and market_price <= CALIBRATION_DOTM_THRESHOLD:
