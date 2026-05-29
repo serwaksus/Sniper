@@ -136,6 +136,11 @@ def _place_tp_limit_order_single(slug, outcome, shares, price):
 
 def _place_tp_ladder(slug, outcome, total_shares):
     """v5.3.0 TP Ladder: 50% @$0.75, 30% @$0.85, 20% hold to expiry"""
+    existing = _get_open_tp_orders(slug)
+    if existing:
+        existing_prices = {o.get("limit_price") for o in existing}
+        logger.info(f"[TP-LADDER] {slug[:40]}... {len(existing)} existing TP orders (prices={existing_prices}), skipping duplicate placement")
+        return [(o.get("limit_price", 0), o.get("amount", 0), True, "existing") for o in existing]
     ladder = [(0.50, 0.75), (0.30, 0.85)]
     results = []; allocated = 0
     for pct, price in ladder:
