@@ -468,6 +468,9 @@ def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=Non
     else:
         p_ext = p_calibrated
 
+    if market_price < MAX_PRICE:
+        p_ext = min(p_ext, 0.85)
+
     if method != "raw" or abs(p_ext - p_model) > 0.02:
         logger.info(
             f"[CALIBRATION] p_model={p_model:.1%} -> {p_calibrated:.1%} -> {p_ext:.1%} "
