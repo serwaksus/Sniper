@@ -576,17 +576,26 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
     from dotm_sniper import detect_clusters
     try:
         url = "https://gamma-api.polymarket.com/markets"
-        params = {
-            "closed": "false",
-            "limit": 200,
-            "order": "volume",
-            "ascending": "false",
-        }
-        resp = requests.get(url, params=params, timeout=20)
-        if resp.status_code != 200:
-            logger.warning(f"[GAMMA] status={resp.status_code}")
-            return []
-        markets = resp.json()
+        all_markets = []
+        for offset in (0, 100):
+            params = {
+                "closed": "false",
+                "limit": 100,
+                "offset": offset,
+                "order": "volume",
+                "ascending": "false",
+            }
+            resp = requests.get(url, params=params, timeout=20)
+            if resp.status_code != 200:
+                logger.warning(f"[GAMMA] status={resp.status_code} at offset={offset}")
+                break
+            batch = resp.json()
+            if not batch:
+                break
+            all_markets.extend(batch)
+            if len(batch) < 100:
+                break
+        markets = all_markets
         now = datetime.now()
         candidates = []
         for m in markets:

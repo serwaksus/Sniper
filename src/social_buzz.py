@@ -230,6 +230,8 @@ def fetch_telegram(keywords: list[str]) -> dict:
         if not os.path.exists(session_path + ".session"):
             return {"count": 0, "status": "no_session"}
 
+        return {"count": 0, "status": "disabled_russian_ip"}
+
         count = 0
         matching_messages = []
         channels_checked = 0
