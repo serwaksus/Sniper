@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 logger = logging.getLogger(__name__)
 
-MIN_P_MODEL = 0.05
+MIN_P_MODEL = 0.03
 MAX_EXPOSURE_PER_CATEGORY = 0.20
 
 CLUSTER_KEYWORDS = {
@@ -26,7 +26,7 @@ CLUSTER_KEYWORDS = {
 def get_tier_params(balance: float) -> dict:
     if balance < 2000:
         return {"kelly_mult": 0.25, "base_pct": 0.02, "other_pct": 0.035,
-                "max_pct": 0.10, "max_positions": 12, "max_price": 0.30,
+                "max_pct": 0.10, "max_positions": 12, "max_price": 0.40,
                 "max_cluster": 0.30, "tier": "micro"}
     elif balance < 10000:
         return {"kelly_mult": 0.30, "base_pct": 0.03, "other_pct": 0.045,

@@ -58,7 +58,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MODEL_LIGHT = "deepseek-chat"
-MIN_P_MODEL = 0.05
+MIN_P_MODEL = 0.03
 MIN_CONFIDENCE = 0.65
 MAX_POS_PCT = 0.10
 FRACTIONAL_KELLY_MULTIPLIER = 0.25

@@ -43,13 +43,13 @@ METACULUS_URL = "https://www.metaculus.com/api2/questions/"
 METACULUS_HEADERS = {"Authorization": f"Token {METACULUS_API_KEY}"}
 
 # ── Signal thresholds ────────────────────────────────────────
-MIN_PROB_RATIO = 3.0
-MIN_P_MODEL = 0.05
+MIN_PROB_RATIO = 2.0
+MIN_P_MODEL = 0.03
 MAX_P_MODEL_RATIO = 5.0
 MIN_CONFIDENCE = 0.65
 MIN_VOLUME = 25000
 MIN_TTL_HOURS = 48
-MAX_PRICE = 0.30
+MAX_PRICE = 0.40
 ALLOWED_CLUSTERS = {"ai_tech", "russia_ukraine", "usa_politics", "fed_fomc", "sports_nba", "sports_ufc"}
 BANNED_CLUSTERS = {"crypto"}
 PRE_FILTER_OTHER_MIN_VOLUME = 100_000
@@ -578,7 +578,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
         url = "https://gamma-api.polymarket.com/markets"
         params = {
             "closed": "false",
-            "limit": 100,
+            "limit": 200,
             "order": "volume",
             "ascending": "false",
         }
@@ -737,9 +737,18 @@ Market: {sanitize_for_prompt(market['question'])}
 Price: ${market['price']:.3f} ({market['price']*100:.1f}%) | Volume: ${market.get('volume', 0):,.0f} | Resolution: {market.get('ttl_hours', 999) / 24:.0f}d | Category: {cluster}
 Best Ask: ${polymarket_prob:.3f}
 {gap_info}
-ANCHORING WARNING: Do NOT simply return a probability near the market price. The market price already reflects the crowd. You must independently assess the TRUE probability based on the underlying event. If you cannot find a strong reason the probability should be higher, return the market price, but DO NOT default to 2x the price without reasoning.
 
-Task: Identify 2-3 SPECIFIC factors. Estimate TRUE probability. Rate confidence.
+CRITICAL DOTM METHODOLOGY: This market is priced at {market['price']*100:.1f} cents, meaning the crowd assigns only {market['price']*100:.1f}% chance. For DOTM markets, the crowd systematically underestimates tail risks because:
+1. Recency bias - people overweight the status quo
+2. Black swan blindness - people discount unprecedented but plausible events  
+3. Time premium - long-dated markets have more time for surprise developments
+
+STEP 1: List 2-3 SPECIFIC plausible scenarios that could make this event happen. Think creatively about catalysts, tipping points, and nonlinear dynamics.
+STEP 2: For each scenario, estimate its probability (even 1-5% each adds up).
+STEP 3: Sum the scenario probabilities to get total TRUE probability.
+STEP 4: If total probability > market price, the crowd is underestimating.
+
+ANCHORING WARNING: Do NOT simply return a probability near the market price. The market price already reflects the crowd. You must independently assess the TRUE probability based on the underlying event scenarios.
 
 Return ONLY JSON:
 {{"factors": [{{"factor": "description", "direction": "supports/opposes", "weight": "high/medium/low", "source": "source"}}], "estimated_probability": 0.XX, "confidence": 0.XX, "reasoning": "brief"}}
@@ -972,12 +981,18 @@ def batch_analyze_markets(markets):
         item["question"] = sanitize_for_prompt(item["question"])
     items_json = json.dumps(batch_items, indent=2)
 
-    prompt = f"""Prediction market analyst. Analyze these DOTM (deep out-the-money) markets where the crowd may underestimates probability.
+    prompt = f"""Prediction market analyst. Analyze these DOTM (deep out-the-money) markets where the crowd may underestimate probability.
+
+CRITICAL DOTM METHODOLOGY: These markets are priced very low (often 1-30 cents). The crowd systematically underestimates tail risks due to recency bias, black swan blindness, and time premium. For each market:
+1. List 2-3 SPECIFIC plausible scenarios that could make the event happen
+2. Estimate probability for each scenario (even 1-5% each adds up)
+3. Sum scenario probabilities to get TRUE probability
+4. If total > market price, the crowd is underestimating
 
 MARKETS (JSON array):
 {items_json}
 
-For EACH market, identify 2-3 specific factors and estimate the TRUE probability independently from the market price.
+For EACH market, identify 2-3 specific scenarios/factors and estimate the TRUE probability independently from the market price.
 
 Return a JSON ARRAY with one object per market (same order as input):
 [
@@ -992,7 +1007,7 @@ Return a JSON ARRAY with one object per market (same order as input):
 
 Rules:
 - estimated_probability: decimal 0.0-1.0 (NOT percentage)
-- Do NOT anchor on the market price - provide independent assessment
+- Do NOT anchor on the market price - provide independent assessment based on scenarios
 - Conservative on low-volume (<$10K) markets
 - If estimate >3x price, explain what crowd is missing
 - Return exactly {len(batch_items)} items matching the input slugs
