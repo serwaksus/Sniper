@@ -35,6 +35,7 @@ CORRELATED_GROUPS = {
 }
 
 MAX_CORRELATED_GROUP_PCT = 0.25
+MAX_SINGLE_CLUSTER_PCT = 0.50
 
 
 def _get_price_series(slug: str, min_points: int = 5) -> list[float]:
@@ -115,6 +116,18 @@ def check_correlation_limit(new_cluster: str, positions: dict, balance: float,
                             new_investment: float = 0) -> tuple[bool, str]:
     if not positions or balance <= 0:
         return True, "ok"
+
+    all_cluster_inv = defaultdict(float)
+    for slug, pos in positions.items():
+        cluster = _get_cluster(pos)
+        invested = pos.get("entry_price", 0) * pos.get("shares", 0)
+        all_cluster_inv[cluster] += invested
+
+    new_cluster_total = all_cluster_inv.get(new_cluster, 0) + new_investment
+    new_cluster_pct = new_cluster_total / balance
+    if new_cluster_pct > MAX_SINGLE_CLUSTER_PCT:
+        return False, (f"single_cluster={new_cluster} exposure={new_cluster_pct:.1%} > "
+                       f"{MAX_SINGLE_CLUSTER_PCT:.0%}")
 
     new_group = None
     for group_name, clusters in CORRELATED_GROUPS.items():

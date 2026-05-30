@@ -675,7 +675,7 @@ def _check_news_cache_freshness(cluster_key):
 
 def execute_trade(market, estimated_size, factors, analysis, balance):
     """Execute trade with advisor pre-check. Returns True if successful."""
-    approved, verdict, adv_conf, adv_reason = advisor_pre_check(market, analysis)
+    approved, verdict, adv_conf, adv_reason = advisor_pre_check(market, analysis, estimated_size, balance)
     if not approved:
         logger.info(f"[TRADE-BLOCKED] {market['slug']}: {adv_reason}")
         return False

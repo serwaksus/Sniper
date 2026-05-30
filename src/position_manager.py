@@ -25,9 +25,9 @@ CLUSTER_KEYWORDS = {
 
 def get_tier_params(balance: float) -> dict:
     if balance < 2000:
-        return {"kelly_mult": 0.25, "base_pct": 0.02, "other_pct": 0.035,
-                "max_pct": 0.10, "max_positions": 12, "max_price": 0.40,
-                "max_cluster": 0.30, "tier": "micro"}
+        return {"kelly_mult": 0.28, "base_pct": 0.03, "other_pct": 0.045,
+                "max_pct": 0.10, "max_positions": 15, "max_price": 0.40,
+                "max_cluster": 0.35, "tier": "micro"}
     elif balance < 10000:
         return {"kelly_mult": 0.30, "base_pct": 0.03, "other_pct": 0.045,
                 "max_pct": 0.12, "max_positions": 20, "max_price": 0.40,

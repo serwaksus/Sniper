@@ -1304,7 +1304,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
     return results
 
 
-def advisor_pre_check(market, analysis):
+def advisor_pre_check(market, analysis, estimated_size=0, balance=1):
     """
     Two-factor trade verification via independent Advisor (deepseek-reasoner).
     Uses Chain-of-Thought reasoning to validate or reject the bot's trade thesis.
@@ -1402,6 +1402,19 @@ Rules:
         elif verdict == "WARNING" and confidence < ADVISOR_MIN_CONFIDENCE:
             logger.info(f"[ADVISOR] ⚠️ Trade WARNING (advisor uncertain), allowing small position")
             return True, verdict, confidence, "advisor_warning_allowed"
+        elif verdict == "DIVERGE":
+            size_pct = estimated_size / balance if balance > 0 else 1
+            advisor_agrees_direction = advisor_p > price
+            if size_pct <= 0.02:
+                logger.info(f"[ADVISOR] 🔄 DIVERGE override: micro-position {size_pct:.1%} ≤ 2%, allowing")
+                return True, verdict, confidence, "diverge_micro_override"
+            if advisor_agrees_direction:
+                logger.info(f"[ADVISOR] 🔄 DIVERGE override: advisor_p={advisor_p:.1%} > price={price:.1%}, direction agrees")
+                return True, verdict, confidence, "diverge_direction_agrees"
+            reason = f"advisor_veto: verdict={verdict}, conf={confidence:.2f}"
+            logger.info(f"[ADVISOR] 🚫 Trade BLOCKED: {reason}")
+            print(f"   🚫 Advisor veto: {verdict} (conf={confidence:.2f})")
+            return False, verdict, confidence, reason
         else:
             reason = f"advisor_veto: verdict={verdict}, conf={confidence:.2f}"
             logger.info(f"[ADVISOR] 🚫 Trade BLOCKED: {reason}")
