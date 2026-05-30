@@ -872,8 +872,12 @@ def _main_inner():
             continue
         should_analyze, cached_p = _check_price_delta(m["slug"], m["price"])
         if not should_analyze and cached_p is not None:
-            print(f"   ⏭️ {m['question'][:45]}... price unchanged, cached p={cached_p:.1%}")
-            continue
+            min_p_model = get_settings().get("min_p_model", MIN_P_MODEL)
+            if cached_p >= min_p_model:
+                logger.info(f"[DELTA-PROMOTE] {m['slug'][:40]}... cached p={cached_p:.1%}>={min_p_model:.0%}, promoting to scoring")
+            else:
+                logger.info(f"[DELTA-SKIP] {m['slug'][:40]}... cached p={cached_p:.1%}<{min_p_model:.0%}, skip")
+                continue
         candidates_to_analyze.append(m)
 
     if candidates_to_analyze:
@@ -908,7 +912,9 @@ def _main_inner():
         else:
             should_analyze, cached_p = _check_price_delta(m["slug"], m["price"])
             if not should_analyze and cached_p is not None:
-                continue
+                min_p_model = get_settings().get("min_p_model", MIN_P_MODEL)
+                if cached_p < min_p_model:
+                    continue
             analysis = full_market_analysis(m)
             _update_price_tracking(m["slug"], m["price"], analysis["p_model"])
 
