@@ -5,10 +5,11 @@ Aggregates social/news attention signals from multiple sources
 to detect emerging interest in prediction market topics.
 
 Sources (by weight):
-1. GDELT DOC API v2 (40%) — global news monitoring
-2. Google News RSS (30%) — English-language news
-3. Telegram channels via Telethon (20%) — geopolitical buzz
-4. Reddit JSON API (10%) — community discussion
+1. GDELT DOC API v2 (50%) — global news monitoring
+2. Google News RSS (35%) — English-language news
+3. Reddit JSON API (15%) — community discussion
+
+Telegram removed: blocked on Russian IP, Telethon input() hangs process.
 """
 import os
 import sys
@@ -216,72 +217,6 @@ def fetch_google_news(keywords: list[str]) -> dict:
         return {"count": 0, "status": f"error: {e}"}
 
 
-def fetch_telegram(keywords: list[str]) -> dict:
-    api_id = os.environ.get("TELEGRAM_API_ID", "")
-    api_hash = os.environ.get("TELEGRAM_API_HASH", "")
-    if not api_id or not api_hash:
-        return {"count": 0, "status": "no_credentials"}
-
-    try:
-        from telethon import TelegramClient
-        import concurrent.futures
-
-        session_path = "/tmp/dotm_telegram_session"
-        if not os.path.exists(session_path + ".session"):
-            return {"count": 0, "status": "no_session"}
-
-        return {"count": 0, "status": "disabled_russian_ip"}
-
-        count = 0
-        matching_messages = []
-        channels_checked = 0
-
-        def _fetch_channels():
-            nonlocal channels_checked
-            c = 0
-            msgs = []
-            with TelegramClient(session_path, int(api_id), api_hash) as client:
-                channels = json.loads(
-                    os.environ.get("TELEGRAM_CHANNELS", json.dumps(DEFAULT_TELEGRAM_CHANNELS))
-                )
-                channels_checked = len(channels)
-                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-
-                for channel in channels:
-                    try:
-                        for msg in client.iter_messages(channel, limit=50, offset_date=None):
-                            if msg.date < cutoff:
-                                break
-                            if msg.text:
-                                text_lower = msg.text.lower()
-                                if any(kw.lower() in text_lower for kw in keywords):
-                                    c += 1
-                                    msgs.append(msg.text[:80])
-                                    if c >= 20:
-                                        break
-                    except Exception:
-                        continue
-                    if c >= 20:
-                        break
-            return c, msgs
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_fetch_channels)
-            try:
-                count, matching_messages = future.result(timeout=15)
-            except concurrent.futures.TimeoutError:
-                return {"count": 0, "status": "timeout"}
-            except Exception as e:
-                return {"count": 0, "status": f"error: {e}"}
-
-        return {"count": count, "channels_checked": channels_checked, "status": "ok"}
-    except ImportError:
-        return {"count": 0, "status": "telethon_not_installed"}
-    except Exception as e:
-        logger.debug(f"[BUZZ-TELEGRAM] Error: {e}")
-        return {"count": 0, "status": f"error: {e}"}
-
-
 def fetch_reddit(keywords: list[str]) -> dict:
     query = " ".join(keywords[:3])
     try:
@@ -317,39 +252,32 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
     time.sleep(0.5)
     google = fetch_google_news(keywords)
     reddit = fetch_reddit(keywords)
-    telegram = fetch_telegram(keywords)
 
-    sources_active = sum(1 for s in [gdelt, google, telegram, reddit]
+    sources_active = sum(1 for s in [gdelt, google, reddit]
                         if s.get("status") == "ok")
 
     gdelt_norm = min(gdelt.get("count", 0) / 50, 1.0)
     google_norm = min(google.get("count", 0) / 30, 1.0)
     reddit_norm = min(reddit.get("count", 0) / 20, 1.0)
-    telegram_norm = min(telegram.get("count", 0) / 10, 1.0)
 
     total_buzz = 0
     weights_used = 0
     total_weight = 0
 
     if gdelt.get("status") == "ok":
-        total_buzz += 0.40 * gdelt_norm
-        weights_used += 0.40
-    total_weight += 0.40
+        total_buzz += 0.50 * gdelt_norm
+        weights_used += 0.50
+    total_weight += 0.50
 
     if google.get("status") == "ok":
-        total_buzz += 0.30 * google_norm
-        weights_used += 0.30
-    total_weight += 0.30
-
-    if telegram.get("status") == "ok":
-        total_buzz += 0.20 * telegram_norm
-        weights_used += 0.20
-    total_weight += 0.20
+        total_buzz += 0.35 * google_norm
+        weights_used += 0.35
+    total_weight += 0.35
 
     if reddit.get("status") == "ok":
-        total_buzz += 0.10 * reddit_norm
-        weights_used += 0.10
-    total_weight += 0.10
+        total_buzz += 0.15 * reddit_norm
+        weights_used += 0.15
+    total_weight += 0.15
 
     if weights_used > 0 and sources_active < 2:
         total_buzz = total_buzz * 0.7
@@ -368,7 +296,6 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
         "sources": {
             "gdelt": {"count": gdelt.get("count", 0), "status": gdelt.get("status")},
             "google": {"count": google.get("count", 0), "status": google.get("status")},
-            "telegram": {"count": telegram.get("count", 0), "status": telegram.get("status")},
             "reddit": {"count": reddit.get("count", 0), "status": reddit.get("status")},
         },
         "sources_active": sources_active,
@@ -377,8 +304,7 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
     logger.info(
         f"[BUZZ] {slug[:40]}... score={buzz_score:.1f}/20 "
         f"(G:{gdelt.get('count', 0)} Go:{google.get('count', 0)} "
-        f"T:{telegram.get('count', 0)} R:{reddit.get('count', 0)} "
-        f"sentiment={sentiment})"
+        f"R:{reddit.get('count', 0)} sentiment={sentiment})"
     )
 
     _set_cached(slug, result)
