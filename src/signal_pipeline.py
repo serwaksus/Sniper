@@ -1399,6 +1399,9 @@ Rules:
         if verdict == "CONFIRM" and confidence >= ADVISOR_MIN_CONFIDENCE:
             logger.info(f"[ADVISOR] ✅ Trade APPROVED by advisor ({verdict}, conf={confidence:.2f})")
             return True, verdict, confidence, "approved"
+        elif verdict == "WARNING" and confidence < ADVISOR_MIN_CONFIDENCE:
+            logger.info(f"[ADVISOR] ⚠️ Trade WARNING (advisor uncertain), allowing small position")
+            return True, verdict, confidence, "advisor_warning_allowed"
         else:
             reason = f"advisor_veto: verdict={verdict}, conf={confidence:.2f}"
             logger.info(f"[ADVISOR] 🚫 Trade BLOCKED: {reason}")
