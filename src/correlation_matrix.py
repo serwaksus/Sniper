@@ -85,13 +85,19 @@ def compute_pairwise_correlation(slug_a: str, slug_b: str) -> float | None:
     return max(-1.0, min(1.0, corr))
 
 
+def _get_cluster(pos):
+    clusters_raw = pos.get("clusters", [])
+    if isinstance(clusters_raw, list) and len(clusters_raw) > 0:
+        return clusters_raw[0]
+    return "other"
+
 def get_correlated_exposure(positions: dict, balance: float) -> dict[str, float]:
     if not positions or balance <= 0:
         return {}
 
     cluster_investment = defaultdict(float)
     for slug, pos in positions.items():
-        cluster = pos.get("clusters", ["other"])[0] if isinstance(pos.get("clusters"), list) else "other"
+        cluster = _get_cluster(pos)
         invested = pos.get("entry_price", 0) * pos.get("shares", 0)
         cluster_investment[cluster] += invested
 
@@ -122,7 +128,7 @@ def check_correlation_limit(new_cluster: str, positions: dict, balance: float,
     group_clusters = CORRELATED_GROUPS[new_group]
     cluster_investment = defaultdict(float)
     for slug, pos in positions.items():
-        cluster = pos.get("clusters", ["other"])[0] if isinstance(pos.get("clusters"), list) else "other"
+        cluster = _get_cluster(pos)
         if cluster in group_clusters:
             invested = pos.get("entry_price", 0) * pos.get("shares", 0)
             cluster_investment[cluster] += invested

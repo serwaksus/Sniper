@@ -695,6 +695,23 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
         log_slippage(market["slug"], market["price"], fill_data)
 
     shares = round(float(fill_data.get("shares", 0))) if fill_data and fill_data.get("shares", 0) > 0 else round(estimated_size / market["price"]) if market["price"] > 0 else 0
+
+    positions = load_json(POSITIONS_FILE, {})
+    if market["slug"] not in positions:
+        positions[market["slug"]] = {
+            "entry_price": fill_data.get("price", market["price"]) if fill_data else market["price"],
+            "high_price": fill_data.get("price", market["price"]) if fill_data else market["price"],
+            "trailing_on": False,
+            "stop_loss": market["price"] * 0.7,
+            "last_checked": datetime.now().isoformat(),
+            "metaculus_prob": None,
+            "market_question": market["question"],
+            "outcome": market.get("outcome", "yes"),
+            "clusters": market.get("clusters", ["other"]),
+            "shares": shares,
+        }
+        save_json(POSITIONS_FILE, positions)
+
     if shares > 0:
         ladder_results = _place_tp_ladder(market["slug"], market["outcome"], shares)
         for price, shares_placed, ok, method in ladder_results:
