@@ -1000,6 +1000,12 @@ def _main_inner():
         wins = sum(1 for h in recent if h.get("outcome") == "YES")
         logger.info(f"Cycle complete: bought={candidates_bought}, recent_winrate={wins/len(recent):.1%}")
 
+    try:
+        from health_monitor import run_health_check
+        run_health_check()
+    except Exception as e:
+        logger.debug(f"[HEALTH] Check failed: {e}")
+
 
 # Re-export from extracted modules (at bottom to avoid circular imports)
 from order_manager import (get_order_book, get_best_ask, get_balance, get_portfolio,
