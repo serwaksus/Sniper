@@ -358,6 +358,117 @@ def _check_cache(state):
 
 
 # ── Main ────────────────────────────────────────────────────────
+def _summarize_no_trades(lines):
+    signals = sum(1 for l in lines if "=> BUY" in l)
+    blocked = sum(1 for l in lines if "TRADE-BLOCKED" in l)
+    executed = sum(1 for l in lines if "Bought:" in l and "Bought: 0" not in l)
+    diverge_overrides = sum(1 for l in lines if "diverge_" in l and "override" in l)
+    return f"signals={signals} blocked={blocked} executed={executed} diverge_overrides={diverge_overrides}"
+
+
+def _summarize_equity(state):
+    try:
+        data = json.load(open(EQUITY_FILE))
+        snaps = data.get("snapshots", [])
+        if snaps:
+            eq = snaps[-1].get("total_equity", 0)
+            cash = snaps[-1].get("cash", 0)
+            pos = snaps[-1].get("positions_value", 0)
+            pnl = snaps[-1].get("unrealized_pnl", 0)
+            n_pos = snaps[-1].get("positions_count", 0)
+            return f"equity=${eq:.2f} cash=${cash:.2f} pos=${pos:.2f} pnl={pnl:+.2f} positions={n_pos}"
+    except Exception:
+        pass
+    return "equity=data_unavailable"
+
+
+def _summarize_orders():
+    try:
+        res = subprocess.run(
+            ["pm-trader", "orders", "list"],
+            capture_output=True, text=True, timeout=15, start_new_session=True
+        )
+        data = json.loads(res.stdout) if res.stdout else {}
+        orders = data.get("data", []) if isinstance(data.get("data"), list) else []
+        pending = sum(1 for o in orders if o.get("status") == "pending")
+        return f"pending_orders={pending}"
+    except Exception:
+        return "orders=api_error"
+
+
+def _summarize_cycle(state):
+    last_cycle = state.get("last_cycle_start", "never")
+    avg_time = state.get("avg_cycle_time", 0)
+    return f"last={last_cycle} avg_cycle={avg_time:.0f}s"
+
+
+def _summarize_errors(state):
+    errs = state.get("errors_last_hour", 0)
+    return f"errors_1h={errs}"
+
+
+def _summarize_llm(state):
+    cost = state.get("llm_cost_today", 0)
+    calls = state.get("llm_calls_today", 0)
+    return f"calls={calls} cost=${cost:.2f}"
+
+
+def _summarize_disk():
+    try:
+        usage = shutil.disk_usage("/root/dotm-sniper")
+        pct = usage.used / usage.total
+        return f"used={pct:.0%} free={usage.free // (1024**3)}GB"
+    except Exception:
+        return "disk=unknown"
+
+
+def _summarize_hypotheses():
+    try:
+        db = json.load(open(HYPOTHESIS_DB_FILE))
+        hyps = db.get("hypotheses", [])
+        open_h = sum(1 for h in hyps if not h.get("resolved"))
+        resolved = sum(1 for h in hyps if h.get("resolved"))
+        return f"open={open_h} resolved={resolved}"
+    except Exception:
+        return "hypotheses=data_error"
+
+
+def _summarize_winrate():
+    try:
+        db = json.load(open(HYPOTHESIS_DB_FILE))
+        resolved = [h for h in db.get("hypotheses", []) if h.get("resolved")]
+        wins = sum(1 for h in resolved if h.get("pnl_pct", 0) > 0)
+        total = len(resolved)
+        wr = wins / total if total else 0
+        return f"resolved={total} wins={wins} winrate={wr:.0%}"
+    except Exception:
+        return "winrate=data_error"
+
+
+def _summarize_calib():
+    try:
+        model = json.load(open(CALIBRATION_MODEL_FILE))
+        clusters = []
+        for c, d in model.items():
+            y = d.get("y_thresholds_", [])
+            x = d.get("X_thresholds_", [])
+            if y and x:
+                clusters.append(f"{c}:p>{x[-1]:.0%}->{max(y):.0%}")
+        return f"clusters=[{', '.join(clusters)}]"
+    except Exception:
+        return "calib=no_model"
+
+
+def _summarize_cache():
+    try:
+        tracking = json.load(open(PRICE_TRACKING_FILE))
+        total = len(tracking)
+        high = sum(1 for v in tracking.values() if v.get("p_model", 0) >= 0.85)
+        return f"tracked={total} high_p={high}"
+    except Exception:
+        return "cache=error"
+
+
 def run_health_check():
     state = _load_state()
     lines = _read_recent_log(hours=24)
@@ -378,6 +489,21 @@ def run_health_check():
         lambda: _check_cache(state),
     ]
 
+    summaries = [
+        lambda: _summarize_no_trades(lines),
+        lambda: _summarize_equity(state),
+        lambda: _summarize_orders(),
+        lambda: f"api={sum(1 for l in lines if '[GAMMA]' in l)}_cycles",
+        lambda: _summarize_cycle(state),
+        lambda: _summarize_errors(state),
+        lambda: _summarize_llm(state),
+        lambda: _summarize_disk(),
+        lambda: _summarize_hypotheses(),
+        lambda: _summarize_winrate(),
+        lambda: _summarize_calib(),
+        lambda: _summarize_cache(),
+    ]
+
     check_names = [
         "no_trades", "equity_drawdown", "order_health", "api_health",
         "cycle_timing", "error_spike", "llm_usage", "disk_space",
@@ -386,16 +512,22 @@ def run_health_check():
 
     for i, check in enumerate(checks):
         name = check_names[i] if i < len(check_names) else f"check_{i}"
+        summary = ""
+        try:
+            summary = summaries[i]() if i < len(summaries) else ""
+        except Exception:
+            summary = "summary_error"
+
         try:
             result = check()
         except Exception as e:
-            logger.warning(f"[HEALTH-CHECK] {name}: CRASH - {e}")
+            logger.warning(f"[HEALTH-CHECK] {name}: CRASH ({summary}) - {e}")
             continue
         if result is None:
-            logger.debug(f"[HEALTH-CHECK] {name}: OK")
+            logger.info(f"[HEALTH-CHECK] {name}: OK | {summary}")
             continue
         alert_key, message = result
-        logger.info(f"[HEALTH-CHECK] {name}: ISSUE [{alert_key}]")
+        logger.info(f"[HEALTH-CHECK] {name}: ISSUE [{alert_key}] | {summary}")
         if _should_alert(state, alert_key):
             alerts.append((alert_key, message))
             _mark_alerted(state, alert_key)
