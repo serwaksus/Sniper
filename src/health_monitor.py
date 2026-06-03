@@ -856,11 +856,85 @@ def run_health_check():
         logger.info("[HEALTH] All 23 checks passed")
         return
 
-    header = f"🔬 DOTM Health ({datetime.now().strftime('%m/%d %H:%M')}) — {len(alerts)} issues\n"
-    body = "\n\n".join(msg for _, msg in alerts)
-    _send_telegram(header + body)
-    logger.info(f"[HEALTH] {len(alerts)} alerts sent")
+    for alert_key, message in alerts:
+        logger.info(f"[HEALTH] ALERT [{alert_key}]: {message[:100]}")
     return alerts
+
+
+def run_hourly_report():
+    """Run all 23 checks, send ONE aggregated Telegram message with all issues.
+    Called by cron every hour. Ignores cooldown — always reports full status."""
+    state = _load_state()
+    lines = _read_recent_log(hours=24)
+
+    checks = [
+        lambda: _check_no_trades(lines, state),
+        lambda: _check_equity_drawdown(state),
+        lambda: _check_order_health(state),
+        lambda: _check_api_health(lines, state),
+        lambda: _check_cycle_timing(state),
+        lambda: _check_error_spike(state),
+        lambda: _check_llm_usage(state),
+        lambda: _check_disk_space(state),
+        lambda: _check_hypothesis_db(state),
+        lambda: _check_winrate(state),
+        lambda: _check_calibration_overfit(state),
+        lambda: _check_cache(state),
+        lambda: _check_telegram(state),
+        lambda: _check_crash_frequency(state),
+        lambda: _check_json_integrity(state),
+        lambda: _check_cron_health(state),
+        lambda: _check_llm_error_rate(state),
+        lambda: _check_screen_sessions(state),
+        lambda: _check_disk_inodes(state),
+        lambda: _check_pm_trader_health(state),
+        lambda: _check_api_keys(state),
+        lambda: _check_memory(state),
+        lambda: _check_log_size(state),
+    ]
+
+    check_names = [
+        "no_trades", "equity_drawdown", "order_health", "api_health",
+        "cycle_timing", "error_spike", "llm_usage", "disk_space",
+        "hypothesis_db", "winrate", "calib_overfit", "cache",
+        "telegram", "crash_freq", "json_integrity", "cron_health",
+        "llm_errors", "screen_sessions", "disk_inodes", "pm_trader",
+        "api_keys", "memory", "log_size",
+    ]
+
+    issues = []
+    ok_count = 0
+
+    for i, check in enumerate(checks):
+        name = check_names[i] if i < len(check_names) else f"check_{i}"
+        try:
+            result = check()
+        except Exception as e:
+            logger.warning(f"[HOURLY] {name}: CRASH - {e}")
+            issues.append(f"❗ {name}: check crashed")
+            continue
+        if result is None:
+            ok_count += 1
+            continue
+        alert_key, message = result
+        clean = message.replace("<b>", "").replace("</b>", "")
+        first_line = clean.split("\n")[0]
+        issues.append(first_line)
+        logger.info(f"[HOURLY] {name}: ISSUE [{alert_key}]")
+
+    ts = datetime.now().strftime("%m/%d %H:%M")
+    if not issues:
+        msg = f"✅ DOTM Hourly ({ts}): All 23 checks OK"
+        logger.info(msg)
+        _send_telegram(msg)
+        return []
+
+    msg = f"🔬 DOTM Hourly ({ts}): {len(issues)} issues / {ok_count} OK\n\n"
+    msg += "\n".join(f"• {i}" for i in issues)
+
+    _send_telegram(msg)
+    logger.info(f"[HOURLY] Sent {len(issues)} issues to Telegram")
+    return issues
 
 
 if __name__ == "__main__":
@@ -869,5 +943,9 @@ if __name__ == "__main__":
     from utils import load_env_file
     load_env_file()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    results = run_health_check()
-    print(f"{len(results) or 0} issues" if results else "All healthy")
+    if "--hourly" in sys.argv:
+        results = run_hourly_report()
+        print(f"{len(results)} issues" if results else "All healthy")
+    else:
+        results = run_health_check()
+        print(f"{len(results) or 0} issues" if results else "All healthy")
