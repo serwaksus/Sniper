@@ -924,9 +924,7 @@ def run_hourly_report():
 
     ts = datetime.now().strftime("%m/%d %H:%M")
     if not issues:
-        msg = f"✅ DOTM Hourly ({ts}): All 23 checks OK"
-        logger.info(msg)
-        _send_telegram(msg)
+        logger.info(f"[HOURLY] ({ts}): All 23 checks OK")
         return []
 
     msg = f"🔬 DOTM Hourly ({ts}): {len(issues)} issues / {ok_count} OK\n\n"
