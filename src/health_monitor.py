@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Health Monitor — 10 checks covering the full trading pipeline.
+Health Monitor — 20 checks covering full trading pipeline + infrastructure.
 Sends Telegram alert ONLY if issues found. Runs once per sniper cycle.
 """
 import json
 import os
 import re
+import sys
 import subprocess
 import logging
 import shutil
@@ -357,6 +358,207 @@ def _check_cache(state):
     return None
 
 
+# ── Check 13: Telegram reachability ────────────────────────────
+def _check_telegram(state):
+    try:
+        import socket
+        _src_dir = os.path.dirname(os.path.abspath(__file__))
+        if _src_dir not in sys.path:
+            sys.path.insert(0, _src_dir)
+        from tg_sender import _get_credentials, TG_API_HOST, TG_WORKING_IP
+        import requests as rq
+        token, chat_id = _get_credentials()
+        if not token:
+            return "TG_NO_CRED", "📡 <b>Telegram: no credentials</b>\n• Check .env TG_BOT_TOKEN/TG_CHAT_ID"
+        orig_getaddrinfo = socket.getaddrinfo
+        def _patched(host, port, *a, **kw):
+            if host == TG_API_HOST:
+                return [orig_getaddrinfo(TG_WORKING_IP, port, *a, **kw)[0]]
+            return orig_getaddrinfo(host, port, *a, **kw)
+        socket.getaddrinfo = _patched
+        try:
+            resp = rq.get(
+                f"https://{TG_API_HOST}/bot{token}/getMe",
+                timeout=10,
+            )
+            if not resp.ok:
+                return "TG_API_FAIL", f"📡 <b>Telegram API error</b>\n• getMe returned {resp.status_code}"
+        finally:
+            socket.getaddrinfo = orig_getaddrinfo
+    except Exception as e:
+        return "TG_UNREACHABLE", f"📡 <b>Telegram unreachable</b>\n• {str(e)[:100]}"
+    return None
+
+
+# ── Check 14: Process crash frequency ──────────────────────────
+def _check_crash_frequency(state):
+    count = 0
+    for logf in ["/tmp/sniper_v556.log", "/tmp/sniper_v555.log",
+                 "/tmp/sniper_v554.log", "/tmp/sniper_v553.log",
+                 "/tmp/sniper_v552.log"]:
+        try:
+            with open(logf) as f:
+                count += sum(1 for l in f if "Traceback" in l)
+        except Exception:
+            continue
+    if count >= 3:
+        return ("CRASH_FREQ",
+                f"💥 <b>Crash frequency: {count} Tracebacks in recent logs</b>\n"
+                f"• Check logs for recurring exceptions")
+    return None
+
+
+# ── Check 15: JSON file integrity ─────────────────────────────
+def _check_json_integrity(state):
+    critical_files = {
+        "positions.json": POSITIONS_FILE,
+        "equity_curve.json": EQUITY_FILE,
+        "bot_settings.json": "/root/dotm-sniper/bot_settings.json",
+        "hypothesis_db.json": HYPOTHESIS_DB_FILE,
+        "price_tracking.json": PRICE_TRACKING_FILE,
+    }
+    broken = []
+    for name, path in critical_files.items():
+        try:
+            with open(path) as f:
+                json.load(f)
+        except FileNotFoundError:
+            broken.append(f"{name}: MISSING")
+        except json.JSONDecodeError as e:
+            broken.append(f"{name}: CORRUPT ({str(e)[:50]})")
+        except Exception as e:
+            broken.append(f"{name}: ERROR ({str(e)[:50]})")
+    if broken:
+        return ("JSON_INTEGRITY",
+                "📄 <b>JSON file integrity issues</b>\n" +
+                "\n".join(f"• {b}" for b in broken))
+    return None
+
+
+# ── Check 16: Cron health ─────────────────────────────────────
+def _check_cron_health(state):
+    stale = []
+    cron_logs = {
+        "report": "/root/sniper_report.log",
+        "equity_tracker": "/root/dotm-sniper/logs/equity_tracker.log",
+        "advisor_cron": "/root/dotm-sniper/logs/advisor_cron.log",
+    }
+    cutoff = datetime.now() - timedelta(hours=3)
+    for name, path in cron_logs.items():
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(path))
+            if mtime < cutoff:
+                hours_stale = (datetime.now() - mtime).total_seconds() / 3600
+                stale.append(f"{name}: last update {hours_stale:.0f}h ago")
+        except Exception:
+            stale.append(f"{name}: log file missing")
+    if stale:
+        return ("CRON_STALE",
+                "⏰ <b>Cron jobs not running</b>\n" +
+                "\n".join(f"• {s}" for s in stale))
+    return None
+
+
+# ── Check 17: LLM API error rate ──────────────────────────────
+def _check_llm_error_rate(state):
+    lines = _read_recent_log(hours=6)
+    total = sum(1 for l in lines if "model=" in l and "messages" in l)
+    errors = sum(1 for l in lines if "[ADVISOR] Empty response" in l
+                 or "advisor_parse_error" in l or "ADVISOR.*Timeout" in l
+                 or "ADVISOR] Error" in l or "429" in l)
+    if total > 5:
+        rate = errors / total
+        if rate > 0.30:
+            return ("LLM_ERRORS",
+                    f"🤖 <b>LLM error rate: {rate:.0%} ({errors}/{total})</b>\n"
+                    f"• Check DeepSeek API key, rate limits, balance")
+    return None
+
+
+# ── Check 18: Screen session integrity ─────────────────────────
+def _check_screen_sessions(state):
+    issues = []
+    for proc_name in ["dotm_sniper.py", "hermes_advisor.py"]:
+        try:
+            res = subprocess.run(
+                ["ps", "aux"],
+                capture_output=True, text=True, timeout=5, start_new_session=True
+            )
+            count = sum(1 for l in res.stdout.split("\n")
+                        if l.strip().startswith("root") and f"python3 src/{proc_name}" in l
+                        and "SCREEN" not in l and "bash -c" not in l)
+            if count == 0:
+                issues.append(f"{proc_name}: NOT RUNNING")
+            elif count > 1:
+                issues.append(f"{proc_name}: {count} instances (possible fork)")
+        except Exception as e:
+            issues.append(f"{proc_name}: check failed ({str(e)[:50]})")
+
+    try:
+        res = subprocess.run(
+            ["screen", "-ls"],
+            capture_output=True, text=True, timeout=5, start_new_session=True
+        )
+        sockets = [l for l in res.stdout.split("\n") if "Detached" in l or "Attached" in l]
+        if len(sockets) < 2:
+            issues.append(f"screen sessions: only {len(sockets)} found (need 2)")
+    except Exception:
+        pass
+
+    if issues:
+        return ("SCREEN_HEALTH",
+                "🖥️ <b>Process/session issues</b>\n" +
+                "\n".join(f"• {i}" for i in issues))
+    return None
+
+
+# ── Check 19: Disk inode usage ─────────────────────────────────
+def _check_disk_inodes(state):
+    try:
+        res = subprocess.run(
+            ["df", "-i", "/root/dotm-sniper"],
+            capture_output=True, text=True, timeout=5, start_new_session=True
+        )
+        lines_l = res.stdout.strip().split("\n")
+        if len(lines_l) >= 2:
+            parts = lines_l[1].split()
+            if len(parts) >= 6:
+                pct = parts[5].strip().rstrip("%")
+                if int(pct) > 80:
+                    return ("INODE_USAGE",
+                            f"💾 <b>Inode usage: {pct}%</b>\n"
+                            f"• Clean up log files to prevent system crash")
+    except Exception:
+        pass
+    return None
+
+
+# ── Check 20: pm-trader CLI health ─────────────────────────────
+def _check_pm_trader_health(state):
+    try:
+        start = datetime.now()
+        res = subprocess.run(
+            ["pm-trader", "balance"],
+            capture_output=True, text=True, timeout=10, start_new_session=True
+        )
+        elapsed = (datetime.now() - start).total_seconds()
+        if res.returncode != 0:
+            return ("PM_TRADER_FAIL",
+                    f"🔧 <b>pm-trader CLI failed</b>\n"
+                    f"• exit={res.returncode}, output={res.stderr[:100]}")
+        if elapsed > 5:
+            return ("PM_TRADER_SLOW",
+                    f"🔧 <b>pm-trader slow: {elapsed:.1f}s</b>\n"
+                    f"• Should respond <5s, possible API issues")
+    except subprocess.TimeoutExpired:
+        return "PM_TRADER_HANG", "🔧 <b>pm-trader balance TIMEOUT (>10s)</b>\n• CLI may be hung"
+    except FileNotFoundError:
+        return "PM_TRADER_MISSING", "🔧 <b>pm-trader not found</b>\n• Check PATH or installation"
+    except Exception as e:
+        return "PM_TRADER_ERROR", f"🔧 <b>pm-trader error</b>\n• {str(e)[:100]}"
+    return None
+
+
 # ── Main ────────────────────────────────────────────────────────
 def _summarize_no_trades(lines):
     signals = sum(1 for l in lines if "=> BUY" in l)
@@ -487,6 +689,14 @@ def run_health_check():
         lambda: _check_winrate(state),
         lambda: _check_calibration_overfit(state),
         lambda: _check_cache(state),
+        lambda: _check_telegram(state),
+        lambda: _check_crash_frequency(state),
+        lambda: _check_json_integrity(state),
+        lambda: _check_cron_health(state),
+        lambda: _check_llm_error_rate(state),
+        lambda: _check_screen_sessions(state),
+        lambda: _check_disk_inodes(state),
+        lambda: _check_pm_trader_health(state),
     ]
 
     summaries = [
@@ -502,12 +712,22 @@ def run_health_check():
         lambda: _summarize_winrate(),
         lambda: _summarize_calib(),
         lambda: _summarize_cache(),
+        lambda: "telegram=patched_dns",
+        lambda: f"tracebacks=scanned_5_logs",
+        lambda: f"files=5_critical_json",
+        lambda: "cron=3_jobs",
+        lambda: f"llm_errors=6h_window",
+        lambda: "sessions=sniper+hermes",
+        lambda: "inodes=df_check",
+        lambda: "pm_trader=balance_10s_timeout",
     ]
 
     check_names = [
         "no_trades", "equity_drawdown", "order_health", "api_health",
         "cycle_timing", "error_spike", "llm_usage", "disk_space",
         "hypothesis_db", "winrate", "calib_overfit", "cache",
+        "telegram", "crash_freq", "json_integrity", "cron_health",
+        "llm_errors", "screen_sessions", "disk_inodes", "pm_trader",
     ]
 
     for i, check in enumerate(checks):
@@ -535,7 +755,7 @@ def run_health_check():
     _save_state(state)
 
     if not alerts:
-        logger.info("[HEALTH] All 12 checks passed")
+        logger.info("[HEALTH] All 20 checks passed")
         return
 
     header = f"🔬 DOTM Health ({datetime.now().strftime('%m/%d %H:%M')}) — {len(alerts)} issues\n"
