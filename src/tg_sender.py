@@ -24,6 +24,8 @@ QUEUE_FILE = "/root/dotm-sniper/tg_queue.json"
 MAX_QUEUE_SIZE = 100
 MAX_AGE_HOURS = 48
 SEND_TIMEOUT = 15
+TG_WORKING_IP = "149.154.167.220"
+TG_API_HOST = "api.telegram.org"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,17 +51,31 @@ def _get_credentials():
 
 
 def _send_once(token, chat_id, message, timeout=SEND_TIMEOUT):
-    resp = requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": message[:4096],
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
-        timeout=timeout,
-    )
-    return resp.ok
+    import socket
+    import urllib3
+    from urllib3.util.connection import allowed_gai_family
+    
+    orig_getaddrinfo = socket.getaddrinfo
+    def _patched_getaddrinfo(host, port, *args, **kwargs):
+        if host == TG_API_HOST:
+            return [orig_getaddrinfo(TG_WORKING_IP, port, *args, **kwargs)[0]]
+        return orig_getaddrinfo(host, port, *args, **kwargs)
+    
+    socket.getaddrinfo = _patched_getaddrinfo
+    try:
+        resp = requests.post(
+            f"https://{TG_API_HOST}/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": message[:4096],
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=timeout,
+        )
+        return resp.ok
+    finally:
+        socket.getaddrinfo = orig_getaddrinfo
 
 
 def send_telegram(message, max_retries=3, queue_on_fail=True):
