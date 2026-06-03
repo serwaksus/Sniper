@@ -680,9 +680,10 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
         logger.info(f"[TRADE-BLOCKED] {market['slug']}: {adv_reason}")
         return False
 
+    max_slippage = max(0.30, market["price"] * 2)
     current_ask = get_best_ask(market["slug"])
-    if current_ask is not None and current_ask > market["price"] * 1.15:
-        logger.warning(f"[SNIPER] Slippage guard: ask={current_ask:.4f} > 15% above price={market['price']:.4f}, aborting")
+    if current_ask is not None and current_ask > market["price"] * (1 + max_slippage):
+        logger.warning(f"[SNIPER] Slippage guard: ask={current_ask:.4f} > {max_slippage:.0%} above price={market['price']:.4f}, aborting")
         return False
 
     if not buy(market, estimated_size):

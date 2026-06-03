@@ -378,15 +378,24 @@ def run_health_check():
         lambda: _check_cache(state),
     ]
 
-    for check in checks:
+    check_names = [
+        "no_trades", "equity_drawdown", "order_health", "api_health",
+        "cycle_timing", "error_spike", "llm_usage", "disk_space",
+        "hypothesis_db", "winrate", "calib_overfit", "cache",
+    ]
+
+    for i, check in enumerate(checks):
+        name = check_names[i] if i < len(check_names) else f"check_{i}"
         try:
             result = check()
         except Exception as e:
-            logger.debug(f"[HEALTH] check crashed: {e}")
+            logger.warning(f"[HEALTH-CHECK] {name}: CRASH - {e}")
             continue
         if result is None:
+            logger.debug(f"[HEALTH-CHECK] {name}: OK")
             continue
         alert_key, message = result
+        logger.info(f"[HEALTH-CHECK] {name}: ISSUE [{alert_key}]")
         if _should_alert(state, alert_key):
             alerts.append((alert_key, message))
             _mark_alerted(state, alert_key)

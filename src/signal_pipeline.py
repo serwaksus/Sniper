@@ -417,10 +417,19 @@ def normalize_probability(p):
     return max(0.0, min(1.0, p))
 
 
+def _count_resolved_hypotheses():
+    try:
+        db = load_json(HYPOTHESIS_DB_FILE, {"hypotheses": []})
+        return sum(1 for h in db.get("hypotheses", []) if h.get("resolved"))
+    except Exception:
+        return 0
+
+
 def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=None):
     """
     Calibrate p_model using:
-    1. Hierarchical Platt scaling (if >= 30 resolved per cluster)
+    1. Isotonic/Platt (only if >= 20 resolved hypotheses)
+    2. Soft extremizing fallback: p * 1.1, capped at 50%
     2. Isotonic regression (if >= 20 samples)
     3. Legacy dampening fallback
     Then apply extremization to compensate crowd regression-to-mean.
@@ -430,16 +439,18 @@ def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=Non
     p_calibrated = p_model
     method = "raw"
 
-    try:
-        from calibration_tracker import get_platt_calibrated
-        p_platt = get_platt_calibrated(p_model, cluster or "other")
-        if p_platt is not None:
-            p_calibrated = p_platt
-            method = "platt"
-    except Exception:
-        pass
+    resolved_count = _count_resolved_hypotheses()
+    if resolved_count >= 20:
+        try:
+            from calibration_tracker import get_platt_calibrated
+            p_platt = get_platt_calibrated(p_model, cluster or "other")
+            if p_platt is not None:
+                p_calibrated = p_platt
+                method = "platt"
+        except Exception:
+            pass
 
-    if method == "raw":
+    if method == "raw" and resolved_count >= 20:
         calibrator = get_calibrator()
         if calibrator.is_fitted:
             p_calibrated = calibrator.predict(p_model, cluster or "other")
@@ -449,12 +460,8 @@ def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=Non
                 method = "raw_overfit_guard"
 
     if method == "raw":
-        if cluster != "other" and market_price <= CALIBRATION_DOTM_THRESHOLD:
-            if p_model > CALIBRATION_AGGRESSIVE_PMODEL:
-                meta_low = metaculus_prob is None or metaculus_prob < CALIBRATION_METACULUS_LOW
-                if meta_low:
-                    p_calibrated = p_model * CALIBRATION_DAMPING_FACTOR
-                    method = "dampen"
+        p_calibrated = min(p_model * 1.1, 0.50)
+        method = "soft_extremize"
 
     d = 1.5
     if market_price < 0.03:
@@ -1373,6 +1380,10 @@ Rules:
                 logger.info("[ADVISOR] Extracted JSON from reasoning_content (content was empty)")
 
         if not content:
+            size_pct = estimated_size / balance if balance > 0 else 1
+            if size_pct <= 0.02:
+                logger.info("[ADVISOR] Empty response, but micro-position <=2%, allowing")
+                return True, "UNKNOWN", 0.0, "advisor_empty_micro_override"
             logger.warning("[ADVISOR] Empty response from reasoner, blocking trade")
             return False, "UNKNOWN", 0.0, "advisor_empty_response"
 
@@ -1382,6 +1393,10 @@ Rules:
         from advisor_script import parse_llm_advisor_response
         result, parse_err = parse_llm_advisor_response(content, log_label="ADVISOR-PRE")
         if result is None:
+            size_pct = estimated_size / balance if balance > 0 else 1
+            if size_pct <= 0.02:
+                logger.info(f"[ADVISOR] Parse failed but micro-position, allowing: {parse_err}")
+                return True, "UNKNOWN", 0.0, "advisor_parse_micro_override"
             logger.warning(f"[ADVISOR] Parse failed: {parse_err}, blocking trade")
             return False, "UNKNOWN", 0.0, f"advisor_parse_error: {parse_err}"
 

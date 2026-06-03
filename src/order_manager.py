@@ -70,9 +70,10 @@ def buy(market, amount):
             return False
 
         market_price = market.get("price", 0)
-        if market_price > 0 and best_ask > market_price * 1.15:
+        max_slippage = max(0.30, market_price * 2)
+        if market_price > 0 and best_ask > market_price * (1 + max_slippage):
             logger.warning(
-                f"[SNIPER] Slippage guard in buy(): ask={best_ask:.4f} > 15% above "
+                f"[SNIPER] Slippage guard in buy(): ask={best_ask:.4f} > {max_slippage:.0%} above "
                 f"price={market_price:.4f} for {market['slug']}, aborting"
             )
             return False
