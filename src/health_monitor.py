@@ -87,18 +87,9 @@ def _read_last_hour_log():
 
 
 def _send_telegram(message):
-    token = os.environ.get("TG_BOT_TOKEN", "")
-    chat_id = os.environ.get("TG_CHAT_ID", "")
-    if not token or not chat_id:
-        return False
     try:
-        import requests
-        resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message[:4096], "parse_mode": "HTML"},
-            timeout=15,
-        )
-        return resp.ok
+        from tg_sender import send_telegram
+        return send_telegram(message, max_retries=2, queue_on_fail=True)
     except Exception as e:
         logger.warning(f"[HEALTH] TG send failed: {e}")
         return False

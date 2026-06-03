@@ -22,12 +22,5 @@ if ! pgrep -f "python3 src/hermes_advisor.py" > /dev/null; then
 fi
 
 if [ -n "$RESTARTED" ]; then
-    TOKEN="${TG_BOT_TOKEN}"
-    CHAT="${TG_CHAT_ID}"
-    if [ -n "$TOKEN" ] && [ -n "$CHAT" ]; then
-        curl -s --max-time 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" \
-            -d chat_id="$CHAT" \
-            -d text="🔄 Process watchdog: restarted $RESTARTED" \
-            > /dev/null 2>&1
-    fi
+    cd /root/dotm-sniper && python3 src/tg_sender.py "🔄 Process watchdog: restarted $RESTARTED" 2>/dev/null || true
 fi

@@ -213,7 +213,6 @@ def get_daily_summary() -> dict[str, Any]:
 
 def main():
     import html
-    import requests
 
     snapshot = log_equity_snapshot()
     if not snapshot:
@@ -230,12 +229,6 @@ def main():
     summary = get_daily_summary()
     if not summary:
         logger.info("[DAILY] No summary data")
-        return
-
-    token = os.environ.get("TG_BOT_TOKEN", "")
-    chat_id = os.environ.get("TG_CHAT_ID", "")
-    if not token or not chat_id:
-        logger.warning("[DAILY] Telegram not configured")
         return
 
     msg = "📊 <b>Daily Summary</b>\n"
@@ -261,16 +254,9 @@ def main():
         max_eq = max(e[1] for e in equity_hist)
         msg += f"\n📉 Range: ${min_eq:.2f} - ${max_eq:.2f}"
 
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML",
-                  "disable_web_page_preview": True},
-            timeout=20
-        )
-        logger.info("[DAILY] Telegram summary sent")
-    except Exception as e:
-        logger.error(f"[DAILY] Telegram error: {e}")
+    from tg_sender import send_telegram
+    send_telegram(msg)
+    logger.info("[DAILY] Telegram summary send attempted")
 
 
 if __name__ == "__main__":

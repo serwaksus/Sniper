@@ -36,31 +36,36 @@ class TelegramReporter:
         if not self.enabled:
             logger.warning("Telegram send skipped: reporter not enabled")
             return False
-        message = message[:4096]
-        for attempt in range(3):
-            try:
-                response = requests.post(
-                    f"https://api.telegram.org/bot{self.token}/sendMessage",
-                    json={
-                        "chat_id": self.chat_id,
-                        "text": message,
-                        "parse_mode": "HTML",
-                        "disable_web_page_preview": True
-                    },
-                    timeout=20
-                )
-                if response.ok:
-                    logger.info("Telegram message sent successfully")
-                    return True
-                else:
-                    logger.error(f"Telegram send failed: {response.status_code} {response.text[:200]}")
-                    return False
-            except Exception as e:
-                logger.warning(f"Telegram send attempt {attempt+1}/3 failed: {e}")
-                if attempt < 2:
-                    import time; time.sleep(2)
-        logger.error("Telegram send failed after 3 attempts")
-        return False
+        try:
+            from tg_sender import send_telegram
+            return send_telegram(message, max_retries=3, queue_on_fail=True)
+        except ImportError:
+            logger.warning("tg_sender not available, falling back to direct send")
+            message = message[:4096]
+            for attempt in range(3):
+                try:
+                    response = requests.post(
+                        f"https://api.telegram.org/bot{self.token}/sendMessage",
+                        json={
+                            "chat_id": self.chat_id,
+                            "text": message,
+                            "parse_mode": "HTML",
+                            "disable_web_page_preview": True
+                        },
+                        timeout=20
+                    )
+                    if response.ok:
+                        logger.info("Telegram message sent successfully")
+                        return True
+                    else:
+                        logger.error(f"Telegram send failed: {response.status_code} {response.text[:200]}")
+                        return False
+                except Exception as e:
+                    logger.warning(f"Telegram send attempt {attempt+1}/3 failed: {e}")
+                    if attempt < 2:
+                        import time; time.sleep(2)
+            logger.error("Telegram send failed after 3 attempts")
+            return False
 
     def alert_new_position(self, market_slug: str, question: str, entry_price: float,
                           amount: float, metaculus_prob: float | None = None,
