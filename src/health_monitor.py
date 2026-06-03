@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Health Monitor — 20 checks covering full trading pipeline + infrastructure.
+Health Monitor — 23 checks covering full trading pipeline + infrastructure.
 Sends Telegram alert ONLY if issues found. Runs once per sniper cycle.
 """
 import json
@@ -559,8 +559,99 @@ def _check_pm_trader_health(state):
     return None
 
 
-# ── Main ────────────────────────────────────────────────────────
-def _summarize_no_trades(lines):
+# ── Check 21: API key validity ─────────────────────────────────
+def _check_api_keys(state):
+    issues = []
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if not deepseek_key:
+        _src_dir = os.path.dirname(os.path.abspath(__file__))
+        env_path = os.path.join(os.path.dirname(_src_dir), ".env")
+        if os.path.exists(env_path):
+            with open(env_path) as f:
+                for line in f:
+                    if line.strip().startswith("DEEPSEEK_API_KEY="):
+                        deepseek_key = line.strip().split("=", 1)[1].strip().strip('"')
+                        break
+    if not deepseek_key:
+        issues.append("DEEPSEEK_API_KEY: missing")
+    else:
+        try:
+            import requests as rq
+            resp = rq.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={"Authorization": f"Bearer {deepseek_key}",
+                         "Content-Type": "application/json"},
+                json={"model": "deepseek-chat", "messages": [
+                    {"role": "user", "content": "ping"}],
+                    "max_tokens": 1},
+                timeout=15,
+            )
+            if resp.status_code == 401:
+                issues.append("DeepSeek: 401 Unauthorized (key invalid/expired)")
+            elif resp.status_code == 402:
+                issues.append("DeepSeek: 402 Payment Required (balance exhausted)")
+            elif resp.status_code == 429:
+                issues.append("DeepSeek: 429 Rate Limited")
+        except Exception as e:
+            issues.append(f"DeepSeek: unreachable ({str(e)[:60]})")
+
+    if issues:
+        return ("API_KEYS",
+                "🔑 <b>API key issues</b>\n" +
+                "\n".join(f"• {i}" for i in issues))
+    return None
+
+
+# ── Check 22: Memory usage ─────────────────────────────────────
+def _check_memory(state):
+    issues = []
+    for proc_name in ["dotm_sniper.py", "hermes_advisor.py"]:
+        try:
+            res = subprocess.run(
+                ["ps", "aux"],
+                capture_output=True, text=True, timeout=5, start_new_session=True
+            )
+            for line in res.stdout.split("\n"):
+                if f"python3 src/{proc_name}" in line and "SCREEN" not in line and "bash -c" not in line:
+                    parts = line.split()
+                    if len(parts) >= 6:
+                        rss_mb = int(parts[5]) / 1024
+                        if rss_mb > 500:
+                            issues.append(f"{proc_name}: {rss_mb:.0f}MB RSS (>500MB)")
+                        break
+        except Exception:
+            pass
+    if issues:
+        return ("MEMORY",
+                "🧠 <b>High memory usage</b>\n" +
+                "\n".join(f"• {i}" for i in issues))
+    return None
+
+
+# ── Check 23: Log file size ─────────────────────────────────────
+def _check_log_size(state):
+    MAX_LOG_MB = 50
+    large = []
+    log_paths = [
+        "/tmp/sniper_v557.log", "/tmp/sniper_v556.log",
+        "/tmp/hermes_v557.log", "/tmp/hermes_v556.log",
+        "/root/sniper_report.log",
+        "/root/dotm-sniper/logs/equity_tracker.log",
+        "/root/dotm-sniper/logs/advisor_cron.log",
+    ]
+    for path in log_paths:
+        try:
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            if size_mb > MAX_LOG_MB:
+                name = os.path.basename(path)
+                large.append(f"{name}: {size_mb:.0f}MB")
+        except Exception:
+            continue
+    if large:
+        return ("LOG_SIZE",
+                f"📝 <b>Log files >{MAX_LOG_MB}MB</b>\n" +
+                "\n".join(f"• {l}" for l in large))
+    return None
     signals = sum(1 for l in lines if "=> BUY" in l)
     blocked = sum(1 for l in lines if "TRADE-BLOCKED" in l)
     executed = sum(1 for l in lines if "Bought:" in l and "Bought: 0" not in l)
@@ -697,6 +788,9 @@ def run_health_check():
         lambda: _check_screen_sessions(state),
         lambda: _check_disk_inodes(state),
         lambda: _check_pm_trader_health(state),
+        lambda: _check_api_keys(state),
+        lambda: _check_memory(state),
+        lambda: _check_log_size(state),
     ]
 
     summaries = [
@@ -713,13 +807,16 @@ def run_health_check():
         lambda: _summarize_calib(),
         lambda: _summarize_cache(),
         lambda: "telegram=patched_dns",
-        lambda: f"tracebacks=scanned_5_logs",
-        lambda: f"files=5_critical_json",
+        lambda: "tracebacks=scanned_5_logs",
+        lambda: "files=5_critical_json",
         lambda: "cron=3_jobs",
-        lambda: f"llm_errors=6h_window",
+        lambda: "llm_errors=6h_window",
         lambda: "sessions=sniper+hermes",
         lambda: "inodes=df_check",
         lambda: "pm_trader=balance_10s_timeout",
+        lambda: "api_keys=deepseek_ping",
+        lambda: "memory=ps_aux_rss",
+        lambda: "log_size=7_files_50mb",
     ]
 
     check_names = [
@@ -728,6 +825,7 @@ def run_health_check():
         "hypothesis_db", "winrate", "calib_overfit", "cache",
         "telegram", "crash_freq", "json_integrity", "cron_health",
         "llm_errors", "screen_sessions", "disk_inodes", "pm_trader",
+        "api_keys", "memory", "log_size",
     ]
 
     for i, check in enumerate(checks):
@@ -755,7 +853,7 @@ def run_health_check():
     _save_state(state)
 
     if not alerts:
-        logger.info("[HEALTH] All 20 checks passed")
+        logger.info("[HEALTH] All 23 checks passed")
         return
 
     header = f"🔬 DOTM Health ({datetime.now().strftime('%m/%d %H:%M')}) — {len(alerts)} issues\n"
