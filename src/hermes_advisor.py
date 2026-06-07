@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Hermes Advisor v5.3.7 - Async Position Risk Manager
+Hermes Advisor v5.4.0 - Async Position Risk Manager with Self-Improvement
 Runs parallel to dotm_sniper.py, handles reconciliation and emergency exits.
 Alert throttling: Telegram only on trigger_exit or status change.
 Anti-Fossil Filter: news limited to last 30 days, max 5 results.
+Self-improvement: tracks predictions, generates skills, adapts to outcomes.
 """
 import subprocess
 import json
@@ -16,6 +17,7 @@ import threading
 import html
 from datetime import datetime
 from bayesian_updater import update_posterior, should_exit as bayesian_should_exit, classify_news_with_llm
+from hermes_memory import log_prediction, resolve_prediction, generate_skills, load_skills_for_prompt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
@@ -485,6 +487,8 @@ def evaluate_emergency_exit():
 
         news_text = "\n".join([f"- {sanitize_for_prompt(str(h))}" for h in headlines[:5]])
 
+        skills_context = load_skills_for_prompt(max_skills=5)
+
         prompt = f"""You are a risk analysis bot. Determine if recent news makes the outcome YES mathematically impossible (0% probability).
 
 Market Question: {sanitize_for_prompt(question)}
@@ -493,7 +497,7 @@ Bot's estimated probability (p_bot): {bot_prob:.1%}
 
 Recent News:
 {news_text}
-
+{skills_context}
 Instructions:
 - Analyze if any news fundamentally invalidates the YES outcome
 - Estimate the current probability (p_hermes) of YES outcome based on the news
@@ -574,6 +578,17 @@ Return ONLY JSON:
                     status = "YELLOW"
 
                 normalized_status = status.upper().strip()
+
+                try:
+                    cluster = pos_data.get("clusters", ["unknown"])[0] if isinstance(pos_data.get("clusters"), list) else "unknown"
+                except (IndexError, TypeError):
+                    cluster = "unknown"
+                log_prediction(
+                    slug=slug, question=question, p_bot=bot_prob,
+                    p_hermes=p_hermes_val if p_hermes_raw is not None else bot_prob,
+                    verdict=reason[:50], status=normalized_status,
+                    reason=reason, cluster=cluster,
+                )
 
                 should_send = _update_and_check_status(slug, trigger, normalized_status)
 
@@ -752,18 +767,81 @@ def run_emergency_evaluation_loop():
 
         time.sleep(NEWS_CHECK_INTERVAL_SECONDS)
 
+def _resolve_predictions_loop():
+    while True:
+        try:
+            time.sleep(3600)
+            _check_resolved_markets()
+            if datetime.now().hour % 6 == 0 and datetime.now().minute < 5:
+                skills = generate_skills()
+                if skills:
+                    logger.info(f"[HERMES-SKILLS] Generated {len(skills)} skills")
+        except Exception as e:
+            logger.error(f"[HERMES] Resolution loop error: {e}")
+
+
+def _check_resolved_markets():
+    from hermes_memory import _load_memory
+    m = _load_memory()
+    predictions = m.get("predictions", {})
+    if not predictions:
+        return
+
+    slugs = list(predictions.keys())[:10]
+    try:
+        res = subprocess.run(
+            ["pm-trader", "orders", "list"],
+            capture_output=True, text=True, timeout=15, start_new_session=True
+        )
+    except Exception:
+        return
+
+    known_active = set()
+    positions = load_json(POSITIONS_FILE, {})
+    known_active.update(positions.keys())
+
+    try:
+        import requests as _req
+        gamma_url = "https://gamma-api.polymarket.com/markets"
+        for slug in slugs:
+            try:
+                resp = _req.get(gamma_url, params={"slug": slug}, timeout=10)
+                if resp.status_code == 200:
+                    markets = resp.json()
+                    if markets:
+                        market = markets[0]
+                        if market.get("closed") or market.get("resolved"):
+                            outcome = "yes" if market.get("outcome", "").lower() == "yes" else "no"
+                            if market.get("outcomePrices"):
+                                try:
+                                    prices = json.loads(market["outcomePrices"])
+                                    if len(prices) >= 2 and float(prices[0]) > float(prices[1]):
+                                        outcome = "yes"
+                                    else:
+                                        outcome = "no"
+                                except (json.JSONDecodeError, ValueError, IndexError):
+                                    pass
+                            resolve_prediction(slug, outcome)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"[HERMES] Resolution check failed: {e}")
+
+
 def main():
     logger.info("="*60)
-    logger.info("  HERMES ADVISOR v5.3.7 - Starting")
+    logger.info("  HERMES ADVISOR v5.4.0 - Starting (with self-improvement)")
     logger.info("="*60)
 
     reconcile_thread = threading.Thread(target=run_reconciliation_loop, daemon=True)
     emergency_thread = threading.Thread(target=run_emergency_evaluation_loop, daemon=True)
+    resolution_thread = threading.Thread(target=_resolve_predictions_loop, daemon=True)
 
     reconcile_thread.start()
     emergency_thread.start()
+    resolution_thread.start()
 
-    logger.info("[HERMES] Both loops started")
+    logger.info("[HERMES] All 3 loops started (reconcile, emergency, resolution+skills)")
 
     try:
         while True:
@@ -777,6 +855,10 @@ def main():
                 logger.error("[HERMES] Emergency thread died, restarting")
                 emergency_thread = threading.Thread(target=run_emergency_evaluation_loop, daemon=True)
                 emergency_thread.start()
+            if not resolution_thread.is_alive():
+                logger.error("[HERMES] Resolution thread died, restarting")
+                resolution_thread = threading.Thread(target=_resolve_predictions_loop, daemon=True)
+                resolution_thread.start()
 
             positions = load_json(POSITIONS_FILE, {})
             active_count = len([p for p in positions.values() if not p.get("in_emergency_exit")])

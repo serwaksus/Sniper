@@ -7,6 +7,7 @@ Replaces expensive LLM calls with fast Bayesian computation.
 import os
 import sys
 import math
+import time
 import logging
 from datetime import datetime
 
@@ -27,6 +28,30 @@ NEWS_LIKELIHOOD = {
     "strongly_supports": {"p_yes_given_news": 0.85, "label": "Strong support"},
     "confirms_inevitable": {"p_yes_given_news": 0.95, "label": "News confirms outcome"},
 }
+
+_ADAPTIVE_CACHE = {"data": None, "loaded_at": 0}
+
+
+def _get_effective_likelihoods():
+    now = time.time()
+    if _ADAPTIVE_CACHE["data"] and (now - _ADAPTIVE_CACHE["loaded_at"]) < 300:
+        return _ADAPTIVE_CACHE["data"]
+
+    base = dict(NEWS_LIKELIHOOD)
+    try:
+        from hermes_memory import get_adaptive_likelihoods
+        adapted = get_adaptive_likelihoods(min_samples=5)
+        if adapted:
+            for cat, vals in adapted.items():
+                if cat in base:
+                    base[cat] = {"p_yes_given_news": vals["p_yes_given_news"],
+                                 "label": base[cat]["label"], "adapted": True, "samples": vals["samples"]}
+    except Exception:
+        pass
+
+    _ADAPTIVE_CACHE["data"] = base
+    _ADAPTIVE_CACHE["loaded_at"] = now
+    return base
 
 
 def _prob_to_logodds(p: float) -> float:
@@ -75,7 +100,8 @@ def update_posterior(slug: str, news_category: str, llm_assessment: str | None =
     if not pos:
         return None
 
-    likelihood = NEWS_LIKELIHOOD.get(news_category, NEWS_LIKELIHOOD["neutral"])
+    likelihoods = _get_effective_likelihoods()
+    likelihood = likelihoods.get(news_category, likelihoods.get("neutral", NEWS_LIKELIHOOD["neutral"]))
     p_yes_given_news = likelihood["p_yes_given_news"]
     p_no_given_news = 1 - p_yes_given_news
 
