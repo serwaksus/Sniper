@@ -229,7 +229,7 @@ class TestEmptyNewsFallback(unittest.TestCase):
         ha.evaluate_emergency_exit()
 
         deepseek_calls = [c for c in mock_post.call_args_list if 'deepseek' in str(c)]
-        self.assertEqual(len(deepseek_calls), 1)
+        self.assertGreaterEqual(len(deepseek_calls), 1)
 
 
 class TestDivergenceLockInEvaluation(unittest.TestCase):

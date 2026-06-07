@@ -188,3 +188,23 @@ def load_env_file(path="/root/dotm-sniper/.env"):
                 key, val = line.split('=', 1)
                 val = val.strip().strip('"').strip("'")
                 os.environ.setdefault(key.strip(), val)
+
+
+MAX_LOG_BYTES = 50 * 1024 * 1024
+
+def rotate_log_if_needed(log_path, max_bytes=MAX_LOG_BYTES, keep_bytes=5*1024*1024):
+    try:
+        size = os.path.getsize(log_path)
+        if size < max_bytes:
+            return False
+        with open(log_path, 'r') as f:
+            f.seek(max(0, size - keep_bytes))
+            f.readline()
+            tail = f.read()
+        with open(log_path, 'w') as f:
+            f.write(tail)
+        logger.info(f"[LOG-ROTATE] {log_path}: {size/1024/1024:.1f}MB -> {len(tail)/1024/1024:.1f}MB")
+        return True
+    except Exception as e:
+        logger.warning(f"[LOG-ROTATE] Failed for {log_path}: {e}")
+        return False

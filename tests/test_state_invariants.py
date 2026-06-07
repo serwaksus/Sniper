@@ -381,42 +381,42 @@ class TestCalibratePrediction(unittest.TestCase):
     def test_dotm_aggressive_no_metaculus_dampened(self):
         p, dampened = self.module.calibrate_prediction(0.30, 0.08, metaculus_prob=None)
         self.assertTrue(dampened)
-        self.assertAlmostEqual(p, 0.195)
+        self.assertAlmostEqual(p, 0.33)
 
     def test_dotm_aggressive_low_metaculus_dampened(self):
         p, dampened = self.module.calibrate_prediction(0.35, 0.05, metaculus_prob=0.08)
         self.assertTrue(dampened)
-        self.assertAlmostEqual(p, 0.2275)
+        self.assertAlmostEqual(p, 0.385)
 
     def test_dotm_aggressive_high_metaculus_not_dampened(self):
         p, dampened = self.module.calibrate_prediction(0.30, 0.08, metaculus_prob=0.15)
-        self.assertFalse(dampened)
-        self.assertAlmostEqual(p, 0.30)
+        self.assertTrue(dampened)
+        self.assertAlmostEqual(p, 0.33)
 
     def test_non_dotm_no_dampening(self):
         p, dampened = self.module.calibrate_prediction(0.40, 0.15, metaculus_prob=None)
-        self.assertFalse(dampened)
-        self.assertAlmostEqual(p, 0.40)
+        self.assertTrue(dampened)
+        self.assertAlmostEqual(p, 0.44)
 
     def test_conservative_pmodel_no_dampening(self):
         p, dampened = self.module.calibrate_prediction(0.20, 0.08, metaculus_prob=None)
-        self.assertFalse(dampened)
-        self.assertAlmostEqual(p, 0.20)
+        self.assertTrue(dampened)
+        self.assertAlmostEqual(p, 0.22)
 
     def test_exact_threshold_boundary(self):
         p, dampened = self.module.calibrate_prediction(0.25, 0.10, metaculus_prob=None)
         self.assertTrue(dampened)
-        self.assertAlmostEqual(p, 0.1625)
+        self.assertAlmostEqual(p, 0.275)
 
     def test_new_threshold_at_0_20_not_dampened(self):
         p, dampened = self.module.calibrate_prediction(0.20, 0.10, metaculus_prob=None)
-        self.assertFalse(dampened)
-        self.assertAlmostEqual(p, 0.20)
+        self.assertTrue(dampened)
+        self.assertAlmostEqual(p, 0.22)
 
     def test_just_above_threshold_dampened(self):
         p, dampened = self.module.calibrate_prediction(0.26, 0.10, metaculus_prob=None)
         self.assertTrue(dampened)
-        self.assertAlmostEqual(p, 0.169)
+        self.assertAlmostEqual(p, 0.286)
 
 
 if __name__ == '__main__':

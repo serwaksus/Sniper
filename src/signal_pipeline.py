@@ -843,7 +843,7 @@ Rules:
     settings = get_settings()
 
     min_p_model = settings.get("min_p_model", MIN_P_MODEL)
-    if p_model < min_p_model:
+    if p_model < min_p_model - 0.001:
         logger.info(f"[ANALYSIS] p_model={p_model:.1%} < MIN_P_MODEL={min_p_model:.1%}, skipping")
         return {
             "question": market["question"],
@@ -1075,8 +1075,17 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
         lines = [l for l in lines if not l.strip().startswith("```")]
         cleaned = "\n".join(lines)
 
+    for prefix in ("```json", "```JSON", "```"):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):]
+
+    cleaned = cleaned.strip()
+    if cleaned.startswith(":"):
+        cleaned = cleaned[1:].strip()
+
     start = cleaned.find('[')
     if start == -1:
+        logger.warning(f"[BATCH-PARSE] No '[' found in LLM response: {content[:200]}")
         return None
 
     depth = 0
@@ -1125,6 +1134,19 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
                 return _build_batch_results(arr, batch_items, metaculus_cache)
         except json.JSONDecodeError:
             pass
+
+    individual_objects = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', cleaned)
+    if individual_objects:
+        try:
+            arr = [json.loads(obj) for obj in individual_objects]
+            arr = [a for a in arr if isinstance(a, dict)]
+            if arr:
+                logger.info(f"[BATCH-PARSE] Recovered {len(arr)} individual objects from failed batch")
+                return _build_batch_results(arr, batch_items, metaculus_cache)
+        except json.JSONDecodeError:
+            pass
+
+    logger.warning(f"[BATCH-PARSE] All parsing methods failed. Response preview: {content[:300]}")
 
     return None
 
@@ -1176,7 +1198,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
 
         settings = get_settings()
         min_p_model = settings.get("min_p_model", MIN_P_MODEL)
-        if p_model < min_p_model:
+        if p_model < min_p_model - 0.001:
             results_map[slug] = {
                 "question": bi["question"],
                 "slug": slug,

@@ -71,10 +71,11 @@ def buy(market, amount):
 
         market_price = market.get("price", 0)
         max_slippage = max(0.30, market_price * 2)
-        if market_price > 0 and best_ask > market_price * (1 + max_slippage):
+        max_acceptable = market_price * (1 + max_slippage)
+        if market_price > 0 and best_ask > max_acceptable:
             logger.warning(
-                f"[SNIPER] Slippage guard in buy(): ask={best_ask:.4f} > {max_slippage:.0%} above "
-                f"price={market_price:.4f} for {market['slug']}, aborting"
+                f"[SNIPER] Slippage guard in buy(): ask={best_ask:.4f} > {max_acceptable:.4f} "
+                f"({max_slippage:.0%} above price={market_price:.4f}) for {market['slug']}, aborting"
             )
             return False
 
@@ -87,16 +88,33 @@ def buy(market, amount):
                 )
                 return False
 
-        res = subprocess.run(["pm-trader", "buy", market["slug"], market["outcome"], str(amount)],
-                           capture_output=True, text=True, timeout=30, start_new_session=True)
-        if res.returncode != 0:
-            logger.error(f"[SNIPER] Buy failed for {market['slug']}: rc={res.returncode}")
+        limit_price = min(best_ask * 1.15, max_acceptable)
+        limit_price = max(limit_price, market_price)
+
+        estimated_shares = int(amount / limit_price) if limit_price > 0 else 0
+        if estimated_shares < 1:
+            logger.warning(f"[SNIPER] Estimated shares < 1 for ${amount} @ {limit_price:.4f}, aborting")
             return False
-        result = json.loads(res.stdout)
+
+        logger.info(
+            f"[SNIPER] Placing limit buy for {market['slug'][:40]}... "
+            f"${amount} @ limit={limit_price:.4f} (ask={best_ask:.4f}, max={max_acceptable:.4f})"
+        )
+
+        res = subprocess.run(
+            ["pm-trader", "orders", "place", market["slug"], market["outcome"],
+             "buy", str(estimated_shares), f"{limit_price:.4f}"],
+            capture_output=True, text=True, timeout=30, start_new_session=True
+        )
+        if res.returncode != 0:
+            logger.error(f"[SNIPER] Limit buy failed for {market['slug']}: rc={res.returncode} {res.stderr[:200]}")
+            return False
+        result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
-            print(f"  ✅ {market['question'][:45]}... ${amount}")
+            print(f"  ✅ {market['question'][:45]}... ${amount} @ limit {limit_price:.4f}")
             return True
         else:
+            logger.warning(f"[SNIPER] Limit buy not ok: {result}")
             print(f"  ❌ {result}")
             return False
     except Exception as e:

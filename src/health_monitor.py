@@ -634,11 +634,13 @@ def _check_log_size(state):
     MAX_LOG_MB = 50
     large = []
     log_paths = [
-        "/tmp/sniper_v557.log", "/tmp/sniper_v556.log",
-        "/tmp/hermes_v557.log", "/tmp/hermes_v556.log",
+        "/root/dotm-sniper/sniper.log",
+        "/root/dotm-sniper/report.log",
+        "/root/dotm-sniper/equity_tracker.log",
         "/root/sniper_report.log",
         "/root/dotm-sniper/logs/equity_tracker.log",
         "/root/dotm-sniper/logs/advisor_cron.log",
+        "/root/dotm-sniper/logs/hermes.log",
     ]
     for path in log_paths:
         try:
@@ -646,11 +648,17 @@ def _check_log_size(state):
             if size_mb > MAX_LOG_MB:
                 name = os.path.basename(path)
                 large.append(f"{name}: {size_mb:.0f}MB")
+                try:
+                    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                    from utils import rotate_log_if_needed
+                    rotate_log_if_needed(path)
+                except Exception:
+                    pass
         except Exception:
             continue
     if large:
         return ("LOG_SIZE",
-                f"📝 <b>Log files >{MAX_LOG_MB}MB</b>\n" +
+                f"📝 <b>Log files >{MAX_LOG_MB}MB (auto-rotated)</b>\n" +
                 "\n".join(f"• {l}" for l in large))
     return None
     signals = sum(1 for l in lines if "=> BUY" in l)
