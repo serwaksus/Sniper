@@ -463,28 +463,15 @@ def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=Non
         p_calibrated = min(p_model * 1.1, 0.50)
         method = "soft_extremize"
 
-    d = 1.5
-    if market_price < 0.03:
-        d = 1.8
-    elif market_price < 0.07:
-        d = 1.6
-    elif market_price < 0.15:
-        d = 1.4
-    else:
-        d = 1.2
-
-    if p_calibrated > 0 and p_calibrated < 1:
-        p_ext = (p_calibrated ** d) / (p_calibrated ** d + (1 - p_calibrated) ** d)
+    if market_price < MAX_PRICE:
+        p_ext = min(p_calibrated, 0.85)
     else:
         p_ext = p_calibrated
-
-    if market_price < MAX_PRICE:
-        p_ext = min(p_ext, 0.85)
 
     if method != "raw" or abs(p_ext - p_model) > 0.02:
         logger.info(
             f"[CALIBRATION] p_model={p_model:.1%} -> {p_calibrated:.1%} -> {p_ext:.1%} "
-            f"(method={method}, extremize_d={d:.1f}, cluster={cluster})"
+            f"(method={method}, cluster={cluster})"
         )
 
     return p_ext, method != "raw"
@@ -1079,29 +1066,31 @@ CRITICAL REGULATION FOR CONFIDENCE SCORING: Do NOT default to a flat 0.65 confid
 
 
 def _parse_batch_response(content, batch_items, metaculus_cache=None):
-    """
-    Parse batch LLM response. Expects a JSON array.
-    Uses balanced-brace parsing to handle nested objects.
-    """
     if metaculus_cache is None:
         metaculus_cache = {}
 
-    start = content.find('[')
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        cleaned = "\n".join(lines)
+
+    start = cleaned.find('[')
     if start == -1:
         return None
 
     depth = 0
     in_string = False
     escape_next = False
-    for i in range(start, len(content)):
-        c = content[i]
+    for i in range(start, len(cleaned)):
+        c = cleaned[i]
         if escape_next:
             escape_next = False
             continue
         if c == '\\' and in_string:
             escape_next = True
             continue
-        if c == '"' and not escape_next:
+        if c == '"':
             in_string = not in_string
             continue
         if in_string:
@@ -1111,15 +1100,24 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
         elif c == ']':
             depth -= 1
             if depth == 0:
+                candidate = cleaned[start:i + 1]
                 try:
-                    arr = json.loads(content[start:i + 1])
+                    arr = json.loads(candidate)
                     if isinstance(arr, list):
                         return _build_batch_results(arr, batch_items, metaculus_cache)
                 except json.JSONDecodeError:
                     pass
+                for end in range(i, len(cleaned)):
+                    if cleaned[end] == ']':
+                        try:
+                            arr = json.loads(cleaned[start:end + 1])
+                            if isinstance(arr, list):
+                                return _build_batch_results(arr, batch_items, metaculus_cache)
+                        except json.JSONDecodeError:
+                            continue
                 break
 
-    fallback = re.search(r'\[.*\]', content, re.DOTALL)
+    fallback = re.search(r'\[[\s\S]*\]', cleaned)
     if fallback:
         try:
             arr = json.loads(fallback.group(0))

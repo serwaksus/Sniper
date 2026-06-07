@@ -225,9 +225,9 @@ def _check_api_health(lines, state):
 def _check_cycle_timing(state):
     now_iso = datetime.now().isoformat()
     last_start = state.get("last_cycle_start")
-    state["last_cycle_start"] = now_iso
 
     if not last_start:
+        state["last_cycle_start"] = now_iso
         return None
     try:
         elapsed = (datetime.now() - datetime.fromisoformat(last_start)).total_seconds() / 60
@@ -235,6 +235,7 @@ def _check_cycle_timing(state):
             return ("CYCLE_SLOW",
                     f"⏱️ <b>Slow cycle: {elapsed:.0f} min</b>\n"
                     f"• Expected <{CYCLE_MAX_MINUTES}min. Bot may be hanging on LLM/Telegram timeout")
+        state["last_cycle_start"] = now_iso
     except Exception:
         pass
     return None
@@ -659,6 +660,10 @@ def _check_log_size(state):
     return f"signals={signals} blocked={blocked} executed={executed} diverge_overrides={diverge_overrides}"
 
 
+def _summarize_no_trades(lines):
+    return _summarize_trading_activity(lines)
+
+
 def _summarize_equity(state):
     try:
         data = json.load(open(EQUITY_FILE))
@@ -828,6 +833,8 @@ def run_health_check():
         "api_keys", "memory", "log_size",
     ]
 
+    issue_count = 0
+
     for i, check in enumerate(checks):
         name = check_names[i] if i < len(check_names) else f"check_{i}"
         summary = ""
@@ -845,6 +852,7 @@ def run_health_check():
             logger.info(f"[HEALTH-CHECK] {name}: OK | {summary}")
             continue
         alert_key, message = result
+        issue_count += 1
         logger.info(f"[HEALTH-CHECK] {name}: ISSUE [{alert_key}] | {summary}")
         if _should_alert(state, alert_key):
             alerts.append((alert_key, message))
@@ -852,12 +860,13 @@ def run_health_check():
 
     _save_state(state)
 
-    if not alerts:
+    if issue_count == 0:
         logger.info("[HEALTH] All 23 checks passed")
         return
 
     for alert_key, message in alerts:
         logger.info(f"[HEALTH] ALERT [{alert_key}]: {message[:100]}")
+    logger.info(f"[HEALTH] {issue_count} issues found, {len(alerts)} new alerts")
     return alerts
 
 

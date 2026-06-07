@@ -10,7 +10,7 @@ from utils import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
-MAX_SPREAD_PCT = 0.15
+MAX_SPREAD_PCT = 0.40
 LIMIT_SPREAD_THRESHOLD = 0.03
 LIMIT_PRICE_BUFFER = 0.005
 LIMIT_MAX_ATTEMPTS = 3

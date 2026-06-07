@@ -131,11 +131,13 @@ def _extract_keywords_simple(question: str) -> list[str]:
 
 _GDELT_LAST_FAIL = 0.0
 _GDELT_COOLDOWN = 600
+_GDELT_FAIL_COUNT = 0
 
 
 def fetch_gdelt(keywords: list[str]) -> dict:
-    global _GDELT_LAST_FAIL
-    if (time.time() - _GDELT_LAST_FAIL) < _GDELT_COOLDOWN:
+    global _GDELT_LAST_FAIL, _GDELT_FAIL_COUNT
+    cooldown = min(_GDELT_COOLDOWN * (2 ** _GDELT_FAIL_COUNT), 3600)
+    if (time.time() - _GDELT_LAST_FAIL) < cooldown:
         return {"count": 0, "tone": 0, "status": "cooldown"}
 
     query = " ".join(keywords[:3])
@@ -150,10 +152,14 @@ def fetch_gdelt(keywords: list[str]) -> dict:
         if resp.status_code == 429:
             logger.warning("[BUZZ-GDELT] Rate limited")
             _GDELT_LAST_FAIL = time.time()
+            _GDELT_FAIL_COUNT += 1
             return {"count": 0, "tone": 0, "status": "rate_limited"}
         if resp.status_code != 200:
             _GDELT_LAST_FAIL = time.time()
+            _GDELT_FAIL_COUNT += 1
             return {"count": 0, "tone": 0, "status": f"error_{resp.status_code}"}
+
+        _GDELT_FAIL_COUNT = 0
 
         data = resp.json()
         articles = data.get("articles", [])
@@ -180,6 +186,7 @@ def fetch_gdelt(keywords: list[str]) -> dict:
     except Exception as e:
         logger.debug(f"[BUZZ-GDELT] Error: {e}")
         _GDELT_LAST_FAIL = time.time()
+        _GDELT_FAIL_COUNT += 1
         return {"count": 0, "tone": 0, "status": f"error: {e}"}
 
 
