@@ -90,8 +90,8 @@ def log_equity_snapshot():
         curve = {EQUITY_SNAPSHOTS: []}
     curve[EQUITY_SNAPSHOTS].append(snapshot)
 
-    if len(curve[EQUITY_SNAPSHOTS]) > 2880:
-        curve[EQUITY_SNAPSHOTS] = curve[EQUITY_SNAPSHOTS][-2880:]
+    if len(curve[EQUITY_SNAPSHOTS]) > 1440:
+        curve[EQUITY_SNAPSHOTS] = curve[EQUITY_SNAPSHOTS][-1440:]
 
     save_json(EQUITY_FILE, curve)
 

@@ -31,9 +31,10 @@ from schema import *
 
 PID_FILE = "/root/dotm-sniper/sniper.pid"
 
-from utils import load_env_file  # noqa: E402
+from utils import load_env_file, validate_env_vars  # noqa: E402
 import contextlib  # noqa: E402
 load_env_file()
+validate_env_vars(["DEEPSEEK_API_KEY", "TG_BOT_TOKEN", "TG_CHAT_ID"])
 
 _tr_instance = None
 
@@ -464,7 +465,9 @@ def resolve_hypothesis_immediately(slug, current_price, entry_price):
             positions = load_json(POSITIONS_FILE, {})
             if slug in positions:
                 del positions[slug]
-                save_json(POSITIONS_FILE, positions)
+                fresh = load_json(POSITIONS_FILE, {})
+                fresh.pop(slug, None)
+                save_json(POSITIONS_FILE, fresh)
 
                 try:
                     from bayesian_updater import cleanup_slug
@@ -629,20 +632,22 @@ def _update_price_tracking(slug, current_price, p_model):
     _save_price_tracking(tracking)
 
 
-def _check_news_cache_freshness(cluster_key):
+def _check_news_cache_freshness(cluster_key, slug=None):
     """
-    TAZ-3: Check source_cache.json freshness for a news cluster.
-    Returns True if cache is fresh (< 6 hours), blocking new HTTP requests.
+    TAZ-3: Check source_cache.json freshness for a news slug.
+    Returns True if cache is fresh (< 2 hours), blocking new HTTP requests.
     """
+    news_ttl = 2 * 3600
     cache = load_json(CACHE_FILE, {CACHE_METACULUS: {}, CACHE_NEWS: {}, CACHE_LAST_UPDATE: None})
     news_section = cache.get(CACHE_NEWS, {})
-    entry = news_section.get(cluster_key)
+    cache_key = f"{cluster_key}:{slug}" if slug else cluster_key
+    entry = news_section.get(cache_key)
     if isinstance(entry, dict) and entry.get(CACHE_TIMESTAMP):
         try:
             cached_time = datetime.fromisoformat(entry[CACHE_TIMESTAMP])
             age_seconds = (datetime.now() - cached_time).total_seconds()
-            if age_seconds < CACHE_TTL_SECONDS:
-                logger.info(f"[CACHE-FRESH] news cluster '{cluster_key}' age={age_seconds/3600:.1f}h < 6h, using cache")
+            if age_seconds < news_ttl:
+                logger.info(f"[CACHE-FRESH] news slug '{cache_key}' age={age_seconds/3600:.1f}h < 2h, using cache")
                 return True
         except (ValueError, TypeError):
             pass
@@ -668,7 +673,7 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
         print(f"   ❌ Buy failed for {market['slug']}")
         return False
 
-    time.sleep(2)
+    time.sleep(10)  # Wait for partial fills to settle before querying fill price
     fill_data = get_actual_fill_price(market["slug"])
     if fill_data:
         log_slippage(market["slug"], market["price"], fill_data)
@@ -964,7 +969,7 @@ def _main_inner():
         }
 
         cluster_key = m.get("clusters", ["other"])[0]
-        cache_fresh = _check_news_cache_freshness(cluster_key)
+        cache_fresh = _check_news_cache_freshness(cluster_key, slug=m.get("slug"))
         if not cache_fresh:
             news_passed, news_reason = check_market_news(market_for_news)
             if not news_passed:

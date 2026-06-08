@@ -54,7 +54,8 @@ def _get_om():
 def _get_sniper():
     global _sniper
     if _sniper is None:
-        from dotm_sniper import load_hypothesis_db, get_metaculus_forecast, resolve_hypothesis_immediately, _tr
+        from dotm_sniper import load_hypothesis_db, resolve_hypothesis_immediately, _tr
+        from signal_pipeline import get_metaculus_forecast
         _sniper = type("Sniper", (), {
             "load_hypothesis_db": staticmethod(load_hypothesis_db),
             "get_metaculus_forecast": staticmethod(get_metaculus_forecast),
@@ -228,6 +229,9 @@ def trailing_stop_check():
     om = _get_om()
     sniper = _get_sniper()
     portfolio = om.get_portfolio()
+    if portfolio is None:
+        logger.error("[STOP_LOSS] Portfolio API error, skipping this cycle")
+        return
     if not portfolio:
         return
 
@@ -405,6 +409,7 @@ def trailing_stop_check():
                 p[POS_TRAILING_CONFIRMED] = True
                 p[POS_TRAILING_CONFIRM_TIME] = now.isoformat()
                 logger.info(f"[TRAILING-STOP] Confirming for {slug[:40]}... (1/2)")
+                p.pop(POS_SELLING_IN_PROGRESS, None)
                 positions[slug] = p
                 save_json(POSITIONS_FILE, positions)
                 continue
@@ -415,6 +420,9 @@ def trailing_stop_check():
                         elapsed = (now - datetime.fromisoformat(confirm_time)).total_seconds()
                         if elapsed < 300:
                             logger.info(f"[TRAILING-STOP] Waiting confirmation for {slug[:40]}... ({elapsed:.0f}s/300s)")
+                            p.pop(POS_SELLING_IN_PROGRESS, None)
+                            positions[slug] = p
+                            save_json(POSITIONS_FILE, positions)
                             continue
                     except (ValueError, TypeError):
                         pass

@@ -9,8 +9,41 @@ import fcntl
 import tempfile
 import logging
 import contextlib
+import sys
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def file_lock(lock_path, timeout=30):
+    """Acquire an exclusive cross-process file lock via fcntl.flock."""
+    import time as _time
+    with open(lock_path, 'w') as lock_fd:
+        deadline = _time.time() + timeout
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if _time.time() >= deadline:
+                    raise TimeoutError(f"Could not acquire lock on {lock_path} within {timeout}s") from None
+                _time.sleep(0.1)
+        try:
+            yield lock_fd
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+
+def locked_update_json(json_path, update_fn, default=None, lock_dir="/tmp"):
+    """Atomically read-modify-write a JSON file with cross-process locking."""
+    lock_path = os.path.join(lock_dir, os.path.basename(json_path) + ".lock")
+    with file_lock(lock_path):
+        data = load_json(json_path, default if default is not None else {})
+        data = update_fn(data)
+        if data is not None:
+            save_json(json_path, data)
+        return data
 
 
 def _lock_file(fd, exclusive=True):
@@ -198,7 +231,7 @@ def load_env_file(path="/root/dotm-sniper/.env"):
             if line and not line.startswith('#') and '=' in line:
                 key, val = line.split('=', 1)
                 val = val.strip().strip('"').strip("'")
-                os.environ.setdefault(key.strip(), val)
+                os.environ[key.strip()] = val
 
 
 MAX_LOG_BYTES = 50 * 1024 * 1024
@@ -229,3 +262,10 @@ def rotate_log_if_needed(log_path, max_bytes=MAX_LOG_BYTES, keep_bytes=5*1024*10
     except Exception as e:
         logger.warning(f"[LOG-ROTATE] Failed for {log_path}: {e}")
         return False
+
+
+def validate_env_vars(required_vars):
+    missing = [v for v in required_vars if not os.environ.get(v)]
+    if missing:
+        print(f"FATAL: Missing required environment variables: {', '.join(missing)}")
+        sys.exit(1)

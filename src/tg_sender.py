@@ -14,12 +14,11 @@ import sys
 import time
 import logging
 import socket
-import threading
 import requests
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import load_json, save_json
+from utils import load_json, save_json, file_lock
 
 QUEUE_FILE = "/root/dotm-sniper/tg_queue.json"
 MAX_QUEUE_SIZE = 100
@@ -41,8 +40,6 @@ def _patched_getaddrinfo(host, port, *args, **kwargs):
         return [results[0]] if results else _orig_getaddrinfo(host, port, *args, **kwargs)
     return _orig_getaddrinfo(host, port, *args, **kwargs)
 socket.getaddrinfo = _patched_getaddrinfo
-
-_tg_lock = threading.RLock()
 
 
 def _get_credentials():
@@ -73,6 +70,11 @@ def _send_once(token, chat_id, message, timeout=SEND_TIMEOUT):
             },
             timeout=timeout,
         )
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 30))
+            logger.warning(f"[TG] Rate limited, retrying after {retry_after}s")
+            time.sleep(retry_after)
+            return False
         return resp.ok
     except Exception:
         return False
@@ -102,7 +104,8 @@ def send_telegram(message, max_retries=3, queue_on_fail=True):
 
 
 def _enqueue(message):
-    with _tg_lock:
+    lock_path = "/tmp/tg_queue.json.lock"
+    with file_lock(lock_path):
         queue = load_json(QUEUE_FILE, [])
         now = datetime.now().isoformat()
         queue.append({"message": message, "queued_at": now, "attempts": 0})
@@ -112,13 +115,14 @@ def _enqueue(message):
             if datetime.fromisoformat(m["queued_at"]).timestamp() > cutoff
         ]
         if len(queue) > MAX_QUEUE_SIZE:
-            queue = queue[-MAX_QUEUE_SIZE:]
+            queue = queue[:MAX_QUEUE_SIZE]
         save_json(QUEUE_FILE, queue)
     logger.info(f"[TG-QUEUE] Queued message (queue size: {len(queue)})")
 
 
 def flush_queue(max_messages=10):
-    with _tg_lock:
+    lock_path = "/tmp/tg_queue.json.lock"
+    with file_lock(lock_path):
         queue = load_json(QUEUE_FILE, [])
         if not queue:
             logger.info("[TG-FLUSH] Queue empty")

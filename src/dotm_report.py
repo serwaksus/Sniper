@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from utils import load_env_file, save_json  # noqa: E402
+from utils import load_env_file, save_json, load_json  # noqa: E402
 load_env_file()
 
 
@@ -224,8 +224,14 @@ def main():
 
     balance = get_balance()
     if not balance:
-        logger.error("No balance data, aborting report")
-        return
+        cached_status = load_json("/root/dotm-sniper/current_status.json", {})
+        cached_balance = cached_status.get("balance")
+        if cached_balance:
+            logger.warning("Balance API failed, using cached balance from current_status.json")
+            balance = cached_balance
+        else:
+            logger.error("No balance data (API and cache both failed), aborting report")
+            return
 
     portfolio = get_portfolio()
     history = load_history()

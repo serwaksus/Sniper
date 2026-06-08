@@ -418,7 +418,7 @@ def normalize_probability(p):
     if p is None:
         return 0
     p = float(p)
-    if p > 5.0:
+    if p > 1.0:
         p = p / 100.0
     return max(0.0, min(1.0, p))
 
@@ -513,7 +513,7 @@ def fetch_markets():
             return []
         data = json.loads(res.stdout)
         candidates = []
-        now = datetime.now()
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         for m in data.get("data", []):
             if not m.get("active") or m.get("closed") or m.get("status") in ("closing", "resolved", "invalid"):
@@ -607,7 +607,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
             if len(batch) < 100:
                 break
         markets = all_markets
-        now = datetime.now()
+        now = datetime.now(UTC).replace(tzinfo=None)
         candidates = []
         for m in markets:
             if m.get("active") is False:
@@ -1277,7 +1277,18 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         metaculus_prob_val = metaculus_cache.get(slug) if metaculus_cache else None
         if metaculus_prob_val is not None and metaculus_prob_val > market_price:
             gap = metaculus_prob_val - market_price
-            signal_strength = gap / market_price if market_price > 0 else 0
+            signal_strength = min(gap / 0.15, 1.0)
+            dispersion = None
+            meta_cache_entry = None
+            cache = load_cache()
+            for _q, cached_meta in cache.get("metaculus", {}).items():
+                if cached_meta.get("probability") == metaculus_prob_val:
+                    meta_cache_entry = cached_meta
+                    break
+            if meta_cache_entry:
+                dispersion = meta_cache_entry.get("dispersion")
+            if dispersion is not None and dispersion < 0.10:
+                signal_strength *= dispersion / 0.10
             if signal_strength > 0.3:
                 if metaculus_prob_val > p_model:
                     p_model = metaculus_prob_val

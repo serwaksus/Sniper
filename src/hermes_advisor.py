@@ -22,10 +22,11 @@ from hermes_memory import log_prediction, resolve_prediction, generate_skills, l
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 from news_scanner import fetch_recent_news
-from utils import load_json, save_json, sanitize_for_prompt, load_env_file
+from utils import load_json, save_json, sanitize_for_prompt, load_env_file, check_and_write_pid, cleanup_pid_file, validate_env_vars
 from schema import *
 
 load_env_file()
+validate_env_vars(["DEEPSEEK_API_KEY", "TG_BOT_TOKEN", "TG_CHAT_ID"])
 
 HERMES_LOG = "/root/dotm-sniper/logs/hermes.log"
 os.makedirs(os.path.dirname(HERMES_LOG), exist_ok=True)
@@ -604,6 +605,11 @@ Return ONLY JSON:
 
                 if trigger:
                     logger.warning(f"[HERMES] EMERGENCY EXIT TRIGGERED for {slug[:40]}...: {reason}")
+                    fresh_positions = load_json(POSITIONS_FILE, {})
+                    pos_data = fresh_positions.get(slug, pos_data)
+                    if pos_data.get(POS_SELLING_IN_PROGRESS) or pos_data.get(POS_IN_EMERGENCY_EXIT):
+                        logger.info(f"[HERMES] Skipping {slug[:40]}... another process already handling")
+                        continue
                     _execute_emergency_exit(slug, pos_data, reason)
                 elif should_send:
                     if normalized_status == "DIVERGENCE" and pnl_pct >= 0.50:
@@ -650,6 +656,11 @@ Return ONLY JSON:
                     if bayes_exit:
                         logger.warning(f"[HERMES] BAYESIAN EXIT for {slug[:40]}...: {bayes_reason}")
                         _update_and_check_status(slug, True, "DIVERGENCE")
+                        fresh_positions_bayes = load_json(POSITIONS_FILE, {})
+                        pos_data = fresh_positions_bayes.get(slug, pos_data)
+                        if pos_data.get(POS_SELLING_IN_PROGRESS) or pos_data.get(POS_IN_EMERGENCY_EXIT):
+                            logger.info(f"[HERMES] Skipping bayesian exit {slug[:40]}... another process already handling")
+                            continue
                         _execute_emergency_exit(slug, pos_data, bayes_reason)
                 except Exception as be:
                     logger.warning(f"[HERMES] Bayesian update failed for {slug}: {be}")
@@ -848,10 +859,19 @@ def _check_resolved_markets():
         logger.warning(f"[HERMES] Resolution check failed: {e}")
 
 
+HERMES_PID_FILE = "/root/dotm-sniper/hermes.pid"
+
 def main():
     logger.info("="*60)
     logger.info("  HERMES ADVISOR v5.4.0 - Starting (with self-improvement)")
     logger.info("="*60)
+
+    if not check_and_write_pid(HERMES_PID_FILE):
+        logger.error("[HERMES] Another instance is already running, exiting")
+        return
+
+    import atexit
+    atexit.register(cleanup_pid_file, HERMES_PID_FILE)
 
     reconcile_thread = threading.Thread(target=run_reconciliation_loop, daemon=True)
     emergency_thread = threading.Thread(target=run_emergency_evaluation_loop, daemon=True)
@@ -863,22 +883,37 @@ def main():
 
     logger.info("[HERMES] All 3 loops started (reconcile, emergency, resolution+skills)")
 
+    _restart_timestamps = []
+
     try:
         while True:
             time.sleep(60)
 
+            restarted_any = False
             if not reconcile_thread.is_alive():
                 logger.error("[HERMES] Reconciliation thread died, restarting")
                 reconcile_thread = threading.Thread(target=run_reconciliation_loop, daemon=True)
                 reconcile_thread.start()
+                restarted_any = True
             if not emergency_thread.is_alive():
                 logger.error("[HERMES] Emergency thread died, restarting")
                 emergency_thread = threading.Thread(target=run_emergency_evaluation_loop, daemon=True)
                 emergency_thread.start()
+                restarted_any = True
             if not resolution_thread.is_alive():
                 logger.error("[HERMES] Resolution thread died, restarting")
                 resolution_thread = threading.Thread(target=_resolve_predictions_loop, daemon=True)
                 resolution_thread.start()
+                restarted_any = True
+
+            if restarted_any:
+                _restart_timestamps.append(time.time())
+                cutoff = time.time() - 600
+                _restart_timestamps = [t for t in _restart_timestamps if t > cutoff]
+                if len(_restart_timestamps) > 5:
+                    logger.critical(
+                        f"[HERMES] Thread restart storm: {len(_restart_timestamps)} restarts in 10 minutes!"
+                    )
 
             positions = load_json(POSITIONS_FILE, {})
             active_count = len([p for p in positions.values() if not p.get(POS_IN_EMERGENCY_EXIT)])

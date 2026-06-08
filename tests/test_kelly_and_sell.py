@@ -27,8 +27,8 @@ class TestNormalizeProbability(unittest.TestCase):
     def test_negative_clamped_to_zero(self):
         self.assertEqual(ds.normalize_probability(-0.5), 0.0)
 
-    def test_above_one_not_converted(self):
-        self.assertAlmostEqual(ds.normalize_probability(1.5), 1.0)
+    def test_above_one_converted_as_percentage(self):
+        self.assertAlmostEqual(ds.normalize_probability(1.5), 0.015)
 
     def test_exactly_100(self):
         self.assertAlmostEqual(ds.normalize_probability(100.0), 1.0)
@@ -36,8 +36,8 @@ class TestNormalizeProbability(unittest.TestCase):
     def test_above_100_clips_to_1(self):
         self.assertAlmostEqual(ds.normalize_probability(150.0), 1.0)
 
-    def test_just_above_1_not_converted(self):
-        self.assertAlmostEqual(ds.normalize_probability(1.01), 1.0)
+    def test_just_above_1_converted_as_percentage(self):
+        self.assertAlmostEqual(ds.normalize_probability(1.01), 0.0101)
 
 
 class TestGetTierParams(unittest.TestCase):

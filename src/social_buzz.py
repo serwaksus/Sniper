@@ -158,6 +158,7 @@ def fetch_gdelt(keywords: list[str]) -> dict:
             "maxrecords": 250,
             "timespan": "24h",
             "format": "json",
+            "sourcelang": "english",
         }, timeout=8, headers={"User-Agent": "DotmSniper/1.0"})
         if resp.status_code == 429:
             logger.warning("[BUZZ-GDELT] Rate limited")

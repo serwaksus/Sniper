@@ -211,7 +211,8 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
         return 0
     if effective_price >= 0.999:
         return 0
-    b = (1 - effective_price) / effective_price
+    fee = 0.01  # 1% Polymarket fee
+    b = (1 - effective_price - fee) / effective_price
 
     p = p_model
     q = 1 - p

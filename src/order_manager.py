@@ -54,11 +54,11 @@ def get_portfolio():
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
         if res.returncode != 0:
             logger.error(f"[SNIPER] pm-trader portfolio failed: rc={res.returncode}")
-            return []
+            return None
         data = json.loads(res.stdout).get("data", [])
         return [p for p in data if float(p.get("shares", 0)) > 0.001]
     except Exception:
-        return []
+        return None
 
 def buy(market, amount):
     try:
@@ -171,7 +171,10 @@ def _place_tp_ladder(slug, outcome, total_shares):
             if allocated < total_shares:
                 shares = total_shares - allocated
             if shares * price < 5.0:
-                return []
+                single_price = round(min(0.85, price * 1.5), 2)
+                single_shares = max(1, round(total_shares))
+                ok, m = _place_limit_sell(slug, outcome, single_shares, single_price)
+                return [(single_price, single_shares, ok, m)] if ok else []
         ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
         results.append((price, shares, ok, m))
         allocated += shares

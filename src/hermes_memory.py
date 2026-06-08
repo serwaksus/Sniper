@@ -51,6 +51,27 @@ def _load_memory():
 def _save_memory(data):
     if len(data.get("resolved", [])) > _MAX_RESOLVED:
         data["resolved"] = data["resolved"][-_MAX_RESOLVED:]
+
+    now = datetime.utcnow()
+    positions = load_json("/root/dotm-sniper/positions.json", {})
+    active_slugs = set(positions.keys())
+    predictions = data.get("predictions", {})
+    stale_keys = []
+    for slug_key, p in predictions.items():
+        if p.get("resolved"):
+            continue
+        created = p.get("timestamp", "")
+        if slug_key in active_slugs:
+            continue
+        try:
+            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00")).replace(tzinfo=None)
+            if (now - created_dt).days > 7:
+                stale_keys.append(slug_key)
+        except (ValueError, AttributeError):
+            stale_keys.append(slug_key)
+    for k in stale_keys:
+        del predictions[k]
+
     save_json(MEMORY_FILE, data)
 
 
@@ -163,129 +184,130 @@ def get_adaptive_likelihoods(min_samples=5):
 
 
 def generate_skills():
-    m = _load_memory()
-    resolved = m.get("resolved", [])
-    if len(resolved) < 10:
-        logger.info("[HERMES-SKILLS] Too few resolved predictions for skill generation")
-        return []
+    with _memory_lock:
+        m = _load_memory()
+        resolved = m.get("resolved", [])
+        if len(resolved) < 10:
+            logger.info("[HERMES-SKILLS] Too few resolved predictions for skill generation")
+            return []
 
-    skills = []
+        skills = []
 
-    cluster_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
-    verdict_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
-    category_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
-    overconfident_yes = 0
-    underconfident_yes = 0
-    overconfident_no = 0
-    underconfident_no = 0
+        cluster_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
+        verdict_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
+        category_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
+        overconfident_yes = 0
+        underconfident_yes = 0
+        overconfident_no = 0
+        underconfident_no = 0
 
-    for r in resolved:
-        c = r.get("cluster", "unknown")
-        cluster_stats[c]["count"] += 1
-        cluster_stats[c]["total_error"] += r.get("abs_error", 0)
-        if r.get("correct"):
-            cluster_stats[c]["correct"] += 1
+        for r in resolved:
+            c = r.get("cluster", "unknown")
+            cluster_stats[c]["count"] += 1
+            cluster_stats[c]["total_error"] += r.get("abs_error", 0)
+            if r.get("correct"):
+                cluster_stats[c]["correct"] += 1
 
-        v = r.get("verdict", "unknown")
-        verdict_stats[v]["count"] += 1
-        if r.get("correct"):
-            verdict_stats[v]["correct"] += 1
+            v = r.get("verdict", "unknown")
+            verdict_stats[v]["count"] += 1
+            if r.get("correct"):
+                verdict_stats[v]["correct"] += 1
 
-        cat = r.get("news_category", "unknown")
-        category_stats[cat]["count"] += 1
-        category_stats[cat]["total_error"] += r.get("abs_error", 0)
+            cat = r.get("news_category", "unknown")
+            category_stats[cat]["count"] += 1
+            category_stats[cat]["total_error"] += r.get("abs_error", 0)
 
-        p_h = r.get("p_hermes", 0.5)
-        actual = r.get("actual_outcome", "")
-        if actual == "yes" and p_h < 0.3:
-            underconfident_yes += 1
-        elif actual == "yes" and p_h > 0.8:
-            overconfident_yes += 1
-        elif actual == "no" and p_h > 0.7:
-            overconfident_no += 1
-        elif actual == "no" and p_h < 0.1:
-            underconfident_no += 1
+            p_h = r.get("p_hermes", 0.5)
+            actual = r.get("actual_outcome", "")
+            if actual == "yes" and p_h < 0.3:
+                underconfident_yes += 1
+            elif actual == "yes" and p_h > 0.8:
+                overconfident_yes += 1
+            elif actual == "no" and p_h > 0.7:
+                overconfident_no += 1
+            elif actual == "no" and p_h < 0.1:
+                underconfident_no += 1
 
-    for cluster, stats in cluster_stats.items():
-        if stats["count"] < 3:
-            continue
-        accuracy = stats["correct"] / stats["count"]
-        avg_error = stats["total_error"] / stats["count"]
-        if accuracy < 0.4:
+        for cluster, stats in cluster_stats.items():
+            if stats["count"] < 3:
+                continue
+            accuracy = stats["correct"] / stats["count"]
+            avg_error = stats["total_error"] / stats["count"]
+            if accuracy < 0.4:
+                skills.append({
+                    "type": "cluster_bias",
+                    "cluster": cluster,
+                    "rule": f"LOW ACCURACY cluster '{cluster}': {accuracy:.0%} correct ({stats['count']} cases). "
+                            f"Be more cautious with probability estimates for this domain. "
+                            f"Average error: {avg_error:.0%}. Consider wider uncertainty bands.",
+                    "accuracy": round(accuracy, 3),
+                    "samples": stats["count"],
+                })
+            elif accuracy > 0.75 and avg_error < 0.2:
+                skills.append({
+                    "type": "cluster_strength",
+                    "cluster": cluster,
+                    "rule": f"HIGH ACCURACY cluster '{cluster}': {accuracy:.0%} correct ({stats['count']} cases). "
+                            f"This domain is well-calibrated. Trust p_hermes estimates here.",
+                    "accuracy": round(accuracy, 3),
+                    "samples": stats["count"],
+                })
+
+        for verdict, stats in verdict_stats.items():
+            if stats["count"] < 3:
+                continue
+            accuracy = stats["correct"] / stats["count"]
+            if verdict in ("DIVERGENCE", "RED") and accuracy < 0.5:
+                skills.append({
+                    "type": "verdict_false_alarm",
+                    "verdict": verdict,
+                    "rule": f"FALSE ALARM pattern: '{verdict}' verdict was wrong in "
+                            f"{1 - accuracy:.0%} of cases ({stats['count']} total). "
+                            f"Require stronger evidence before issuing {verdict}.",
+                    "accuracy": round(accuracy, 3),
+                    "samples": stats["count"],
+                })
+
+        total = len(resolved)
+        if underconfident_yes / max(total, 1) > 0.15:
             skills.append({
-                "type": "cluster_bias",
-                "cluster": cluster,
-                "rule": f"LOW ACCURACY cluster '{cluster}': {accuracy:.0%} correct ({stats['count']} cases). "
-                        f"Be more cautious with probability estimates for this domain. "
-                        f"Average error: {avg_error:.0%}. Consider wider uncertainty bands.",
-                "accuracy": round(accuracy, 3),
-                "samples": stats["count"],
+                "type": "calibration_bias",
+                "rule": f"UNDERCONFIDENT on YES outcomes: {underconfident_yes}/{total} times "
+                        f"p_hermes was <30% but outcome was YES. "
+                        f"Shift probability estimates upward when evidence is ambiguous.",
             })
-        elif accuracy > 0.75 and avg_error < 0.2:
+        if overconfident_no / max(total, 1) > 0.15:
             skills.append({
-                "type": "cluster_strength",
-                "cluster": cluster,
-                "rule": f"HIGH ACCURACY cluster '{cluster}': {accuracy:.0%} correct ({stats['count']} cases). "
-                        f"This domain is well-calibrated. Trust p_hermes estimates here.",
-                "accuracy": round(accuracy, 3),
-                "samples": stats["count"],
-            })
-
-    for verdict, stats in verdict_stats.items():
-        if stats["count"] < 3:
-            continue
-        accuracy = stats["correct"] / stats["count"]
-        if verdict in ("DIVERGENCE", "RED") and accuracy < 0.5:
-            skills.append({
-                "type": "verdict_false_alarm",
-                "verdict": verdict,
-                "rule": f"FALSE ALARM pattern: '{verdict}' verdict was wrong in "
-                        f"{1 - accuracy:.0%} of cases ({stats['count']} total). "
-                        f"Require stronger evidence before issuing {verdict}.",
-                "accuracy": round(accuracy, 3),
-                "samples": stats["count"],
-            })
-
-    total = len(resolved)
-    if underconfident_yes / max(total, 1) > 0.15:
-        skills.append({
-            "type": "calibration_bias",
-            "rule": f"UNDERCONFIDENT on YES outcomes: {underconfident_yes}/{total} times "
-                    f"p_hermes was <30% but outcome was YES. "
-                    f"Shift probability estimates upward when evidence is ambiguous.",
-        })
-    if overconfident_no / max(total, 1) > 0.15:
-        skills.append({
-            "type": "calibration_bias",
-            "rule": f"OVERCONFIDENT on NO outcomes: {overconfident_no}/{total} times "
-                    f"p_hermes was >70% but outcome was NO. "
-                    f"Reduce probability estimates when contradicting evidence exists but is not definitive.",
-        })
-
-    for cat, stats in category_stats.items():
-        if stats["count"] < 5:
-            continue
-        avg_error = stats["total_error"] / stats["count"]
-        if avg_error > 0.4:
-            skills.append({
-                "type": "news_category_miscalibration",
-                "category": cat,
-                "rule": f"News category '{cat}' has high avg error ({avg_error:.0%}, {stats['count']} cases). "
-                        f"This news type is unreliable for probability estimation. "
-                        f"Weight it less in p_hermes calculations.",
+                "type": "calibration_bias",
+                "rule": f"OVERCONFIDENT on NO outcomes: {overconfident_no}/{total} times "
+                        f"p_hermes was >70% but outcome was NO. "
+                        f"Reduce probability estimates when contradicting evidence exists but is not definitive.",
             })
 
-    skills_data = {
-        "skills": skills,
-        "generated_at": datetime.now().isoformat(),
-        "resolved_count": len(resolved),
-        "generation_run": m.get("skill_generation_runs", 0) + 1,
-    }
-    save_json(SKILLS_FILE, skills_data)
+        for cat, stats in category_stats.items():
+            if stats["count"] < 5:
+                continue
+            avg_error = stats["total_error"] / stats["count"]
+            if avg_error > 0.4:
+                skills.append({
+                    "type": "news_category_miscalibration",
+                    "category": cat,
+                    "rule": f"News category '{cat}' has high avg error ({avg_error:.0%}, {stats['count']} cases). "
+                            f"This news type is unreliable for probability estimation. "
+                            f"Weight it less in p_hermes calculations.",
+                })
 
-    m["skill_generation_runs"] = m.get("skill_generation_runs", 0) + 1
-    m["last_skill_generation"] = datetime.now().isoformat()
-    _save_memory(m)
+        skills_data = {
+            "skills": skills,
+            "generated_at": datetime.now().isoformat(),
+            "resolved_count": len(resolved),
+            "generation_run": m.get("skill_generation_runs", 0) + 1,
+        }
+        save_json(SKILLS_FILE, skills_data)
+
+        m["skill_generation_runs"] = m.get("skill_generation_runs", 0) + 1
+        m["last_skill_generation"] = datetime.now().isoformat()
+        _save_memory(m)
 
     if skills:
         logger.info(f"[HERMES-SKILLS] Generated {len(skills)} skills from {len(resolved)} resolved predictions")
