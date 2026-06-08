@@ -3,6 +3,7 @@ import logging
 import sys
 import os
 from collections import defaultdict
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -42,7 +43,7 @@ def get_tier_params(balance: float) -> dict:
                 "max_cluster": 0.45, "tier": "scale"}
 
 
-def check_cluster_limits(new_clusters, current_positions, portfolio_value=None):
+def check_cluster_limits(new_clusters: list[str], current_positions: list[dict[str, Any]], portfolio_value: float | None = None) -> tuple[bool, str]:
     if portfolio_value is None:
         from order_manager import get_balance
         total_balance = get_balance()
@@ -51,7 +52,7 @@ def check_cluster_limits(new_clusters, current_positions, portfolio_value=None):
     tier = get_tier_params(portfolio_value)
     cluster_limit = tier["max_cluster"]
 
-    cluster_exposure = defaultdict(float)
+    cluster_exposure: dict[str, float] = defaultdict(float)
     for pos in current_positions:
         for c in pos.get("clusters", []):
             cost = pos.get("cost_usd", pos.get("size_pct", 0) * portfolio_value)
@@ -66,7 +67,7 @@ def check_cluster_limits(new_clusters, current_positions, portfolio_value=None):
 # ============================================================
 # PORTFOLIO EXPOSURE: Track correlated risks by category
 # ============================================================
-def get_category_exposure(balance, portfolio=None):
+def get_category_exposure(balance: float, portfolio: list[dict[str, Any]] | None = None) -> dict[str, float]:
     """
     Calculate current dollar exposure per category (tag) from open positions.
 
@@ -80,7 +81,10 @@ def get_category_exposure(balance, portfolio=None):
         from order_manager import get_portfolio
         portfolio = get_portfolio()
 
-    exposure = defaultdict(float)
+    if not portfolio:
+        return {}
+
+    exposure: dict[str, float] = defaultdict(float)
 
     for pos in portfolio:
         shares_value = pos.get("current_value", 0) or pos.get("live_value", 0)
@@ -116,7 +120,7 @@ def get_category_exposure(balance, portfolio=None):
     return dict(exposure)
 
 
-def check_category_limits(new_market, new_order_value, total_balance, portfolio=None):
+def check_category_limits(new_market: dict[str, Any], new_order_value: float, total_balance: float, portfolio: list[dict[str, Any]] | None = None) -> tuple[bool, str]:
     """
     Check if placing a new order would exceed MAX_EXPOSURE_PER_CATEGORY.
 
@@ -154,7 +158,7 @@ def check_category_limits(new_market, new_order_value, total_balance, portfolio=
     return True, "OK"
 
 
-def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None, cluster=None):
+def position_size(p_model: float, market_price: float, balance: float, confidence: float = 1.0, best_ask: float | None = None, cluster: str | None = None) -> int:
     """
     Fractional Kelly position sizing with confidence weighting.
 

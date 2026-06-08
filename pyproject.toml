@@ -18,3 +18,19 @@ extend-immutable-calls = ["datetime.timedelta"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "backtest_v2.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "stress_test"
+ignore_errors = true

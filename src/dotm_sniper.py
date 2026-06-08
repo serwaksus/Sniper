@@ -21,6 +21,7 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from log_formatter import StructuredFormatter
 from dotm_report import TelegramReporter
 
 import positions_db
@@ -64,13 +65,18 @@ def _tr():
 
 LOG_FILE = "/root/dotm-sniper/logs/sniper.log"
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
+_handler_file = RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3)
+_handler_stream = logging.StreamHandler()
+if os.environ.get("LOG_FORMAT") == "json":
+    _formatter = StructuredFormatter(json_mode=True)
+else:
+    _formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+_handler_file.setFormatter(_formatter)
+_handler_stream.setFormatter(_formatter)
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[
-        RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3),
-        logging.StreamHandler()
-    ],
+    handlers=[_handler_file, _handler_stream],
     force=True
 )
 logger = logging.getLogger(__name__)

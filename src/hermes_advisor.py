@@ -18,6 +18,7 @@ import threading
 import html
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from log_formatter import StructuredFormatter
 from bayesian_updater import update_posterior, should_exit as bayesian_should_exit, classify_news_with_llm
 from hermes_memory import log_prediction, resolve_prediction, generate_skills, load_skills_for_prompt
 import positions_db
@@ -46,13 +47,17 @@ class UnbufferedRotatingFileHandler(RotatingFileHandler):
         super().emit(record)
         self.flush()
 
+_handler_file = UnbufferedRotatingFileHandler(HERMES_LOG, maxBytes=10*1024*1024, backupCount=3)
+_handler_stream = logging.StreamHandler()
+if os.environ.get("LOG_FORMAT") == "json":
+    _formatter = StructuredFormatter(json_mode=True)
+else:
+    _formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+_handler_file.setFormatter(_formatter)
+_handler_stream.setFormatter(_formatter)
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[
-        UnbufferedRotatingFileHandler(HERMES_LOG, maxBytes=10*1024*1024, backupCount=3),
-        logging.StreamHandler()
-    ]
+    handlers=[_handler_file, _handler_stream]
 )
 logger = logging.getLogger(__name__)
 

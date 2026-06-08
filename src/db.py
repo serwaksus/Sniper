@@ -5,12 +5,13 @@ import os
 import sqlite3
 import threading
 import time
+from typing import Any
 
 DB_PATH = "/root/dotm-sniper/sniper.db"
 
 _local = threading.local()
 
-def _get_conn():
+def _get_conn() -> sqlite3.Connection:
     """Get a thread-local connection."""
     if not hasattr(_local, 'conn') or _local.conn is None:
         conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -21,7 +22,7 @@ def _get_conn():
         _local.conn = conn
     return _local.conn
 
-def init_db():
+def init_db() -> None:
     """Create tables if they don't exist."""
     conn = _get_conn()
     conn.executescript("""
@@ -52,13 +53,13 @@ def init_db():
     """)
     conn.commit()
 
-def load_positions():
+def load_positions() -> dict[str, dict[str, Any]]:
     """Load all positions as a dict (same format as positions.json)."""
     conn = _get_conn()
     rows = conn.execute("SELECT slug, data FROM positions").fetchall()
     return {row['slug']: json.loads(row['data']) for row in rows}
 
-def _validate_position(data):
+def _validate_position(data: Any) -> None:
     if not isinstance(data, dict):
         return
     for key in ("entry_price", "shares", "stop_loss", "high_price"):
@@ -69,7 +70,7 @@ def _validate_position(data):
     if shares is not None and shares < 0:
         raise ValueError(f"Position shares must be >= 0, got {shares}")
 
-def save_positions(positions_dict):
+def save_positions(positions_dict: dict[str, dict[str, Any]]) -> None:
     conn = _get_conn()
     now = time.time()
     conn.execute("BEGIN IMMEDIATE")
@@ -90,7 +91,7 @@ def save_positions(positions_dict):
         )
     conn.commit()
 
-def update_position(slug, data):
+def update_position(slug: str, data: dict[str, Any]) -> None:
     conn = _get_conn()
     now = time.time()
     try:
@@ -115,13 +116,13 @@ def update_position(slug, data):
         )
     conn.commit()
 
-def delete_position(slug):
+def delete_position(slug: str) -> None:
     """Delete a single position."""
     conn = _get_conn()
     conn.execute("DELETE FROM positions WHERE slug = ?", (slug,))
     conn.commit()
 
-def merge_save_positions(updated_positions):
+def merge_save_positions(updated_positions: dict[str, dict[str, Any]]) -> None:
     conn = _get_conn()
     now = time.time()
     for slug, data in updated_positions.items():
@@ -144,13 +145,13 @@ def merge_save_positions(updated_positions):
         )
     conn.commit()
 
-def load_hypotheses():
+def load_hypotheses() -> dict[str, dict[str, dict[str, Any]]]:
     """Load hypothesis database."""
     conn = _get_conn()
     rows = conn.execute("SELECT slug, data FROM hypotheses").fetchall()
     return {"hypotheses": {row['slug']: json.loads(row['data']) for row in rows}}
 
-def save_hypotheses(db_dict):
+def save_hypotheses(db_dict: dict[str, Any]) -> None:
     conn = _get_conn()
     now = time.time()
     hypotheses = db_dict.get("hypotheses", {})
@@ -167,7 +168,7 @@ def save_hypotheses(db_dict):
         )
     conn.commit()
 
-def load_kv(key, default=None):
+def load_kv(key: str, default: Any = None) -> Any:
     """Load a key-value pair."""
     conn = _get_conn()
     row = conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,)).fetchone()
@@ -175,7 +176,7 @@ def load_kv(key, default=None):
         return json.loads(row['value'])
     return default
 
-def save_kv(key, value):
+def save_kv(key: str, value: Any) -> None:
     """Save a key-value pair."""
     conn = _get_conn()
     conn.execute(
@@ -184,19 +185,19 @@ def save_kv(key, value):
     )
     conn.commit()
 
-def load_position(slug):
+def load_position(slug: str) -> dict[str, Any] | None:
     """Load a single position by slug. Returns None if not found."""
     conn = _get_conn()
     row = conn.execute("SELECT data FROM positions WHERE slug = ?", (slug,)).fetchone()
     return json.loads(row['data']) if row else None
 
-def load_hypothesis(slug):
+def load_hypothesis(slug: str) -> dict[str, Any] | None:
     """Load a single hypothesis by slug. Returns None if not found."""
     conn = _get_conn()
     row = conn.execute("SELECT data FROM hypotheses WHERE slug = ?", (slug,)).fetchone()
     return json.loads(row['data']) if row else None
 
-def update_hypothesis(slug, data):
+def update_hypothesis(slug: str, data: dict[str, Any]) -> None:
     conn = _get_conn()
     now = time.time()
     resolved = 1 if data.get("resolved") else 0
@@ -216,31 +217,31 @@ def update_hypothesis(slug, data):
         )
     conn.commit()
 
-def delete_hypothesis(slug):
+def delete_hypothesis(slug: str) -> None:
     """Delete a single hypothesis."""
     conn = _get_conn()
     conn.execute("DELETE FROM hypotheses WHERE slug = ?", (slug,))
     conn.commit()
 
-def count_positions():
+def count_positions() -> int:
     """Count active positions."""
     conn = _get_conn()
     row = conn.execute("SELECT COUNT(*) as cnt FROM positions").fetchone()
     return row['cnt']
 
-def count_resolved_hypotheses():
+def count_resolved_hypotheses() -> int:
     """Count resolved hypotheses."""
     conn = _get_conn()
     row = conn.execute("SELECT COUNT(*) as cnt FROM hypotheses WHERE resolved = 1").fetchone()
     return row['cnt']
 
-def position_slugs():
+def position_slugs() -> list[str]:
     """Get all position slugs."""
     conn = _get_conn()
     rows = conn.execute("SELECT slug FROM positions").fetchall()
     return [row['slug'] for row in rows]
 
-def hypothesis_slugs():
+def hypothesis_slugs() -> list[str]:
     """Get all hypothesis slugs."""
     conn = _get_conn()
     rows = conn.execute("SELECT slug FROM hypotheses").fetchall()
@@ -249,15 +250,15 @@ def hypothesis_slugs():
 SETTINGS_KEY = "bot_settings"
 
 
-def load_settings():
+def load_settings() -> dict[str, Any]:
     return load_kv(SETTINGS_KEY, {})
 
 
-def save_settings(settings):
+def save_settings(settings: dict[str, Any]) -> None:
     save_kv(SETTINGS_KEY, settings)
 
 
-def auto_migrate():
+def auto_migrate() -> None:
     """One-time migration from JSON files to SQLite. Called at startup."""
     init_db()
 
@@ -293,7 +294,7 @@ def auto_migrate():
         except Exception as e:
             print(f"[DB] Migration of bot_settings.json failed: {e}")
 
-def migrate_json_to_sqlite(json_path, table, key_col="slug", value_col="data"):
+def migrate_json_to_sqlite(json_path: str, table: str, key_col: str = "slug", value_col: str = "data") -> int:
     """One-time migration from JSON file to SQLite table."""
     if not os.path.exists(json_path):
         return 0

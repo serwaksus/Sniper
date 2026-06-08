@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 from datetime import datetime
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -18,7 +19,7 @@ LIMIT_MAX_ATTEMPTS = 3
 SLIPPAGE_LOG_FILE = "/root/dotm-sniper/logs/slippage.json"
 
 
-def get_order_book(slug):
+def get_order_book(slug: str) -> dict[str, float | None]:
     try:
         res = subprocess.run(["pm-trader", "book", slug, "--depth", "3"],
                            capture_output=True, text=True, timeout=15, start_new_session=True)
@@ -27,6 +28,7 @@ def get_order_book(slug):
         bids = data.get("data", {}).get("bids", [])
         best_ask = float(asks[0]["price"]) if asks and float(asks[0].get("price", 0)) > 0 else None
         best_bid = float(bids[0]["price"]) if bids and float(bids[0].get("price", 0)) > 0 else None
+        mid_price: float | None = None
         if best_bid is not None and best_ask is not None:
             mid_price = (best_bid + best_ask) / 2
         else:
@@ -35,11 +37,11 @@ def get_order_book(slug):
     except Exception:
         return {"best_bid": None, "best_ask": None, "mid_price": None}
 
-def get_best_ask(slug):
+def get_best_ask(slug: str) -> float | None:
     book = get_order_book(slug)
     return book.get("best_ask")
 
-def get_balance():
+def get_balance() -> dict[str, Any] | None:
     try:
         res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15, start_new_session=True)
         if res.returncode != 0:
@@ -49,7 +51,7 @@ def get_balance():
     except Exception:
         return None
 
-def get_portfolio():
+def get_portfolio() -> list[dict[str, Any]] | None:
     try:
         res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
         if res.returncode != 0:
@@ -60,7 +62,7 @@ def get_portfolio():
     except Exception:
         return None
 
-def buy(market, amount):
+def buy(market: dict[str, Any], amount: float) -> bool:
     try:
         book = get_order_book(market["slug"])
         best_ask = book.get("best_ask")
@@ -123,7 +125,7 @@ def buy(market, amount):
         return False
 
 
-def _place_limit_sell(slug, outcome, shares, limit_price):
+def _place_limit_sell(slug: str, outcome: str, shares: float, limit_price: float) -> tuple[bool, str]:
     try:
         res = subprocess.run(
             ["pm-trader", "orders", "place", slug, outcome, "sell", str(int(shares)), f"{limit_price:.4f}"],
@@ -137,7 +139,7 @@ def _place_limit_sell(slug, outcome, shares, limit_price):
     return False, "limit_failed"
 
 
-def _place_tp_limit_order_single(slug, outcome, shares, price):
+def _place_tp_limit_order_single(slug: str, outcome: str, shares: float, price: float) -> tuple[bool, str]:
     try:
         res = subprocess.run(
             ["pm-trader", "orders", "place", slug, outcome, "sell", str(int(shares)), f"{price:.4f}"],
@@ -154,35 +156,35 @@ def _place_tp_limit_order_single(slug, outcome, shares, price):
     return False, "tp_limit_failed"
 
 
-def _place_tp_ladder(slug, outcome, total_shares):
+def _place_tp_ladder(slug: str, outcome: str, total_shares: float) -> list[tuple[float, float, bool, str]]:
     """v5.3.0 TP Ladder: 50% @$0.75, 30% @$0.85, 20% hold to expiry"""
     existing = _get_open_tp_orders(slug)
     if existing:
         existing_prices = {o.get("limit_price") for o in existing}
         logger.info(f"[TP-LADDER] {slug[:40]}... {len(existing)} existing TP orders (prices={existing_prices}), skipping duplicate placement")
-        return [(o.get("limit_price", 0), o.get("amount", 0), True, "existing") for o in existing]
+        return [(float(o.get("limit_price", 0)), float(o.get("amount", 0)), True, "existing") for o in existing]
     ladder = [(0.50, 0.75), (0.30, 0.85)]
-    results = []
-    allocated = 0
+    results: list[tuple[float, float, bool, str]] = []
+    allocated = 0.0
     for pct, price in ladder:
         shares = round(total_shares * pct)
         shares = max(shares, 1)
         if shares * price < 5.0:
             if allocated < total_shares:
-                shares = total_shares - allocated
+                shares = int(total_shares - allocated)
             if shares * price < 5.0:
                 single_price = round(min(0.85, price * 1.5), 2)
                 single_shares = max(1, round(total_shares))
                 ok, m = _place_limit_sell(slug, outcome, single_shares, single_price)
-                return [(single_price, single_shares, ok, m)] if ok else []
+                return [(single_price, float(single_shares), ok, m)] if ok else []
         ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
-        results.append((price, shares, ok, m))
+        results.append((price, float(shares), ok, m))
         allocated += shares
     logger.info(f"[TP-LADDER] {slug[:40]}... placed {len(results)} rungs, {total_shares - allocated} held to expiry")
     return results
 
 
-def _get_open_tp_orders(slug):
+def _get_open_tp_orders(slug: str) -> list[dict[str, Any]]:
     try:
         res = subprocess.run(["pm-trader", "orders", "list"], capture_output=True, text=True, timeout=30, start_new_session=True)
         data = json.loads(res.stdout) if res.stdout else {}
@@ -192,7 +194,7 @@ def _get_open_tp_orders(slug):
         return []
 
 
-def _cancel_all_tp_orders(slug):
+def _cancel_all_tp_orders(slug: str) -> None:
     try:
         orders = _get_open_tp_orders(slug)
         for order in orders:
@@ -204,7 +206,7 @@ def _cancel_all_tp_orders(slug):
         logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
 
 
-def get_actual_fill_price(slug):
+def get_actual_fill_price(slug: str) -> dict[str, Any] | None:
     try:
         res = subprocess.run(
             ["pm-trader", "history", "--limit", "5"],
@@ -225,7 +227,7 @@ def get_actual_fill_price(slug):
     return None
 
 
-def log_slippage(slug, expected_price, fill_data):
+def log_slippage(slug: str, expected_price: float, fill_data: dict[str, Any] | None) -> None:
     if not fill_data:
         return
     actual_price = fill_data["avg_price"]

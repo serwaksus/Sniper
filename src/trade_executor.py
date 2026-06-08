@@ -2,6 +2,7 @@ import time
 import logging
 import contextlib
 from datetime import datetime
+from typing import Any
 
 import positions_db
 import hypotheses_db
@@ -21,12 +22,12 @@ logger = logging.getLogger(__name__)
 SMART_EXIT_PRICE = 0.85
 
 
-def _get_sniper_deps():
+def _get_sniper_deps() -> tuple[Any, Any, Any]:
     from dotm_sniper import load_hypothesis_db, save_hypothesis_db, _tr
     return load_hypothesis_db, save_hypothesis_db, _tr
 
 
-def execute_trade(market, estimated_size, factors, analysis, balance):
+def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[str], analysis: dict[str, Any], balance: float) -> bool:
     """Execute trade with advisor pre-check. Returns True if successful."""
     slug = market.get("slug", "")
 

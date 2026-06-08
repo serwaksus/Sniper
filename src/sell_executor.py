@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import positions_db
@@ -33,12 +34,12 @@ LIMIT_SPREAD_THRESHOLD = 0.03
 LIMIT_PRICE_BUFFER = 0.005
 LIMIT_MAX_ATTEMPTS = 3
 
-_om = None
-_sniper = None
-_pm = None
-_et = None
+_om: Any = None
+_sniper: Any = None
+_pm: Any = None
+_et: Any = None
 
-def _get_om():
+def _get_om() -> Any:
     global _om
     if _om is None:
         from order_manager import (
@@ -59,7 +60,7 @@ def _get_om():
         })()
     return _om
 
-def _get_sniper():
+def _get_sniper() -> Any:
     global _sniper
     if _sniper is None:
         from dotm_sniper import load_hypothesis_db, resolve_hypothesis_immediately, _tr
@@ -72,7 +73,7 @@ def _get_sniper():
         })()
     return _sniper
 
-def _get_pm():
+def _get_pm() -> Any:
     global _pm
     if _pm is None:
         from position_manager import check_cluster_limits
@@ -81,7 +82,7 @@ def _get_pm():
         })()
     return _pm
 
-def _get_et():
+def _get_et() -> Any:
     global _et
     if _et is None:
         from equity_tracker import log_trade
@@ -91,7 +92,7 @@ def _get_et():
     return _et
 
 
-def _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=False):
+def _execute_sell(slug: str, outcome: str, shares: float, current_price: float, entry_price: float, force_market: bool = False) -> tuple[bool, float | None, str]:
     """
     Smart sell: use limit order when spread is wide, market order when safe or forced.
     Returns (sold: bool, effective_price: float or None, method: str)
@@ -136,7 +137,7 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
         current_portfolio = _get_om().get_portfolio()
         if current_portfolio is None:
             return False, best_bid, "portfolio_error"
-        actual_shares = 0
+        actual_shares = 0.0
         for p in current_portfolio:
             if p.get("slug") == slug or p.get("market_slug") == slug:
                 actual_shares = float(p.get("size", p.get("shares", 0)))
@@ -207,7 +208,7 @@ def _get_atr_trailing_stop(slug: str, high_price: float, current_price: float) -
     return high_price - ATR_TRAILING_MULTIPLIER * atr
 
 
-def _check_sell_safety(slug, current_price, shares):
+def _check_sell_safety(slug: str, current_price: float, shares: float) -> tuple[bool, str, float | None]:
     """
     Verify order book has sufficient liquidity before placing a market sell.
     Returns (safe: bool, reason: str, effective_price: float or None)
@@ -242,7 +243,7 @@ def _check_sell_safety(slug, current_price, shares):
     )
     return True, "ok", best_bid
 
-def trailing_stop_check():
+def trailing_stop_check() -> None:
     om = _get_om()
     sniper = _get_sniper()
     portfolio = om.get_portfolio()
@@ -386,6 +387,7 @@ def trailing_stop_check():
                 try:
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                     if sold:
+                        assert eff_price is not None
                         logger.info(f"SOLD take-profit convergence ({method}): {slug} pnl={pnl_pct:.2%}")
                         pnl_abs = shares * (eff_price - entry_price)
                         actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
@@ -417,6 +419,7 @@ def trailing_stop_check():
                     else:
                         sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                         if sold:
+                            assert eff_price is not None
                             actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                             logger.info(f"SOLD hard stop ({method}): {slug} mid_pnl={pnl_pct:.2%} eff_pnl={actual_pnl:.2%}")
                             pnl_abs = shares * (eff_price - entry_price)
@@ -426,6 +429,7 @@ def trailing_stop_check():
                     logger.warning(f"[EMERGENCY-SELL] {slug[:40]}... forcing market after {limit_attempts} limit attempts")
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=True)
                     if sold:
+                        assert eff_price is not None
                         actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                         logger.info(f"SOLD emergency ({method}): {slug} pnl={actual_pnl:.2%}")
                         pnl_abs = shares * (eff_price - entry_price)
@@ -461,6 +465,7 @@ def trailing_stop_check():
             try:
                 sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                 if sold:
+                    assert eff_price is not None
                     logger.info(f"SOLD trailing stop ({method}): {slug}")
                     p.pop(POS_TRAILING_CONFIRMED, None)
                     p.pop(POS_TRAILING_CONFIRM_TIME, None)
@@ -482,6 +487,7 @@ def trailing_stop_check():
                 try:
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                     if sold:
+                        assert eff_price is not None
                         logger.info(f"SOLD take-profit ({method}): {slug}")
                         pnl_abs = shares * (eff_price - entry_price)
                         if sniper._tr():
