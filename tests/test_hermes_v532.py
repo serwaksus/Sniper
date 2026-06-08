@@ -173,7 +173,7 @@ class TestEmptyNewsFallback(unittest.TestCase):
         self.assertFalse(headlines)
 
     @patch('hermes_advisor.fetch_news_for_market')
-    @patch('hermes_advisor.load_json')
+    @patch('positions_db.load_all')
     def test_empty_news_skips_llm_call(self, mock_load, mock_news):
         mock_load.return_value = {
             "test-slug": {
@@ -190,7 +190,7 @@ class TestEmptyNewsFallback(unittest.TestCase):
             mock_post.assert_not_called()
 
     @patch('hermes_advisor.fetch_news_for_market')
-    @patch('hermes_advisor.load_json')
+    @patch('positions_db.load_all')
     def test_empty_list_news_skips_llm_call(self, mock_load, mock_news):
         mock_load.return_value = {
             "test-slug": {
@@ -207,7 +207,7 @@ class TestEmptyNewsFallback(unittest.TestCase):
             mock_post.assert_not_called()
 
     @patch('hermes_advisor.fetch_news_for_market')
-    @patch('hermes_advisor.load_json')
+    @patch('positions_db.load_all')
     @patch('requests.post')
     def test_nonempty_news_does_call_llm(self, mock_post, mock_load, mock_news):
         mock_load.return_value = {
@@ -236,7 +236,7 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
 
     @patch('hermes_advisor._update_and_check_status', return_value=True)
     @patch('hermes_advisor.fetch_news_for_market')
-    @patch('hermes_advisor.load_json')
+    @patch('positions_db.load_all')
     @patch('requests.post')
     def test_llm_says_yellow_but_python_says_divergence(self, mock_post, mock_load, mock_news, mock_update):
         mock_load.return_value = {
@@ -262,7 +262,7 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
 
     @patch('hermes_advisor._update_and_check_status', return_value=True)
     @patch('hermes_advisor.fetch_news_for_market')
-    @patch('hermes_advisor.load_json')
+    @patch('positions_db.load_all')
     @patch('requests.post')
     def test_llm_says_green_no_divergence(self, mock_post, mock_load, mock_news, mock_update):
         mock_load.return_value = {
@@ -288,7 +288,7 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
 
     @patch('hermes_advisor._update_and_check_status', return_value=True)
     @patch('hermes_advisor.fetch_news_for_market')
-    @patch('hermes_advisor.load_json')
+    @patch('positions_db.load_all')
     @patch('requests.post')
     def test_llm_returns_percent_format_p_hermes(self, mock_post, mock_load, mock_news, mock_update):
         mock_load.return_value = {
@@ -317,7 +317,7 @@ class TestDuplicateStatusReturn(unittest.TestCase):
     """Fix #2: evaluate_emergency_exit returns early on duplicate status."""
 
     @patch('hermes_advisor.fetch_news_for_market')
-    @patch('hermes_advisor.load_json')
+    @patch('positions_db.load_all')
     @patch('requests.post')
     def test_duplicate_status_skips_update(self, mock_post, mock_load, mock_news):
         mock_load.return_value = {

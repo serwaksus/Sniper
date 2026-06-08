@@ -3,7 +3,7 @@ import logging
 import contextlib
 from datetime import datetime
 
-from utils import load_json, save_json
+import positions_db
 from equity_tracker import log_trade
 from schema import (
     HYP_CLUSTERS, HYP_CONFIDENCE, HYP_CREATED_AT, HYP_DB_HYPOTHESES,
@@ -59,7 +59,7 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
     if shares <= 0:
         return False
 
-    positions = load_json(POSITIONS_FILE, {})
+    positions = positions_db.load_all()
     if market["slug"] not in positions:
         positions[market["slug"]] = {
             POS_ENTRY_PRICE: fill_data.get("price", market["price"]) if fill_data else market["price"],
@@ -73,7 +73,7 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
             POS_CLUSTERS: market.get("clusters", ["other"]),
             POS_SHARES: shares,
         }
-        save_json(POSITIONS_FILE, positions)
+        positions_db.save_all(positions)
 
     if shares > 0:
         ladder_results = _place_tp_ladder(market["slug"], market["outcome"], shares)

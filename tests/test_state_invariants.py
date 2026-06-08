@@ -18,69 +18,65 @@ from dotm_sniper import (
 
 class TestRepairPositionsFile(unittest.TestCase):
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp()
-        self.orig_path = POSITIONS_FILE
+        import positions_db
+        positions_db.ensure_init()
+        positions_db.save_all({})
 
     def tearDown(self):
-        import dotm_sniper
-        dotm_sniper.POSITIONS_FILE = self.orig_path
-        for f in os.listdir(self.tmpdir):
-            os.remove(os.path.join(self.tmpdir, f))
-        os.rmdir(self.tmpdir)
+        import positions_db
+        positions_db.save_all({})
 
-    def _set_path(self, data):
-        path = os.path.join(self.tmpdir, "positions.json")
-        with open(path, 'w') as f:
-            json.dump(data, f)
-        import dotm_sniper
-        dotm_sniper.POSITIONS_FILE = path
-        return path
+    def _write_positions(self, data):
+        import positions_db
+        for slug, pos_data in data.items():
+            positions_db.update(slug, pos_data)
 
     def test_repairs_high_price_below_entry(self):
-        data = {
+        self._write_positions({
             "slug-a": {"entry_price": 0.25, "high_price": 0.20, "trailing_on": False}
-        }
-        path = self._set_path(data)
+        })
         repair_positions_file()
-        result = json.load(open(path))  # noqa: SIM115
+        import positions_db
+        result = positions_db.load_all()
         self.assertGreaterEqual(result["slug-a"]["high_price"], result["slug-a"]["entry_price"])
         self.assertEqual(result["slug-a"]["high_price"], 0.25)
 
     def test_no_repair_needed_when_valid(self):
-        data = {
+        self._write_positions({
             "slug-b": {"entry_price": 0.10, "high_price": 0.15, "trailing_on": False}
-        }
-        path = self._set_path(data)
+        })
         repair_positions_file()
-        result = json.load(open(path))  # noqa: SIM115
+        import positions_db
+        result = positions_db.load_all()
         self.assertEqual(result["slug-b"]["high_price"], 0.15)
 
     def test_empty_positions(self):
-        path = self._set_path({})
+        import positions_db
+        positions_db.save_all({})
         repair_positions_file()
-        result = json.load(open(path))  # noqa: SIM115
+        result = positions_db.load_all()
         self.assertEqual(result, {})
 
     def test_multiple_positions_mixed(self):
-        data = {
+        self._write_positions({
             "slug-ok": {"entry_price": 0.10, "high_price": 0.12, "trailing_on": False},
             "slug-bad": {"entry_price": 0.30, "high_price": 0.25, "trailing_on": False},
             "slug-equal": {"entry_price": 0.15, "high_price": 0.15, "trailing_on": False},
-        }
-        path = self._set_path(data)
+        })
         repair_positions_file()
-        result = json.load(open(path))  # noqa: SIM115
+        import positions_db
+        result = positions_db.load_all()
         self.assertEqual(result["slug-ok"]["high_price"], 0.12)
         self.assertEqual(result["slug-bad"]["high_price"], 0.30)
         self.assertEqual(result["slug-equal"]["high_price"], 0.15)
 
     def test_missing_entry_price_no_crash(self):
-        data = {
+        self._write_positions({
             "slug-no-entry": {"high_price": 0.20, "trailing_on": False}
-        }
-        path = self._set_path(data)
+        })
         repair_positions_file()
-        result = json.load(open(path))  # noqa: SIM115
+        import positions_db
+        result = positions_db.load_all()
         self.assertEqual(result["slug-no-entry"]["high_price"], 0.20)
 
 

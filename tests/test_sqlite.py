@@ -111,3 +111,103 @@ class TestHypotheses:
         resolved = conn.execute("SELECT slug FROM hypotheses WHERE resolved = 1").fetchall()
         assert len(resolved) == 1
         assert resolved[0]['slug'] == "s2"
+
+
+class TestLoadSingle:
+    def test_load_position_found(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.save_positions({"s1": {"shares": 100}, "s2": {"shares": 50}})
+        result = db_module.load_position("s1")
+        assert result == {"shares": 100}
+
+    def test_load_position_missing(self, tmp_path):
+        _setup_db(tmp_path)
+        assert db_module.load_position("nonexistent") is None
+
+    def test_load_hypothesis_found(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.save_hypotheses({"hypotheses": {"h1": {"p_model": 0.15}}})
+        result = db_module.load_hypothesis("h1")
+        assert result["p_model"] == 0.15
+
+    def test_load_hypothesis_missing(self, tmp_path):
+        _setup_db(tmp_path)
+        assert db_module.load_hypothesis("nonexistent") is None
+
+
+class TestHypothesisCRUD:
+    def test_update_hypothesis_insert(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.update_hypothesis("h1", {"p_model": 0.15, "resolved": False})
+        result = db_module.load_hypothesis("h1")
+        assert result["p_model"] == 0.15
+
+    def test_update_hypothesis_replace(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.update_hypothesis("h1", {"p_model": 0.15, "resolved": False})
+        db_module.update_hypothesis("h1", {"p_model": 0.25, "resolved": True})
+        result = db_module.load_hypothesis("h1")
+        assert result["p_model"] == 0.25
+        assert result["resolved"] is True
+
+    def test_delete_hypothesis(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.update_hypothesis("h1", {"p_model": 0.15})
+        db_module.delete_hypothesis("h1")
+        assert db_module.load_hypothesis("h1") is None
+
+
+class TestCountAndSlugs:
+    def test_count_positions_empty(self, tmp_path):
+        _setup_db(tmp_path)
+        assert db_module.count_positions() == 0
+
+    def test_count_positions(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.save_positions({"s1": {"shares": 100}, "s2": {"shares": 50}})
+        assert db_module.count_positions() == 2
+
+    def test_count_resolved_hypotheses(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.update_hypothesis("h1", {"resolved": True})
+        db_module.update_hypothesis("h2", {"resolved": False})
+        assert db_module.count_resolved_hypotheses() == 1
+
+    def test_position_slugs(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.save_positions({"s1": {}, "s2": {}, "s3": {}})
+        slugs = db_module.position_slugs()
+        assert sorted(slugs) == ["s1", "s2", "s3"]
+
+    def test_hypothesis_slugs(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.update_hypothesis("h1", {"resolved": False})
+        db_module.update_hypothesis("h2", {"resolved": False})
+        slugs = db_module.hypothesis_slugs()
+        assert sorted(slugs) == ["h1", "h2"]
+
+
+class TestAutoMigrate:
+    def test_migrates_positions_json(self, tmp_path):
+        _setup_db(tmp_path)
+        json_path = str(tmp_path / "positions.json")
+        with open(json_path, "w") as f:
+            json.dump({"s1": {"shares": 100}, "s2": {"shares": 50}}, f)
+        original_db_path = db_module.DB_PATH
+        count = db_module.migrate_json_to_sqlite(json_path, "positions")
+        assert count == 2
+        assert db_module.count_positions() == 2
+
+    def test_migrates_hypotheses_json(self, tmp_path):
+        _setup_db(tmp_path)
+        json_path = str(tmp_path / "hypothesis_db.json")
+        with open(json_path, "w") as f:
+            json.dump({"hypotheses": {"h1": {"p_model": 0.15, "resolved": True}}}, f)
+        count = db_module.migrate_json_to_sqlite(json_path, "hypotheses")
+        assert count == 1
+        assert db_module.count_resolved_hypotheses() == 1
+
+    def test_auto_migrate_skips_if_data_exists(self, tmp_path):
+        _setup_db(tmp_path)
+        db_module.save_positions({"existing": {"shares": 1}})
+        assert db_module.count_positions() == 1

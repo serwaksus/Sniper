@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils import load_json, save_json, sanitize_for_prompt
 from schema import HYP_CLUSTERS, HYP_CONFIDENCE, HYP_FACTORS, HYP_P_MODEL, HYP_SLUG
+import hypotheses_db
 from utils import load_env_file
 
 load_env_file()
@@ -426,8 +427,7 @@ def normalize_probability(p):
 
 def _count_resolved_hypotheses():
     try:
-        db = load_json(HYPOTHESIS_DB_FILE, {"hypotheses": []})
-        return sum(1 for h in db.get("hypotheses", []) if h.get("resolved"))
+        return hypotheses_db.count_resolved()
     except Exception:
         return 0
 

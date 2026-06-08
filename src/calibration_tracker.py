@@ -14,6 +14,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
+import hypotheses_db
 from schema import (
     HYP_DB_HYPOTHESES, HYP_MARKET_PRICE, HYP_OUTCOME, HYP_P_MODEL,
     HYP_RESOLVED, HYP_SLUG,
@@ -185,7 +186,7 @@ def detect_model_drift(window_days: int = 90, min_trades: int = 10) -> str | Non
 
 
 def sync_from_hypothesis_db():
-    db = load_json(HYPOTHESIS_DB, {HYP_DB_HYPOTHESES: [], HYP_RESOLVED: []})
+    db = hypotheses_db.load_all()
     if not isinstance(db, dict):
         return 0
 
@@ -284,7 +285,7 @@ def train_platt_models() -> dict:
         log = {"entries": []}
     entries = [e for e in log.get("entries", []) if e.get("actual_outcome") in ("YES", "NO")]
 
-    db = load_json(HYPOTHESIS_DB, {HYP_DB_HYPOTHESES: [], HYP_RESOLVED: []})
+    db = hypotheses_db.load_all()
     if isinstance(db, dict):
         seen = {e[HYP_SLUG] for e in log.get("entries", [])}
         for h in db.get(HYP_DB_HYPOTHESES, []):

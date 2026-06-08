@@ -142,6 +142,105 @@ def save_kv(key, value):
     )
     conn.commit()
 
+def load_position(slug):
+    """Load a single position by slug. Returns None if not found."""
+    conn = _get_conn()
+    row = conn.execute("SELECT data FROM positions WHERE slug = ?", (slug,)).fetchone()
+    return json.loads(row['data']) if row else None
+
+def load_hypothesis(slug):
+    """Load a single hypothesis by slug. Returns None if not found."""
+    conn = _get_conn()
+    row = conn.execute("SELECT data FROM hypotheses WHERE slug = ?", (slug,)).fetchone()
+    return json.loads(row['data']) if row else None
+
+def update_hypothesis(slug, data):
+    """Update or insert a single hypothesis."""
+    conn = _get_conn()
+    resolved = 1 if data.get("resolved") else 0
+    conn.execute(
+        "INSERT OR REPLACE INTO hypotheses (slug, data, resolved, updated_at) VALUES (?, ?, ?, ?)",
+        (slug, json.dumps(data, default=str), resolved, time.time())
+    )
+    conn.commit()
+
+def delete_hypothesis(slug):
+    """Delete a single hypothesis."""
+    conn = _get_conn()
+    conn.execute("DELETE FROM hypotheses WHERE slug = ?", (slug,))
+    conn.commit()
+
+def count_positions():
+    """Count active positions."""
+    conn = _get_conn()
+    row = conn.execute("SELECT COUNT(*) as cnt FROM positions").fetchone()
+    return row['cnt']
+
+def count_resolved_hypotheses():
+    """Count resolved hypotheses."""
+    conn = _get_conn()
+    row = conn.execute("SELECT COUNT(*) as cnt FROM hypotheses WHERE resolved = 1").fetchone()
+    return row['cnt']
+
+def position_slugs():
+    """Get all position slugs."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT slug FROM positions").fetchall()
+    return [row['slug'] for row in rows]
+
+def hypothesis_slugs():
+    """Get all hypothesis slugs."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT slug FROM hypotheses").fetchall()
+    return [row['slug'] for row in rows]
+
+SETTINGS_KEY = "bot_settings"
+
+
+def load_settings():
+    return load_kv(SETTINGS_KEY, {})
+
+
+def save_settings(settings):
+    save_kv(SETTINGS_KEY, settings)
+
+
+def auto_migrate():
+    """One-time migration from JSON files to SQLite. Called at startup."""
+    init_db()
+
+    positions_json = "/root/dotm-sniper/positions.json"
+    hypothesis_json = "/root/dotm-sniper/hypothesis_db.json"
+    settings_json = "/root/dotm-sniper/bot_settings.json"
+
+    if count_positions() == 0 and os.path.exists(positions_json):
+        try:
+            migrate_json_to_sqlite(positions_json, "positions")
+            os.rename(positions_json, positions_json + ".migrated")
+        except Exception as e:
+            print(f"[DB] Migration of positions.json failed: {e}")
+
+    if count_resolved_hypotheses() == 0 and os.path.exists(hypothesis_json):
+        conn = _get_conn()
+        row = conn.execute("SELECT COUNT(*) as cnt FROM hypotheses").fetchone()
+        if row['cnt'] == 0:
+            try:
+                migrate_json_to_sqlite(hypothesis_json, "hypotheses")
+                os.rename(hypothesis_json, hypothesis_json + ".migrated")
+            except Exception as e:
+                print(f"[DB] Migration of hypothesis_db.json failed: {e}")
+
+    existing_settings = load_kv(SETTINGS_KEY)
+    if (existing_settings is None or existing_settings == {}) and os.path.exists(settings_json):
+        try:
+            with open(settings_json) as f:
+                data = json.load(f)
+            save_kv(SETTINGS_KEY, data)
+            os.rename(settings_json, settings_json + ".migrated")
+            print("[DB] Migrated bot_settings.json to SQLite")
+        except Exception as e:
+            print(f"[DB] Migration of bot_settings.json failed: {e}")
+
 def migrate_json_to_sqlite(json_path, table, key_col="slug", value_col="data"):
     """One-time migration from JSON file to SQLite table."""
     if not os.path.exists(json_path):
@@ -160,12 +259,24 @@ def migrate_json_to_sqlite(json_path, table, key_col="slug", value_col="data"):
             count += 1
     elif isinstance(data, dict) and table == "hypotheses":
         hyps = data.get("hypotheses", data)
-        for slug, hyp_data in hyps.items():
-            resolved = 1 if hyp_data.get("resolved") else 0
-            conn.execute(
-                f"INSERT OR REPLACE INTO {table} ({key_col}, {value_col}, resolved, updated_at) VALUES (?, ?, ?, ?)",
-                (slug, json.dumps(hyp_data, default=str), resolved, now)
-            )
-            count += 1
+        if isinstance(hyps, list):
+            for h in hyps:
+                slug = h.get("slug", "")
+                if slug:
+                    resolved = 1 if h.get("resolved") else 0
+                    hyp_data = {k: v for k, v in h.items() if k != "slug"}
+                    conn.execute(
+                        f"INSERT OR REPLACE INTO {table} ({key_col}, {value_col}, resolved, updated_at) VALUES (?, ?, ?, ?)",
+                        (slug, json.dumps(hyp_data, default=str), resolved, now)
+                    )
+                    count += 1
+        elif isinstance(hyps, dict):
+            for slug, hyp_data in hyps.items():
+                resolved = 1 if hyp_data.get("resolved") else 0
+                conn.execute(
+                    f"INSERT OR REPLACE INTO {table} ({key_col}, {value_col}, resolved, updated_at) VALUES (?, ?, ?, ?)",
+                    (slug, json.dumps(hyp_data, default=str), resolved, now)
+                )
+                count += 1
     conn.commit()
     return count

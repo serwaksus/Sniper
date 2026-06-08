@@ -11,7 +11,7 @@ from datetime import datetime
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import load_json
+from schema import HYP_DB_RESOLVED
 
 TRADES_JOURNAL = "/root/dotm-sniper/trades_journal.json"
 EQUITY_FILE = "/root/dotm-sniper/equity_curve.json"
@@ -22,10 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 def _get_live_stats() -> dict:
-    db = load_json(HYPOTHESIS_DB, {"resolved": []})
+    import hypotheses_db
+    db = hypotheses_db.load_all()
     if not isinstance(db, dict):
-        db = {"resolved": []}
-    resolved = [r for r in db.get("resolved", []) if r.get("exit_type") == "manual"]
+        db = {HYP_DB_RESOLVED: []}
+    resolved = [r for r in db.get(HYP_DB_RESOLVED, []) if r.get("exit_type") == "manual"]
     if not resolved:
         return {"trades": 0, "win_rate": 0, "avg_win": 0, "avg_loss": 0, "avg_pnl": 0}
 
@@ -165,10 +166,11 @@ def monte_carlo_simulation(
 
 
 def check_edge_degradation(quarterly_min_trades: int = 10) -> dict:
-    db = load_json(HYPOTHESIS_DB, {"resolved": []})
+    import hypotheses_db
+    db = hypotheses_db.load_all()
     if not isinstance(db, dict):
-        db = {"resolved": []}
-    resolved = [r for r in db.get("resolved", []) if r.get("exit_type") == "manual"]
+        db = {HYP_DB_RESOLVED: []}
+    resolved = [r for r in db.get(HYP_DB_RESOLVED, []) if r.get("exit_type") == "manual"]
 
     if len(resolved) < quarterly_min_trades:
         return {

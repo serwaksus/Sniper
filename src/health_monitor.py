@@ -11,6 +11,8 @@ import subprocess
 import logging
 import shutil
 from datetime import datetime, timedelta
+import positions_db
+import hypotheses_db
 from schema import (
     EQUITY_CASH, EQUITY_NUM_POSITIONS, EQUITY_POSITIONS_VALUE,
     EQUITY_SNAPSHOTS, EQUITY_TIMESTAMP, EQUITY_TOTAL, EQUITY_UNREALIZED_PNL,
@@ -183,9 +185,7 @@ def _check_order_health(state):
             issues.append(f"Duplicate: {slug[:35]}... @${price:.2f} x{cnt}")
 
     try:
-        with open(POSITIONS_FILE) as f:
-            positions = json.load(f)
-        pos_slugs = set(positions.keys())
+        pos_slugs = set(positions_db.load_all().keys())
     except Exception:
         pos_slugs = set()
 
@@ -303,8 +303,7 @@ def _check_disk_space(state):
 # ── Check 9: Hypothesis DB growth ───────────────────────────────
 def _check_hypothesis_db(state):
     try:
-        with open(HYPOTHESIS_DB_FILE) as _f:
-            db = json.load(_f)
+        db = hypotheses_db.load_all()
         hypotheses = db.get("hypotheses", [])
         unresolved = [h for h in hypotheses if not h.get("resolved")]
         if len(unresolved) > 50:
@@ -319,8 +318,7 @@ def _check_hypothesis_db(state):
 # ── Check 10: Winrate tracker ───────────────────────────────────
 def _check_winrate(state):
     try:
-        with open(HYPOTHESIS_DB_FILE) as _f:
-            db = json.load(_f)
+        db = hypotheses_db.load_all()
         resolved = [h for h in db.get("hypotheses", []) if h.get("resolved")]
         if len(resolved) < WINRATE_MIN_SAMPLE:
             return None
@@ -415,10 +413,7 @@ def _check_crash_frequency(state):
 # ── Check 15: JSON file integrity ─────────────────────────────
 def _check_json_integrity(state):
     critical_files = {
-        "positions.json": POSITIONS_FILE,
         "equity_curve.json": EQUITY_FILE,
-        "bot_settings.json": "/root/dotm-sniper/bot_settings.json",
-        "hypothesis_db.json": HYPOTHESIS_DB_FILE,
         "price_tracking.json": PRICE_TRACKING_FILE,
     }
     broken = []
@@ -432,6 +427,11 @@ def _check_json_integrity(state):
             broken.append(f"{name}: CORRUPT ({str(e)[:50]})")
         except Exception as e:
             broken.append(f"{name}: ERROR ({str(e)[:50]})")
+    try:
+        if not positions_db.load_all() and not os.path.exists(POSITIONS_FILE):
+            broken.append("positions.json: MISSING (and DB empty)")
+    except Exception as e:
+        broken.append(f"positions DB: ERROR ({str(e)[:50]})")
     if broken:
         return ("JSON_INTEGRITY",
                 "📄 <b>JSON file integrity issues</b>\n" +
@@ -754,8 +754,7 @@ def _summarize_disk():
 
 def _summarize_hypotheses():
     try:
-        with open(HYPOTHESIS_DB_FILE) as _f:
-            db = json.load(_f)
+        db = hypotheses_db.load_all()
         hyps = db.get("hypotheses", [])
         open_h = sum(1 for h in hyps if not h.get("resolved"))
         resolved = sum(1 for h in hyps if h.get("resolved"))
@@ -766,8 +765,7 @@ def _summarize_hypotheses():
 
 def _summarize_winrate():
     try:
-        with open(HYPOTHESIS_DB_FILE) as _f:
-            db = json.load(_f)
+        db = hypotheses_db.load_all()
         resolved = [h for h in db.get("hypotheses", []) if h.get("resolved")]
         wins = sum(1 for h in resolved if h.get("pnl_pct", 0) > 0)
         total = len(resolved)

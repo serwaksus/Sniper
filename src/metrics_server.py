@@ -14,6 +14,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json
+import positions_db
+from db import load_settings
 
 
 class MetricsHandler(BaseHTTPRequestHandler):
@@ -28,8 +30,8 @@ class MetricsHandler(BaseHTTPRequestHandler):
 
     def _serve_metrics(self):
         data = {}
-        positions = load_json("/root/dotm-sniper/positions.json", {})
-        settings = load_json("/root/dotm-sniper/bot_settings.json", {})
+        positions = positions_db.load_all()
+        settings = load_settings()
         equity = load_json("/root/dotm-sniper/equity_curve.json", {})
         health = load_json("/root/dotm-sniper/health_state.json", {})
 
@@ -51,7 +53,7 @@ class MetricsHandler(BaseHTTPRequestHandler):
 
     def _serve_health(self):
         health = load_json("/root/dotm-sniper/health_state.json", {})
-        positions = load_json("/root/dotm-sniper/positions.json", {})
+        positions = positions_db.load_all()
         self._json_response({
             "status": "ok" if not health.get("alerts") else "warning",
             "alerts": health.get("alerts", []),

@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import positions_db
 from utils import load_json, save_json
 from schema import (
     HYP_DB_RESOLVED, HYP_SLUG,
@@ -106,7 +107,7 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
     spread = (best_ask - best_bid) if (best_bid and best_ask) else 0
 
     if not force_market and spread > LIMIT_SPREAD_THRESHOLD:
-        positions = load_json(POSITIONS_FILE, {})
+        positions = positions_db.load_all()
         pos = positions.get(slug, {})
         limit_attempts = pos.get(POS_LIMIT_SELL_ATTEMPTS, 0)
 
@@ -123,8 +124,7 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
                 pos[POS_LIMIT_SELL_ATTEMPTS] = limit_attempts + 1
                 pos[POS_LIMIT_SELL_PRICE] = limit_price
                 pos[POS_LIMIT_SELL_SINCE] = datetime.now().isoformat()
-                positions[slug] = pos
-                save_json(POSITIONS_FILE, positions)
+                positions_db.update(slug, pos)
                 return False, limit_price, "limit_pending"
 
         logger.warning(
@@ -251,16 +251,14 @@ def trailing_stop_check():
     for pos in portfolio:
         slug = pos["market_slug"]
         shares = pos.get("shares", 0)
-        stored_positions = load_json(POSITIONS_FILE, {})
-        stored_entry = stored_positions.get(slug, {}).get(POS_ENTRY_PRICE, 0) if slug in stored_positions else 0
+        stored_pos = positions_db.get(slug)
+        stored_entry = stored_pos.get(POS_ENTRY_PRICE, 0) if stored_pos else 0
         entry_price = stored_entry if stored_entry > 0 else pos.get("avg_entry_price", 0)
         outcome = pos.get("outcome", "yes")
 
         if slug in resolved_slugs:
-            positions = load_json(POSITIONS_FILE, {})
-            if slug in positions:
-                del positions[slug]
-                save_json(POSITIONS_FILE, positions)
+            if positions_db.get(slug) is not None:
+                positions_db.delete(slug)
                 logger.info(f"[SKIP-RESOLVED] {slug[:40]}... already resolved in hypothesis_db, removed from positions")
                 try:
                     from bayesian_updater import cleanup_slug
@@ -281,7 +279,7 @@ def trailing_stop_check():
 
         pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
 
-        positions = load_json(POSITIONS_FILE, {})
+        positions = positions_db.load_all()
         if slug not in positions:
             atr_stop = _get_atr_stop(slug, entry_price, current_price)
             positions[slug] = {
@@ -297,7 +295,7 @@ def trailing_stop_check():
                 POS_CLUSTERS: pos.get("clusters", []),
                 POS_SHARES: shares
             }
-            save_json(POSITIONS_FILE, positions)
+            positions_db.save_all(positions)
 
         p = positions[slug]
 
@@ -334,7 +332,7 @@ def trailing_stop_check():
             p[POS_METACULUS_PROB] = metaculus_prob
 
         positions[slug] = p
-        save_json(POSITIONS_FILE, positions)
+        positions_db.save_all(positions)
 
         if not om._get_open_tp_orders(slug) and current_price < 0.70 and not p.get(POS_TP_LADDER_FAILED):
             try:
@@ -351,7 +349,7 @@ def trailing_stop_check():
 
         p[POS_SELLING_IN_PROGRESS] = True
         positions[slug] = p
-        save_json(POSITIONS_FILE, positions)
+        positions_db.save_all(positions)
 
         convergence = None
         if metaculus_prob and metaculus_prob > 0.05:
@@ -418,7 +416,7 @@ def trailing_stop_check():
                 logger.info(f"[TRAILING-STOP] Confirming for {slug[:40]}... (1/2)")
                 p.pop(POS_SELLING_IN_PROGRESS, None)
                 positions[slug] = p
-                save_json(POSITIONS_FILE, positions)
+                positions_db.save_all(positions)
                 continue
             else:
                 confirm_time = p.get(POS_TRAILING_CONFIRM_TIME)
@@ -429,7 +427,7 @@ def trailing_stop_check():
                             logger.info(f"[TRAILING-STOP] Waiting confirmation for {slug[:40]}... ({elapsed:.0f}s/300s)")
                             p.pop(POS_SELLING_IN_PROGRESS, None)
                             positions[slug] = p
-                            save_json(POSITIONS_FILE, positions)
+                            positions_db.save_all(positions)
                             continue
                     except (ValueError, TypeError):
                         pass
@@ -488,31 +486,25 @@ def trailing_stop_check():
                 )
             except Exception as e:
                 logger.warning(f"[trade_log] {type(e).__name__}: {e}")
-            fresh = load_json(POSITIONS_FILE, {})
-            if slug in fresh:
-                del fresh[slug]
-                save_json(POSITIONS_FILE, fresh)
-                try:
-                    from bayesian_updater import cleanup_slug
-                    cleanup_slug(slug)
-                except Exception as e:
-                    logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
+            positions_db.delete(slug)
+            try:
+                from bayesian_updater import cleanup_slug
+                cleanup_slug(slug)
+            except Exception as e:
+                logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
         else:
             p.pop(POS_SELLING_IN_PROGRESS, None)
             positions[slug] = p
-            save_json(POSITIONS_FILE, positions)
+            positions_db.save_all(positions)
 
     current_slugs = {p["market_slug"] for p in portfolio}
-    positions = load_json(POSITIONS_FILE, {})
-    stale = [s for s in list(positions.keys()) if s not in current_slugs or s in resolved_slugs]
+    all_pos = positions_db.load_all()
+    stale = [s for s in list(all_pos.keys()) if s not in current_slugs or s in resolved_slugs]
     for s in stale:
-        if s in positions:
-            del positions[s]
-            try:
-                from bayesian_updater import cleanup_slug
-                cleanup_slug(s)
-            except Exception as e:
-                logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
-            logger.info(f"[CLEANUP] Removed stale position: {s}")
-    if stale:
-        save_json(POSITIONS_FILE, positions)
+        positions_db.delete(s)
+        try:
+            from bayesian_updater import cleanup_slug
+            cleanup_slug(s)
+        except Exception as e:
+            logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
+        logger.info(f"[CLEANUP] Removed stale position: {s}")

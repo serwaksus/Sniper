@@ -23,6 +23,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 
+import positions_db
 from news_scanner import check_market_news
 from utils import load_json, save_json, check_and_write_pid, cleanup_pid_file
 from equity_tracker import log_equity_snapshot
@@ -244,7 +245,7 @@ def resolve_hypothesis_immediately(slug, current_price, entry_price):
 
 def repair_positions_file():
     """Fix inconsistent data in positions.json (e.g. high_price < entry_price)."""
-    positions = load_json(POSITIONS_FILE, {})
+    positions = positions_db.load_all()
     dirty = False
     for slug, p in positions.items():
         entry = p.get(POS_ENTRY_PRICE, 0)
@@ -254,7 +255,7 @@ def repair_positions_file():
             logger.info(f"[REPAIR] {slug[:40]}... high_price {high:.4f} < entry_price {entry:.4f}, fixed")
             dirty = True
     if dirty:
-        save_json(POSITIONS_FILE, positions)
+        positions_db.save_all(positions)
 
 def resolve_hypotheses():
     from resolution import resolve_hypotheses as _impl
@@ -505,7 +506,7 @@ def _main_inner():
 
         corr_ok, corr_reason = check_correlation_limit(
             m["clusters"][0] if m["clusters"] else "other",
-            load_json(POSITIONS_FILE, {}),
+            positions_db.load_all(),
             balance,
             new_investment=estimated_size,
         )

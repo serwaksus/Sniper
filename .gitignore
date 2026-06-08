@@ -36,3 +36,5 @@ ENV/
 *.json
 *.backup_*
 sniper.pid
+*.migrated
+sniper.db

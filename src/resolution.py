@@ -5,7 +5,7 @@ import contextlib
 from datetime import datetime
 from collections import defaultdict
 
-from utils import load_json, save_json
+import positions_db
 from calibration_tracker import log_calibration_entry, detect_model_drift
 from schema import (
     HYP_CLUSTERS,
@@ -301,18 +301,13 @@ def resolve_hypothesis_immediately(slug, current_price, entry_price):
             h[HYP_SOLD_PNL_PCT] = (current_price - entry_price) / entry_price if entry_price > 0 else 0
             db[HYP_DB_RESOLVED].append(h)
 
-            positions = load_json(POSITIONS_FILE, {})
-            if slug in positions:
-                del positions[slug]
-                fresh = load_json(POSITIONS_FILE, {})
-                fresh.pop(slug, None)
-                save_json(POSITIONS_FILE, fresh)
+            positions_db.delete(slug)
 
-                try:
-                    from bayesian_updater import cleanup_slug
-                    cleanup_slug(slug)
-                except Exception as e:
-                    logger.warning(f"[bayesian_cleanup] {type(e).__name__}: {e}")
+            try:
+                from bayesian_updater import cleanup_slug
+                cleanup_slug(slug)
+            except Exception as e:
+                logger.warning(f"[bayesian_cleanup] {type(e).__name__}: {e}")
 
             save_hypothesis_db(db)
 

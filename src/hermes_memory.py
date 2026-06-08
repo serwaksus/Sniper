@@ -14,6 +14,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
+import positions_db
 
 MEMORY_FILE = "/root/dotm-sniper/hermes_memory.json"
 SKILLS_FILE = "/root/dotm-sniper/hermes_skills.json"
@@ -53,8 +54,7 @@ def _save_memory(data):
         data["resolved"] = data["resolved"][-_MAX_RESOLVED:]
 
     now = datetime.now(UTC)
-    positions = load_json("/root/dotm-sniper/positions.json", {})
-    active_slugs = set(positions.keys())
+    active_slugs = set(positions_db.slugs())
     predictions = data.get("predictions", {})
     stale_keys = []
     for slug_key, p in predictions.items():
