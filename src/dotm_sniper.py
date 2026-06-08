@@ -855,6 +855,7 @@ def _main_inner():
     db = load_hypothesis_db()
     existing_slugs = {h["slug"] for h in db.get("hypotheses", []) if not h.get("resolved")}
     position_slugs = {p.get("market_slug", "") for p in portfolio}
+    already_active = existing_slugs | position_slugs
     gamma_candidates = fetch_gamma_dotm_candidates(existing_slugs | position_slugs)
     seen = {m["slug"] for m in markets}
     for gc in gamma_candidates:
@@ -886,7 +887,7 @@ def _main_inner():
         can_pass, _ = check_cluster_limits(m["clusters"], current_positions_for_clusters, portfolio_value=total_balance)
         if not can_pass:
             continue
-        if m["slug"] in position_slugs:
+        if m["slug"] in already_active:
             continue
         should_analyze, cached_p = _check_price_delta(m["slug"], m["price"])
         if not should_analyze and cached_p is not None:
@@ -922,7 +923,7 @@ def _main_inner():
         if not can_pass:
             continue
 
-        if m["slug"] in position_slugs:
+        if m["slug"] in already_active:
             continue
 
         if m["slug"] in market_analyses:
