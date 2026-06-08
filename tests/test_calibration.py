@@ -3,12 +3,9 @@
 Tests for calibration_tracker.py — Brier score, Platt scaling, sigmoid,
 drift detection, edge cases.
 """
-import json
-import math
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
 
 import sys
 from pathlib import Path

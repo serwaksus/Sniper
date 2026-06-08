@@ -293,19 +293,19 @@ def fetch_resolved_markets(
 def generate_price_series(market: dict, num_steps: int = 30) -> list[float]:
     """
     Generate realistic price path calibrated from live Polymarket DOTM data.
-    
+
     Hourly volatility by price level (from CLOB calibration):
     - <0.03: 0.031 (low liquidity, low info)
     - 0.03-0.07: 0.018 (moderate)
     - 0.07-0.15: 0.057 (more active, more volatile)
-    
+
     Includes: mean reversion toward resolution, jump diffusion,
     and convergence ramp in final steps.
     """
     random.seed(hash(market["slug"]))
 
     entry = market["entry_price"]
-    resolution = 1.0 if market["resolution"] == "YES" else 0.0
+    1.0 if market["resolution"] == "YES" else 0.0
     ttl_days = market["ttl_days"]
     vol = market.get("volume", 1000)
 
@@ -328,7 +328,7 @@ def generate_price_series(market: dict, num_steps: int = 30) -> list[float]:
     dt = 1.0 / num_steps
 
     for step in range(1, num_steps + 1):
-        progress = step / num_steps
+        step / num_steps
 
         shock = random.gauss(0, daily_vol * dt ** 0.5)
 
@@ -345,7 +345,7 @@ def generate_price_series(market: dict, num_steps: int = 30) -> list[float]:
 def generate_order_book(entry_price: float, liquidity: float, seed: int = 0) -> dict:
     """
     Generate realistic order book calibrated from live Polymarket CLOB data.
-    
+
     Spread calibration from real DOTM observations:
     - price < 0.03: spread 30-50%, ask liq $5-50
     - price 0.03-0.07: spread 15-30%, ask liq $10-100

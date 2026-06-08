@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 from news_scanner import fetch_recent_news
 from utils import load_json, save_json, sanitize_for_prompt, load_env_file
+from schema import *
 
 load_env_file()
 
@@ -71,17 +72,17 @@ STATUS_HOLD_COUNT = 2
 def _load_alert_state():
     global _last_alert_status, _last_notified_at, _status_hold_counts
     state = load_json(ALERT_STATE_FILE, {})
-    _last_alert_status = state.get("position_status", {})
-    _last_notified_at = state.get("last_notified_at", {})
-    _status_hold_counts = state.get("hold_counts", {})
+    _last_alert_status = state.get(ALERT_POSITION_STATUS, {})
+    _last_notified_at = state.get(ALERT_LAST_NOTIFIED, {})
+    _status_hold_counts = state.get(ALERT_HOLD_COUNTS, {})
 
 def _save_alert_state():
     with _alert_state_lock:
         save_json(ALERT_STATE_FILE, {
-            "position_status": _last_alert_status,
-            "last_notified_at": _last_notified_at,
-            "hold_counts": _status_hold_counts,
-            "updated_at": datetime.now().isoformat()
+            ALERT_POSITION_STATUS: _last_alert_status,
+            ALERT_LAST_NOTIFIED: _last_notified_at,
+            ALERT_HOLD_COUNTS: _status_hold_counts,
+            ALERT_UPDATED_AT: datetime.now().isoformat()
         })
 
 def _should_send_telegram(slug, trigger_exit, current_status):
@@ -101,9 +102,7 @@ def _should_send_telegram(slug, trigger_exit, current_status):
                 pass
         last_status = _last_alert_status.get(slug)
         last_normalized = str(last_status).upper().strip() if last_status else None
-        if normalized != last_normalized:
-            return True
-        return False
+        return normalized != last_normalized
 
 def _update_and_check_status(slug, trigger_exit, current_status):
     global _last_alert_status, _last_notified_at, _status_hold_counts
@@ -283,7 +282,7 @@ def reconcile_positions():
             pos_modified = False
 
             if slug not in portfolio_slugs:
-                if pos_data.get("in_emergency_exit"):
+                if pos_data.get(POS_IN_EMERGENCY_EXIT):
                     if not any(o.get("slug") == slug for o in open_orders):
                         logger.info(f"[HERMES] Emergency-exit position {slug[:40]}... no open orders, checking portfolio again")
                         fresh_portfolio = get_portfolio()
@@ -306,24 +305,24 @@ def reconcile_positions():
             if not pos:
                 continue
 
-            current_shares = pos.get("shares", 0)
-            recorded_shares = pos_data.get("shares", 0)
+            current_shares = pos.get(POS_SHARES, 0)
+            recorded_shares = pos_data.get(POS_SHARES, 0)
 
             if current_shares != recorded_shares:
                 logger.info(f"[HERMES] Share mismatch for {slug[:40]}...: recorded={recorded_shares}, actual={current_shares}")
-                pos_data["shares"] = current_shares
+                pos_data[POS_SHARES] = current_shares
                 pos_modified = True
 
             entry_price = pos.get("avg_entry_price", 0)
-            if entry_price > 0 and pos_data.get("entry_price", 0) != entry_price:
-                pos_data["entry_price"] = entry_price
+            if entry_price > 0 and pos_data.get(POS_ENTRY_PRICE, 0) != entry_price:
+                pos_data[POS_ENTRY_PRICE] = entry_price
                 pos_modified = True
 
             tp_order = next((o for o in open_orders if o.get("slug") == slug and o.get("side") == "sell" and any(abs(o.get("price", 0) - p) < 0.01 for p in TP_LADDER_PRICES)), None)
 
             if tp_order:
                 order_shares = tp_order.get("shares", 0)
-                recorded_shares_at_tp = pos_data.get("shares_at_tp_open", order_shares)
+                recorded_shares_at_tp = pos_data.get(POS_SHARES_AT_TP_OPEN, order_shares)
                 current_shares_at_check = current_shares
 
                 if current_shares_at_check < recorded_shares_at_tp and order_shares > 0:
@@ -335,9 +334,9 @@ def reconcile_positions():
 
                         fill_price = tp_order.get("price", TP_LIMIT_PRICE)
                         sold_value = filled * fill_price
-                        pos_data["shares"] = current_shares
-                        pos_data["partial_fills"] = pos_data.get("partial_fills", 0) + filled
-                        pos_data["partial_proceeds"] = pos_data.get("partial_proceeds", 0) + sold_value
+                        pos_data[POS_SHARES] = current_shares
+                        pos_data[POS_PARTIAL_FILLS] = pos_data.get(POS_PARTIAL_FILLS, 0) + filled
+                        pos_data[POS_PARTIAL_PROCEEDS] = pos_data.get(POS_PARTIAL_PROCEEDS, 0) + sold_value
 
                         logger.info(f"[HERMES] Updated shares to {current_shares} (portfolio reflects partial fill), proceeds ${sold_value:.2f}")
                         pos_modified = True
@@ -353,18 +352,18 @@ def reconcile_positions():
 
 def _notify_position_closed(slug, pos_data):
     try:
-        entry = pos_data.get("entry_price", 0)
-        high = pos_data.get("high_price", entry)
+        entry = pos_data.get(POS_ENTRY_PRICE, 0)
+        high = pos_data.get(POS_HIGH_PRICE, entry)
         if entry > 0 and high > 0:
             computed_pnl_pct = (high - entry) / entry * 100
-            computed_pnl_abs = (high - entry) * pos_data.get("shares", 0)
+            computed_pnl_abs = (high - entry) * pos_data.get(POS_SHARES, 0)
         else:
             computed_pnl_pct = 0
             computed_pnl_abs = 0
         if TELEGRAM_REPORTER:
             TELEGRAM_REPORTER.alert_convergence(
                 slug=slug,
-                question=pos_data.get("market_question", "Unknown"),
+                question=pos_data.get(POS_MARKET_QUESTION, "Unknown"),
                 pnl_pct=computed_pnl_pct,
                 pnl_abs=computed_pnl_abs,
                 convergence_ratio=0
@@ -379,8 +378,8 @@ def _notify_partial_fill(slug, pos_data, filled, fill_price=None):
             TELEGRAM_REPORTER.alert_take_profit(
                 slug=slug,
                 question=pos_data.get("question", "Unknown"),
-                pnl_pct=((fp - pos_data.get("entry_price", 0)) / pos_data.get("entry_price", 1)) * 100 if pos_data.get("entry_price", 0) > 0 else 0,
-                pnl_abs=filled * (fp - pos_data.get("entry_price", 0))
+                pnl_pct=((fp - pos_data.get(POS_ENTRY_PRICE, 0)) / pos_data.get(POS_ENTRY_PRICE, 1)) * 100 if pos_data.get(POS_ENTRY_PRICE, 0) > 0 else 0,
+                pnl_abs=filled * (fp - pos_data.get(POS_ENTRY_PRICE, 0))
             )
     except Exception as e:
         logger.warning(f"[HERMES] Partial fill notification failed: {e}")
@@ -404,14 +403,14 @@ def fetch_news_for_market(slug, question):
 
 def _prune_stale_cache():
     try:
-        cache = load_json(CACHE_FILE, {"metaculus": {}, "news": {}, "last_update": None})
+        cache = load_json(CACHE_FILE, {CACHE_METACULUS: {}, CACHE_NEWS: {}, CACHE_LAST_UPDATE: None})
         now = datetime.now()
         pruned = False
-        for section in ("metaculus", "news"):
+        for section in (CACHE_METACULUS, CACHE_NEWS):
             entries = cache.get(section, {})
             stale = [k for k, v in entries.items()
-                     if isinstance(v, dict) and v.get("timestamp")
-                     and (now - datetime.fromisoformat(v["timestamp"])).total_seconds() > 86400]
+                     if isinstance(v, dict) and v.get(CACHE_TIMESTAMP)
+                     and (now - datetime.fromisoformat(v[CACHE_TIMESTAMP])).total_seconds() > 86400]
             for k in stale:
                 del entries[k]
                 pruned = True
@@ -438,16 +437,16 @@ def evaluate_emergency_exit():
     portfolio_map = {p.get("market_slug"): p for p in portfolio if p.get("market_slug")}
 
     for slug, pos_data in positions.items():
-        if pos_data.get("in_emergency_exit"):
-            if pos_data.get("emergency_exit_failed"):
-                last_attempt = pos_data.get("last_emergency_attempt")
+        if pos_data.get(POS_IN_EMERGENCY_EXIT):
+            if pos_data.get(POS_EMERGENCY_EXIT_FAILED):
+                last_attempt = pos_data.get(POS_LAST_EMERGENCY_ATTEMPT)
                 if last_attempt:
                     try:
                         elapsed = (datetime.now() - datetime.fromisoformat(last_attempt)).total_seconds()
                         if elapsed > 600:
                             logger.info(f"[HERMES] Retrying failed emergency exit for {slug[:40]}...")
-                            pos_data["emergency_exit_failed"] = False
-                            pos_data["in_emergency_exit"] = False
+                            pos_data[POS_EMERGENCY_EXIT_FAILED] = False
+                            pos_data[POS_IN_EMERGENCY_EXIT] = False
                             with _positions_file_lock:
                                 _merge_save_positions(updated_positions={slug: pos_data})
                     except (ValueError, TypeError):
@@ -456,22 +455,22 @@ def evaluate_emergency_exit():
                 logger.info(f"[HERMES] Skipping {slug[:40]}... - already in emergency exit")
             continue
 
-        if pos_data.get("selling_in_progress"):
+        if pos_data.get(POS_SELLING_IN_PROGRESS):
             logger.info(f"[HERMES] Skipping {slug[:40]}... - sniper is selling")
             continue
 
-        question = pos_data.get("market_question", "")
+        question = pos_data.get(POS_MARKET_QUESTION, "")
         if not question:
             continue
 
-        metaculus_prob_raw = pos_data.get("metaculus_prob")
+        metaculus_prob_raw = pos_data.get(POS_METACULUS_PROB)
         if metaculus_prob_raw is not None and metaculus_prob_raw > 0:
             bot_prob = metaculus_prob_raw
         else:
-            bot_prob = min(pos_data.get("entry_price", 0) * 2, 0.20)
+            bot_prob = min(pos_data.get(POS_ENTRY_PRICE, 0) * 2, 0.20)
         bot_prob = min(max(bot_prob, 0.0), 1.0)
 
-        entry_price = pos_data.get("entry_price", 0)
+        entry_price = pos_data.get(POS_ENTRY_PRICE, 0)
         portfolio_pos = portfolio_map.get(slug, {})
         current_price = portfolio_pos.get("live_price", 0)
         if entry_price > 0:
@@ -591,7 +590,7 @@ Return ONLY JSON:
                 normalized_status = status.upper().strip()
 
                 try:
-                    cluster = pos_data.get("clusters", ["unknown"])[0] if isinstance(pos_data.get("clusters"), list) else "unknown"
+                    cluster = pos_data.get(POS_CLUSTERS, ["unknown"])[0] if isinstance(pos_data.get(POS_CLUSTERS), list) else "unknown"
                 except (IndexError, TypeError):
                     cluster = "unknown"
                 log_prediction(
@@ -646,7 +645,7 @@ Return ONLY JSON:
             if not trigger and headlines:
                 try:
                     news_cat = classify_news_with_llm(question, headlines)
-                    posterior = update_posterior(slug, news_cat)
+                    update_posterior(slug, news_cat)
                     bayes_exit, bayes_reason = bayesian_should_exit(slug)
                     if bayes_exit:
                         logger.warning(f"[HERMES] BAYESIAN EXIT for {slug[:40]}...: {bayes_reason}")
@@ -660,8 +659,8 @@ Return ONLY JSON:
 def _execute_emergency_exit(slug, pos_data, reason):
     logger.info(f"[HERMES] Executing emergency exit for {slug[:40]}...")
 
-    outcome = pos_data.get("outcome", "yes")
-    shares = pos_data.get("shares", 0)
+    outcome = pos_data.get(POS_OUTCOME, "yes")
+    shares = pos_data.get(POS_SHARES, 0)
 
     with _positions_file_lock:
         positions = load_json(POSITIONS_FILE, {})
@@ -670,8 +669,8 @@ def _execute_emergency_exit(slug, pos_data, reason):
             logger.warning(f"[HERMES] {slug} not found in positions, aborting emergency")
             return
 
-        positions[slug]["in_emergency_exit"] = True
-        positions[slug]["selling_in_progress"] = True
+        positions[slug][POS_IN_EMERGENCY_EXIT] = True
+        positions[slug][POS_SELLING_IN_PROGRESS] = True
         save_json(POSITIONS_FILE, positions)
 
     for attempt in range(MAX_EMERGENCY_RETRIES):
@@ -701,17 +700,17 @@ def _execute_emergency_exit(slug, pos_data, reason):
             logger.warning(f"[HERMES] {remaining_shares} shares remain for {slug[:40]}..., updating position instead of deleting")
             with _positions_file_lock:
                 _merge_save_positions(updated_positions={slug: {
-                    "shares": remaining_shares,
-                    "in_emergency_exit": False,
-                    "selling_in_progress": False,
-                    "emergency_exit_failed": False,
+                    POS_SHARES: remaining_shares,
+                    POS_IN_EMERGENCY_EXIT: False,
+                    POS_SELLING_IN_PROGRESS: False,
+                    POS_EMERGENCY_EXIT_FAILED: False,
                 }})
         else:
             with _positions_file_lock:
                 _merge_save_positions(deleted_slugs={slug})
             logger.info(f"[HERMES] Removed position {slug[:40]}... from file")
 
-        entry_price = pos_data.get("entry_price", 0)
+        entry_price = pos_data.get(POS_ENTRY_PRICE, 0)
         fresh_portfolio = get_portfolio()
         fresh_pos = next((p for p in (fresh_portfolio or []) if p.get("market_slug") == slug), None)
         current_price = fresh_pos.get("live_price", 0) if fresh_pos else 0
@@ -724,7 +723,7 @@ def _execute_emergency_exit(slug, pos_data, reason):
             try:
                 TELEGRAM_REPORTER.alert_stop_loss(
                     slug=slug,
-                    question=pos_data.get("market_question", "Unknown"),
+                    question=pos_data.get(POS_MARKET_QUESTION, "Unknown"),
                     pnl_pct=actual_pnl_pct,
                     pnl_abs=actual_pnl_abs
                 )
@@ -738,18 +737,18 @@ def _execute_emergency_exit(slug, pos_data, reason):
         with _positions_file_lock:
             positions = load_json(POSITIONS_FILE, {})
             if slug in positions:
-                positions[slug]["emergency_exit_failed"] = True
-                positions[slug]["last_emergency_attempt"] = datetime.now().isoformat()
-                positions[slug]["selling_in_progress"] = False
-                positions[slug]["in_emergency_exit"] = False
+                positions[slug][POS_EMERGENCY_EXIT_FAILED] = True
+                positions[slug][POS_LAST_EMERGENCY_ATTEMPT] = datetime.now().isoformat()
+                positions[slug][POS_SELLING_IN_PROGRESS] = False
+                positions[slug][POS_IN_EMERGENCY_EXIT] = False
             save_json(POSITIONS_FILE, positions)
 
 def _log_emergency_exit(slug, pos_data, reason):
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "slug": slug,
-        "question": pos_data.get("market_question", ""),
-        "entry_price": pos_data.get("entry_price", 0),
+        "question": pos_data.get(POS_MARKET_QUESTION, ""),
+        "entry_price": pos_data.get(POS_ENTRY_PRICE, 0),
         "reason": reason,
         "action": "emergency_exit"
     }
@@ -810,7 +809,7 @@ def _check_resolved_markets():
 
     slugs = list(predictions.keys())
     try:
-        res = subprocess.run(
+        subprocess.run(
             ["pm-trader", "orders", "list"],
             capture_output=True, text=True, timeout=15, start_new_session=True
         )
@@ -843,8 +842,8 @@ def _check_resolved_markets():
                                 except (json.JSONDecodeError, ValueError, IndexError):
                                     pass
                             resolve_prediction(slug, outcome)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[resolve_markets] {type(e).__name__}: {e}")
     except Exception as e:
         logger.warning(f"[HERMES] Resolution check failed: {e}")
 
@@ -882,7 +881,7 @@ def main():
                 resolution_thread.start()
 
             positions = load_json(POSITIONS_FILE, {})
-            active_count = len([p for p in positions.values() if not p.get("in_emergency_exit")])
+            active_count = len([p for p in positions.values() if not p.get(POS_IN_EMERGENCY_EXIT)])
 
             logger.debug(f"[HERMES] Heartbeat: {active_count} active positions")
 

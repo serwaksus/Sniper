@@ -98,7 +98,7 @@ def get_correlated_exposure(positions: dict, balance: float) -> dict[str, float]
         return {}
 
     cluster_investment = defaultdict(float)
-    for slug, pos in positions.items():
+    for _slug, pos in positions.items():
         cluster = _get_cluster(pos)
         invested = pos.get("entry_price", 0) * pos.get("shares", 0)
         cluster_investment[cluster] += invested
@@ -119,7 +119,7 @@ def check_correlation_limit(new_cluster: str, positions: dict, balance: float,
         return True, "ok"
 
     all_cluster_inv = defaultdict(float)
-    for slug, pos in positions.items():
+    for _slug, pos in positions.items():
         cluster = _get_cluster(pos)
         invested = pos.get("entry_price", 0) * pos.get("shares", 0)
         all_cluster_inv[cluster] += invested
@@ -144,7 +144,7 @@ def check_correlation_limit(new_cluster: str, positions: dict, balance: float,
 
     group_clusters = CORRELATED_GROUPS[new_group]
     cluster_investment = defaultdict(float)
-    for slug, pos in positions.items():
+    for _slug, pos in positions.items():
         cluster = _get_cluster(pos)
         if cluster in group_clusters:
             invested = pos.get("entry_price", 0) * pos.get("shares", 0)

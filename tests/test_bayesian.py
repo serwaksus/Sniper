@@ -2,12 +2,9 @@
 """
 Tests for bayesian_updater.py — posterior update, exit thresholds, log-odds math.
 """
-import json
-import math
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
 
 import sys
 from pathlib import Path
@@ -181,32 +178,32 @@ class TestShouldExit(unittest.TestCase):
         os.rmdir(self.tmpdir)
 
     def test_no_state_no_exit(self):
-        exit_flag, reason = bu.should_exit("nonexistent")
+        exit_flag, _reason = bu.should_exit("nonexistent")
         self.assertFalse(exit_flag)
 
     def test_high_posterior_no_exit(self):
         bu.init_posterior("s1", 0.30, 0.10)
-        exit_flag, reason = bu.should_exit("s1")
+        exit_flag, _reason = bu.should_exit("s1")
         self.assertFalse(exit_flag)
 
     def test_dropped_posterior_triggers_exit(self):
         bu.init_posterior("s1", 0.50, 0.10)
         for _ in range(8):
             bu.update_posterior("s1", "confirms_impossible")
-        exit_flag, reason = bu.should_exit("s1")
+        exit_flag, _reason = bu.should_exit("s1")
         self.assertTrue(exit_flag)
 
     def test_near_zero_posterior_exits(self):
         bu.init_posterior("s1", 0.05, 0.10)
         for _ in range(5):
             bu.update_posterior("s1", "confirms_impossible")
-        exit_flag, reason = bu.should_exit("s1")
+        exit_flag, _reason = bu.should_exit("s1")
         self.assertTrue(exit_flag)
 
     def test_threshold_ratio_default(self):
         bu.init_posterior("s1", 0.30, 0.10)
         bu.update_posterior("s1", "strongly_contradicts")
-        exit_flag, reason = bu.should_exit("s1", threshold_ratio=0.40)
+        exit_flag, _reason = bu.should_exit("s1", threshold_ratio=0.40)
         state = bu.load_json(bu.BAYESIAN_STATE_FILE, {})
         posterior = state["positions"]["s1"]["posterior_prob"]
         entry_p = state["positions"]["s1"]["p_model_entry"]

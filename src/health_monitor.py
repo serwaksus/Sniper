@@ -11,6 +11,7 @@ import subprocess
 import logging
 import shutil
 from datetime import datetime, timedelta
+from schema import *
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def _load_state():
         with open(HEALTH_STATE_FILE) as f:
             return json.load(f)
     except Exception:
-        return {"last_alerts": {}, "last_cycle_start": None, "last_equity": None}
+        return {HEALTH_LAST_ALERTS: {}, HEALTH_LAST_CYCLE_START: None, HEALTH_LAST_EQUITY: None}
 
 
 def _save_state(state):
@@ -52,7 +53,7 @@ def _save_state(state):
 
 
 def _should_alert(state, alert_key):
-    last = state.get("last_alerts", {}).get(alert_key, "")
+    last = state.get(HEALTH_LAST_ALERTS, {}).get(alert_key, "")
     if not last:
         return True
     try:
@@ -62,7 +63,7 @@ def _should_alert(state, alert_key):
 
 
 def _mark_alerted(state, alert_key):
-    state.setdefault("last_alerts", {})[alert_key] = datetime.now().isoformat()
+    state.setdefault(HEALTH_LAST_ALERTS, {})[alert_key] = datetime.now().isoformat()
 
 
 def _read_recent_log(hours=24):
@@ -98,10 +99,10 @@ def _send_telegram(message):
 
 # ── Check 1: No trades ──────────────────────────────────────────
 def _check_no_trades(lines, state):
-    trade_signals = sum(1 for l in lines if "=> BUY" in l)
-    blocked = sum(1 for l in lines if "TRADE-BLOCKED" in l)
-    executed = sum(1 for l in lines if "Bought:" in l and "Bought: 0" not in l)
-    cycles = max(sum(1 for l in lines if "DOTM SNIPER" in l and "starting" in l.lower()), 1)
+    trade_signals = sum(1 for line in lines if "=> BUY" in line)
+    blocked = sum(1 for line in lines if "TRADE-BLOCKED" in line)
+    executed = sum(1 for line in lines if "Bought:" in line and "Bought: 0" not in line)
+    sum(1 for line in lines if "DOTM SNIPER" in line and "starting" in line.lower())
 
     issues = []
     if trade_signals > 0 and executed == 0:
@@ -125,16 +126,16 @@ def _check_equity_drawdown(state):
     try:
         with open(EQUITY_FILE) as _f:
             data = json.load(_f)
-        snaps = data.get("snapshots", [])
+        snaps = data.get(EQUITY_SNAPSHOTS, [])
         if len(snaps) < 2:
             return None
-        now_eq = snaps[-1].get("total_equity", 0)
+        now_eq = snaps[-1].get(EQUITY_TOTAL, 0)
         cutoff = datetime.now() - timedelta(hours=24)
         past_eq = None
         for s in snaps:
             try:
-                if datetime.fromisoformat(s["timestamp"]) >= cutoff:
-                    past_eq = s.get("total_equity", 0)
+                if datetime.fromisoformat(s[EQUITY_TIMESTAMP]) >= cutoff:
+                    past_eq = s.get(EQUITY_TOTAL, 0)
                     break
             except Exception:
                 continue
@@ -146,7 +147,7 @@ def _check_equity_drawdown(state):
                     f"📉 <b>Equity drawdown -{drop:.0%}</b>\n"
                     f"• 24h ago: ${past_eq:.2f} → now: ${now_eq:.2f}\n"
                     f"• Drop: ${past_eq - now_eq:.2f}")
-        state["last_equity"] = now_eq
+        state[HEALTH_LAST_EQUITY] = now_eq
     except Exception:
         pass
     return None
@@ -203,18 +204,18 @@ def _check_order_health(state):
 # ── Check 4: API health ─────────────────────────────────────────
 def _check_api_health(lines, state):
     cutoff = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-    hour_lines = [l for l in lines if l[:19] >= cutoff]
+    hour_lines = [line for line in lines if line[:19] >= cutoff]
     issues = []
 
-    llm_errors = sum(1 for l in hour_lines if "LLM error" in l or "LLM unavailable" in l)
+    llm_errors = sum(1 for line in hour_lines if "LLM error" in line or "LLM unavailable" in line)
     if llm_errors >= 3:
         issues.append(f"DeepSeek: {llm_errors} errors in last hour")
 
-    gamma_fails = sum(1 for l in hour_lines if "[GAMMA]" in l and "status=" in l and "200" not in l)
+    gamma_fails = sum(1 for line in hour_lines if "[GAMMA]" in line and "status=" in line and "200" not in line)
     if gamma_fails >= 2:
         issues.append(f"Gamma API: {gamma_fails} failures in last hour")
 
-    pm_fails = sum(1 for l in hour_lines if "pm-trader" in l.lower() and ("failed" in l.lower() or "error" in l.lower()))
+    pm_fails = sum(1 for line in hour_lines if "pm-trader" in line.lower() and ("failed" in line.lower() or "error" in line.lower()))
     if pm_fails >= 2:
         issues.append(f"pm-trader: {pm_fails} errors in last hour")
 
@@ -226,12 +227,12 @@ def _check_api_health(lines, state):
 # ── Check 5: Cycle timing ───────────────────────────────────────
 def _check_cycle_timing(state):
     now_iso = datetime.now().isoformat()
-    last_start = state.get("last_cycle_start")
+    last_start = state.get(HEALTH_LAST_CYCLE_START)
 
     if not last_start:
-        state["last_cycle_start"] = now_iso
+        state[HEALTH_LAST_CYCLE_START] = now_iso
         return None
-    state["last_cycle_start"] = now_iso
+    state[HEALTH_LAST_CYCLE_START] = now_iso
     try:
         elapsed = (datetime.now() - datetime.fromisoformat(last_start)).total_seconds() / 60
         if elapsed > CYCLE_MAX_MINUTES:
@@ -246,9 +247,9 @@ def _check_cycle_timing(state):
 # ── Check 6: Error spike ────────────────────────────────────────
 def _check_error_spike(state):
     hour_lines = _read_last_hour_log()
-    errors = sum(1 for l in hour_lines if " ERROR " in l or "Traceback" in l)
+    errors = sum(1 for line in hour_lines if " ERROR " in line or "Traceback" in line)
     if errors >= ERROR_SPIKE_PER_HOUR:
-        samples = [l.strip()[:80] for l in hour_lines if " ERROR " in l][-3:]
+        samples = [line.strip()[:80] for line in hour_lines if " ERROR " in line][-3:]
         return ("ERROR_SPIKE",
                 f"🔴 <b>Error spike: {errors}/hour</b> (threshold {ERROR_SPIKE_PER_HOUR})\n"
                 + "\n".join(f"• {s}" for s in samples))
@@ -258,8 +259,8 @@ def _check_error_spike(state):
 # ── Check 7: LLM cost guard ─────────────────────────────────────
 def _check_llm_usage(state):
     hour_lines = _read_last_hour_log()
-    llm_calls = sum(1 for l in hour_lines if "[ANALYSIS]" in l or "[BATCH]" in l or "[ADVISOR]" in l)
-    signals = sum(1 for l in hour_lines if "=> BUY" in l)
+    llm_calls = sum(1 for line in hour_lines if "[ANALYSIS]" in line or "[BATCH]" in line or "[ADVISOR]" in line)
+    signals = sum(1 for line in hour_lines if "=> BUY" in line)
     if llm_calls >= LLM_MAX_PER_HOUR and signals == 0:
         return ("LLM_WASTE",
                 f"💸 <b>LLM waste: {llm_calls} calls/hour, 0 signals</b>\n"
@@ -372,13 +373,12 @@ def _check_cache(state):
 # ── Check 13: Telegram reachability ────────────────────────────
 def _check_telegram(state):
     try:
-        import socket
         _src_dir = os.path.dirname(os.path.abspath(__file__))
         if _src_dir not in sys.path:
             sys.path.insert(0, _src_dir)
-        from tg_sender import _get_credentials, TG_API_HOST, TG_WORKING_IP
+        from tg_sender import _get_credentials, TG_API_HOST
         import requests as rq
-        token, chat_id = _get_credentials()
+        token, _chat_id = _get_credentials()
         if not token:
             return "TG_NO_CRED", "📡 <b>Telegram: no credentials</b>\n• Check .env TG_BOT_TOKEN/TG_CHAT_ID"
         resp = rq.get(
@@ -400,7 +400,7 @@ def _check_crash_frequency(state):
                  "/tmp/sniper_v552.log"]:
         try:
             with open(logf) as f:
-                count += sum(1 for l in f if "Traceback" in l)
+                count += sum(1 for line in f if "Traceback" in line)
         except Exception:
             continue
     if count >= 3:
@@ -464,10 +464,10 @@ def _check_cron_health(state):
 # ── Check 17: LLM API error rate ──────────────────────────────
 def _check_llm_error_rate(state):
     lines = _read_recent_log(hours=6)
-    total = sum(1 for l in lines if "model=" in l and "messages" in l)
-    errors = sum(1 for l in lines if "[ADVISOR] Empty response" in l
-                 or "advisor_parse_error" in l or ("ADVISOR" in l and "Timeout" in l)
-                 or "[ADVISOR] Error" in l or " 429 " in l)
+    total = sum(1 for line in lines if "model=" in line and "messages" in line)
+    errors = sum(1 for line in lines if "[ADVISOR] Empty response" in line
+                 or "advisor_parse_error" in line or ("ADVISOR" in line and "Timeout" in line)
+                 or "[ADVISOR] Error" in line or " 429 " in line)
     if total > 5:
         rate = errors / total
         if rate > 0.30:
@@ -486,9 +486,9 @@ def _check_screen_sessions(state):
                 ["ps", "aux"],
                 capture_output=True, text=True, timeout=5, start_new_session=True
             )
-            count = sum(1 for l in res.stdout.split("\n")
-                        if f"python3 src/{proc_name}" in l
-                        and "SCREEN" not in l and "bash -c" not in l)
+            count = sum(1 for line in res.stdout.split("\n")
+                        if f"python3 src/{proc_name}" in line
+                        and "SCREEN" not in line and "bash -c" not in line)
             if count == 0:
                 issues.append(f"{proc_name}: NOT RUNNING")
             elif count > 1:
@@ -501,7 +501,7 @@ def _check_screen_sessions(state):
             ["screen", "-ls"],
             capture_output=True, text=True, timeout=5, start_new_session=True
         )
-        sockets = [l for l in res.stdout.split("\n") if "Detached" in l or "Attached" in l]
+        sockets = [line for line in res.stdout.split("\n") if "Detached" in line or "Attached" in line]
         if len(sockets) < 2:
             issues.append(f"screen sessions: only {len(sockets)} found (need 2)")
     except Exception:
@@ -678,15 +678,15 @@ def _check_log_size(state):
     if large:
         return ("LOG_SIZE",
                 f"📝 <b>Log files >{MAX_LOG_MB}MB (auto-rotated)</b>\n" +
-                "\n".join(f"• {l}" for l in large))
+                "\n".join(f"• {logf}" for logf in large))
     return None
 
 
 def _summarize_trading_activity(lines):
-    signals = sum(1 for l in lines if "=> BUY" in l)
-    blocked = sum(1 for l in lines if "TRADE-BLOCKED" in l)
-    executed = sum(1 for l in lines if "Bought:" in l and "Bought: 0" not in l)
-    diverge_overrides = sum(1 for l in lines if "diverge_" in l and "override" in l)
+    signals = sum(1 for line in lines if "=> BUY" in line)
+    blocked = sum(1 for line in lines if "TRADE-BLOCKED" in line)
+    executed = sum(1 for line in lines if "Bought:" in line and "Bought: 0" not in line)
+    diverge_overrides = sum(1 for line in lines if "diverge_" in line and "override" in line)
     return f"signals={signals} blocked={blocked} executed={executed} diverge_overrides={diverge_overrides}"
 
 
@@ -698,13 +698,13 @@ def _summarize_equity(state):
     try:
         with open(EQUITY_FILE) as _f:
             data = json.load(_f)
-        snaps = data.get("snapshots", [])
+        snaps = data.get(EQUITY_SNAPSHOTS, [])
         if snaps:
-            eq = snaps[-1].get("total_equity", 0)
-            cash = snaps[-1].get("cash", 0)
-            pos = snaps[-1].get("positions_value", 0)
-            pnl = snaps[-1].get("unrealized_pnl", 0)
-            n_pos = snaps[-1].get("num_positions", 0)
+            eq = snaps[-1].get(EQUITY_TOTAL, 0)
+            cash = snaps[-1].get(EQUITY_CASH, 0)
+            pos = snaps[-1].get(EQUITY_POSITIONS_VALUE, 0)
+            pnl = snaps[-1].get(EQUITY_UNREALIZED_PNL, 0)
+            n_pos = snaps[-1].get(EQUITY_NUM_POSITIONS, 0)
             return f"equity=${eq:.2f} cash=${cash:.2f} pos=${pos:.2f} pnl={pnl:+.2f} positions={n_pos}"
     except Exception:
         pass
@@ -726,7 +726,7 @@ def _summarize_orders():
 
 
 def _summarize_cycle(state):
-    last_cycle = state.get("last_cycle_start", "never")
+    last_cycle = state.get(HEALTH_LAST_CYCLE_START, "never")
     avg_time = state.get("avg_cycle_time", 0)
     return f"last={last_cycle} avg_cycle={avg_time:.0f}s"
 
@@ -837,7 +837,7 @@ def run_health_check():
         lambda: _summarize_no_trades(lines),
         lambda: _summarize_equity(state),
         lambda: _summarize_orders(),
-        lambda: f"api={sum(1 for l in lines if '[GAMMA]' in l)}_cycles",
+        lambda: f"api={sum(1 for line in lines if '[GAMMA]' in line)}_cycles",
         lambda: _summarize_cycle(state),
         lambda: _summarize_errors(state),
         lambda: _summarize_llm(state),

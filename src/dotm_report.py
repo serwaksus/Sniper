@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from utils import load_env_file, save_json
+from utils import load_env_file, save_json  # noqa: E402
 load_env_file()
 
 
@@ -63,7 +63,8 @@ class TelegramReporter:
                 except Exception as e:
                     logger.warning(f"Telegram send attempt {attempt+1}/3 failed: {e}")
                     if attempt < 2:
-                        import time; time.sleep(2)
+                        import time
+                        time.sleep(2)
             logger.error("Telegram send failed after 3 attempts")
             return False
 

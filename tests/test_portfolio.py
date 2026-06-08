@@ -10,8 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "backtest_v2"))
 from portfolio import (
     Position, PortfolioTracker, get_tier,
-    MAX_CLUSTER_PCT, MAX_POS_PCT, FRACTIONAL_KELLY,
-    TRAILING_ACTIVATION, TRAILING_STOP, CONVERGENCE_TP,
+    MAX_POS_PCT,
 )
 
 
@@ -184,12 +183,12 @@ class TestKellySizing(unittest.TestCase):
 class TestClusterLimits(unittest.TestCase):
     def test_can_open_within_limit(self):
         pt = PortfolioTracker(1000)
-        ok, reason = pt.can_open_position("other", 10)
+        ok, _reason = pt.can_open_position("other", 10)
         self.assertTrue(ok)
 
     def test_can_open_exceeds_balance(self):
         pt = PortfolioTracker(5)
-        ok, reason = pt.can_open_position("other", 100)
+        ok, _reason = pt.can_open_position("other", 100)
         self.assertFalse(ok)
 
     def test_max_positions_limit(self):
@@ -197,7 +196,7 @@ class TestClusterLimits(unittest.TestCase):
         for i in range(50):
             pt.open_position(f"s{i}", "q", "YES", 0.10, 10, 1.0, 5000,
                              cluster="other")
-        ok, reason = pt.can_open_position("other", 1)
+        ok, _reason = pt.can_open_position("other", 1)
         self.assertFalse(ok)
 
     def test_cluster_exposure_accumulates(self):

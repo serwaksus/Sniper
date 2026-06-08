@@ -7,6 +7,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
+from schema import *
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,8 @@ def _place_limit_sell(slug, outcome, shares, limit_price):
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             return True, "limit_placed"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[limit_sell] {type(e).__name__}: {e}")
     return False, "limit_failed"
 
 
@@ -145,7 +146,7 @@ def _place_tp_limit_order_single(slug, outcome, shares, price):
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             logger.info(f"[SMART-EXIT] TP limit placed for {slug[:40]}... @{price:.2f} (shares={shares})")
-            return True, "tp_limit_placed"
+            return True, HYP_TP_LIMIT_PLACED
         else:
             logger.warning(f"[SMART-EXIT] TP limit failed for {slug[:40]}... response={result}")
     except Exception as e:
@@ -161,7 +162,8 @@ def _place_tp_ladder(slug, outcome, total_shares):
         logger.info(f"[TP-LADDER] {slug[:40]}... {len(existing)} existing TP orders (prices={existing_prices}), skipping duplicate placement")
         return [(o.get("limit_price", 0), o.get("amount", 0), True, "existing") for o in existing]
     ladder = [(0.50, 0.75), (0.30, 0.85)]
-    results = []; allocated = 0
+    results = []
+    allocated = 0
     for pct, price in ladder:
         shares = round(total_shares * pct)
         shares = max(shares, 1)
@@ -171,7 +173,8 @@ def _place_tp_ladder(slug, outcome, total_shares):
             if shares * price < 5.0:
                 return []
         ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
-        results.append((price, shares, ok, m)); allocated += shares
+        results.append((price, shares, ok, m))
+        allocated += shares
     logger.info(f"[TP-LADDER] {slug[:40]}... placed {len(results)} rungs, {total_shares - allocated} held to expiry")
     return results
 

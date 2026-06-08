@@ -9,6 +9,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
+from schema import *
 
 EQUITY_FILE = "/root/dotm-sniper/equity_curve.json"
 TRADES_JOURNAL_FILE = "/root/dotm-sniper/trades_journal.json"
@@ -24,7 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from utils import load_env_file
+from utils import load_env_file  # noqa: E402
 load_env_file()
 
 
@@ -65,13 +66,13 @@ def log_equity_snapshot():
     unrealized_pnl = sum(float(p.get("unrealized_pnl", 0)) for p in portfolio)
 
     snapshot = {
-        "timestamp": datetime.now().isoformat(),
-        "cash": round(cash, 2),
-        "positions_value": round(positions_value, 2),
-        "total_equity": round(total_equity, 2),
-        "unrealized_pnl": round(unrealized_pnl, 2),
-        "num_positions": len(portfolio),
-        "positions": [
+        EQUITY_TIMESTAMP: datetime.now().isoformat(),
+        EQUITY_CASH: round(cash, 2),
+        EQUITY_POSITIONS_VALUE: round(positions_value, 2),
+        EQUITY_TOTAL: round(total_equity, 2),
+        EQUITY_UNREALIZED_PNL: round(unrealized_pnl, 2),
+        EQUITY_NUM_POSITIONS: len(portfolio),
+        EQUITY_POSITIONS: [
             {
                 "slug": p.get("market_slug", ""),
                 "question": p.get("market_question", "")[:50],
@@ -84,13 +85,13 @@ def log_equity_snapshot():
         ]
     }
 
-    curve = load_json(EQUITY_FILE, {"snapshots": []})
+    curve = load_json(EQUITY_FILE, {EQUITY_SNAPSHOTS: []})
     if not isinstance(curve, dict):
-        curve = {"snapshots": []}
-    curve["snapshots"].append(snapshot)
+        curve = {EQUITY_SNAPSHOTS: []}
+    curve[EQUITY_SNAPSHOTS].append(snapshot)
 
-    if len(curve["snapshots"]) > 2880:
-        curve["snapshots"] = curve["snapshots"][-2880:]
+    if len(curve[EQUITY_SNAPSHOTS]) > 2880:
+        curve[EQUITY_SNAPSHOTS] = curve[EQUITY_SNAPSHOTS][-2880:]
 
     save_json(EQUITY_FILE, curve)
 
@@ -133,10 +134,10 @@ def log_trade(event_type: str, slug: str, question: str,
 
 
 def get_daily_summary() -> dict[str, Any]:
-    curve = load_json(EQUITY_FILE, {"snapshots": []})
+    curve = load_json(EQUITY_FILE, {EQUITY_SNAPSHOTS: []})
     if not isinstance(curve, dict):
-        curve = {"snapshots": []}
-    snapshots = curve.get("snapshots", [])
+        curve = {EQUITY_SNAPSHOTS: []}
+    snapshots = curve.get(EQUITY_SNAPSHOTS, [])
     if not snapshots:
         return {}
 
@@ -148,7 +149,7 @@ def get_daily_summary() -> dict[str, Any]:
     yesterday_snaps = []
     for s in snapshots:
         try:
-            ts = datetime.fromisoformat(s["timestamp"])
+            ts = datetime.fromisoformat(s[EQUITY_TIMESTAMP])
             if ts >= today_start:
                 today_snaps.append(s)
             elif ts >= yesterday_start:
@@ -163,13 +164,13 @@ def get_daily_summary() -> dict[str, Any]:
     first_today = today_snaps[0] if today_snaps else latest
     last_yesterday = yesterday_snaps[-1] if yesterday_snaps else None
 
-    equity_now = latest["total_equity"]
-    equity_start = first_today["total_equity"]
+    equity_now = latest[EQUITY_TOTAL]
+    equity_start = first_today[EQUITY_TOTAL]
     daily_change = equity_now - equity_start
     daily_change_pct = (daily_change / equity_start * 100) if equity_start else 0
 
     if last_yesterday:
-        overnight_change = equity_now - last_yesterday["total_equity"]
+        overnight_change = equity_now - last_yesterday[EQUITY_TOTAL]
     else:
         overnight_change = 0
 
@@ -190,7 +191,7 @@ def get_daily_summary() -> dict[str, Any]:
     wins = [t for t in sells if t.get("pnl_pct", 0) > 0]
     losses = [t for t in sells if t.get("pnl_pct", 0) < 0]
 
-    equity_history = [(s["timestamp"], s["total_equity"]) for s in today_snaps]
+    equity_history = [(s[EQUITY_TIMESTAMP], s[EQUITY_TOTAL]) for s in today_snaps]
 
     return {
         "equity_now": equity_now,
@@ -198,10 +199,10 @@ def get_daily_summary() -> dict[str, Any]:
         "daily_change": round(daily_change, 2),
         "daily_change_pct": round(daily_change_pct, 1),
         "overnight_change": round(overnight_change, 2),
-        "cash": latest["cash"],
-        "positions_value": latest["positions_value"],
-        "num_positions": latest["num_positions"],
-        "positions": latest.get("positions", []),
+        "cash": latest[EQUITY_CASH],
+        "positions_value": latest[EQUITY_POSITIONS_VALUE],
+        "num_positions": latest[EQUITY_NUM_POSITIONS],
+        "positions": latest.get(EQUITY_POSITIONS, []),
         "buys_today": len(buys),
         "sells_today": len(sells),
         "wins_today": len(wins),

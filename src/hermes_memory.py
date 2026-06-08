@@ -7,11 +7,9 @@ and provides learned context for LLM prompts.
 """
 import os
 import sys
-import json
-import math
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -22,7 +20,7 @@ SKILLS_FILE = "/root/dotm-sniper/hermes_skills.json"
 
 logger = logging.getLogger(__name__)
 
-_memory_lock = threading.Lock()
+_memory_lock = threading.RLock()
 
 _DEFAULT_MEMORY = {
     "predictions": {},

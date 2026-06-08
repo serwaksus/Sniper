@@ -112,7 +112,7 @@ class IsotonicCalibrator:
             return False
 
 
-_calibrator_lock = threading.Lock()
+_calibrator_lock = threading.RLock()
 _calibrator_instance = None
 
 

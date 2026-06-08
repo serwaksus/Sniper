@@ -128,7 +128,7 @@ def _simulate_tp_ladder(entry_price, high_price, resolution):
 
 BACKTEST_MAX_WORKERS = 10
 API_RATE_LIMIT_RPS = 5
-_api_rate_lock = threading.Lock()
+_api_rate_lock = threading.RLock()
 _last_api_ts = 0.0
 
 
@@ -173,7 +173,7 @@ def _fetch_active_dotm_markets_pm_trader(limit=200):
             if vol < MIN_VOLUME:
                 continue
 
-            for outcome, price in zip(m.get("outcomes", []), m.get("outcome_prices", [])):
+            for _outcome, price in zip(m.get("outcomes", []), m.get("outcome_prices", []), strict=False):
                 try:
                     price = float(price)
                 except (ValueError, TypeError):
@@ -482,7 +482,7 @@ def backtest_analyze_single(market):
             "would have been available at market creation time."
         )
     else:
-        analysis_date = "today"
+        pass
 
     prompt = f"""Prediction market analyst. Your job is to find DOTM (deep out-the-money) events where the crowd SIGNIFICANTLY underestimates probability.
 
@@ -692,7 +692,7 @@ Rules:
             if _project_root not in sys.path:
                 sys.path.insert(0, _project_root)
             from advisor_script import parse_llm_advisor_response
-            result, parse_err = parse_llm_advisor_response(content, log_label="BACKTEST-ADVISOR")
+            result, _parse_err = parse_llm_advisor_response(content, log_label="BACKTEST-ADVISOR")
             if result is not None:
                 verdict = result.get("verdict", "UNKNOWN")
                 adv_confidence = result.get("confidence", 0.0)
@@ -767,7 +767,7 @@ def run_backtest_live(count=100, skip_advisor=False, use_calibrator=False):
     dampened_markets = []
     cluster_stats = defaultdict(lambda: {"wins": 0, "losses": 0, "skips": 0, "total": 0})
 
-    for i, (m, analysis) in enumerate(zip(markets, analyses)):
+    for i, (m, analysis) in enumerate(zip(markets, analyses, strict=False)):
         if analysis is None:
             logger.warning(f"[BACKTEST] Skipping market {m['slug'][:30]} due to analysis failure")
             continue
@@ -809,8 +809,8 @@ def run_backtest_live(count=100, skip_advisor=False, use_calibrator=False):
                 "cluster": m.get("clusters", ["other"])[0],
             })
 
-        is_win = (final_action == "BUY" and m["resolution"] == "YES")
-        is_loss = (final_action == "BUY" and m["resolution"] == "NO")
+        (final_action == "BUY" and m["resolution"] == "YES")
+        (final_action == "BUY" and m["resolution"] == "NO")
 
         high_price = m.get("high_price")
         if high_price is None:
@@ -992,7 +992,7 @@ def run_backtest_live_active(count=100, skip_advisor=False):
     skips_count = 0
     cluster_stats = defaultdict(lambda: {"buys": 0, "skips": 0})
 
-    for i, (m, analysis) in enumerate(zip(markets, analyses)):
+    for i, (m, analysis) in enumerate(zip(markets, analyses, strict=False)):
         if analysis is None:
             logger.warning(f"[BACKTEST-LIVE] Skipping market {m['slug'][:30]} due to analysis failure")
             continue
@@ -1109,7 +1109,7 @@ def run_backtest_sim(count=50, skip_advisor=False):
     upside_count = 0
     cluster_stats = defaultdict(lambda: {"wins": 0, "losses": 0, "total": 0})
 
-    for i, (m, analysis) in enumerate(zip(markets, analyses)):
+    for i, (m, analysis) in enumerate(zip(markets, analyses, strict=False)):
         if analysis is None:
             logger.warning(f"[BACKTEST-SIM] Skipping market {m['slug'][:30]} due to analysis failure")
             continue
@@ -1134,8 +1134,8 @@ def run_backtest_sim(count=50, skip_advisor=False):
         brier = (p_model - actual_outcome) ** 2
         brier_scores.append(brier)
 
-        is_win = (final_action == "BUY" and m["resolution"] == "YES")
-        is_loss = (final_action == "BUY" and m["resolution"] == "NO")
+        (final_action == "BUY" and m["resolution"] == "YES")
+        (final_action == "BUY" and m["resolution"] == "NO")
 
         high_price = m.get("high_price")
         if high_price is None:
@@ -1321,7 +1321,7 @@ def check_pending():
         time.sleep(0.3)
 
     traded = sum(1 for r in results if r["action"] == "BUY" and r.get("status") == "resolved")
-    total_buys = sum(1 for r in results if r["action"] == "BUY")
+    sum(1 for r in results if r["action"] == "BUY")
     briers = [r["brier"] for r in results if r.get("brier") is not None and r.get("status") == "resolved"]
 
     stats["summary"]["resolved"] = resolved_count

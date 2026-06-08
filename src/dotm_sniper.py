@@ -11,27 +11,28 @@ v5.3.0 Changelog:
 """
 import subprocess
 import json
-import requests
 import time
 import re
 import os
 import sys
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 
-from news_scanner import check_market_news, extract_keywords
-from utils import load_json, save_json, sanitize_for_prompt, check_and_write_pid, cleanup_pid_file
+from news_scanner import check_market_news
+from utils import load_json, save_json, check_and_write_pid, cleanup_pid_file
 from equity_tracker import log_equity_snapshot, log_trade
 from calibration_tracker import log_calibration_entry, detect_model_drift
 from correlation_matrix import check_correlation_limit
+from schema import *
 
 PID_FILE = "/root/dotm-sniper/sniper.pid"
 
-from utils import load_env_file
+from utils import load_env_file  # noqa: E402
+import contextlib  # noqa: E402
 load_env_file()
 
 _tr_instance = None
@@ -39,10 +40,8 @@ _tr_instance = None
 def _tr():
     global _tr_instance
     if _tr_instance is None:
-        try:
+        with contextlib.suppress(Exception):
             _tr_instance = TelegramReporter()
-        except Exception:
-            pass
     return _tr_instance
 
 LOG_FILE = "/root/dotm-sniper/sniper.log"
@@ -99,7 +98,7 @@ def update_daily_stats(balance, portfolio, trades_this_cycle):
         stats = {"date": today, "trades": 0, "pnl": 0, "started": False}
     stats["started"] = True
     stats["trades"] = stats.get("trades", 0) + trades_this_cycle
-    starting = get_settings().get("starting_balance", 500.0)
+    starting = get_settings().get(SETTINGS_STARTING_BALANCE, 500.0)
     stats["pnl"] = balance.get("total_value", 0) - starting
     save_json(DAILY_STATS_FILE, stats)
 
@@ -141,43 +140,40 @@ def parse_llm_json(response_text):
             pass
     return None
 
-def extract_keywords(question):
-    stop_words = {"will", "the", "a", "an", "be", "by", "of", "in", "on", "at", "to", "for", "this", "that", "is", "are", "was", "were"}
-    words = re.findall(r'\b[a-zA-Z]{4,}\b', question.lower())
-    return [w for w in words if w not in stop_words][:10]
+
 
 
 
 def get_settings():
     s = load_json(SETTINGS_FILE, {
-        "min_confidence": MIN_CONFIDENCE,
-        "position_size_pct": MAX_POS_PCT,
-        "calibration_brier": None,
-        "total_resolved": 0,
-        "signal_threshold": 55,
-        "min_p_model": MIN_P_MODEL
+        SETTINGS_MIN_CONFIDENCE: MIN_CONFIDENCE,
+        SETTINGS_POSITION_SIZE_PCT: MAX_POS_PCT,
+        SETTINGS_CALIBRATION_BRIER: None,
+        SETTINGS_TOTAL_RESOLVED: 0,
+        SETTINGS_SIGNAL_THRESHOLD: 55,
+        SETTINGS_MIN_P_MODEL: MIN_P_MODEL
     })
     return s
 
 def save_settings(s):
-    s["__version"] = s.get("__version", 0) + 1
+    s[SETTINGS_VERSION] = s.get(SETTINGS_VERSION, 0) + 1
     save_json(SETTINGS_FILE, s)
 
 def load_hypothesis_db():
-    db = load_json(HYPOTHESIS_DB, {"hypotheses": [], "resolved": []})
+    db = load_json(HYPOTHESIS_DB, {HYP_DB_HYPOTHESES: [], HYP_DB_RESOLVED: []})
     dirty = False
-    active = [h for h in db.get("hypotheses", []) if not h.get("resolved")]
-    if len(active) != len(db.get("hypotheses", [])):
-        db["hypotheses"] = active
+    active = [h for h in db.get(HYP_DB_HYPOTHESES, []) if not h.get(HYP_RESOLVED)]
+    if len(active) != len(db.get(HYP_DB_HYPOTHESES, [])):
+        db[HYP_DB_HYPOTHESES] = active
         dirty = True
     deduped = []
     seen = set()
-    for h in db.get("resolved", []):
-        if h["slug"] not in seen:
+    for h in db.get(HYP_DB_RESOLVED, []):
+        if h[HYP_SLUG] not in seen:
             deduped.append(h)
-            seen.add(h["slug"])
-    if len(deduped) != len(db.get("resolved", [])):
-        db["resolved"] = deduped
+            seen.add(h[HYP_SLUG])
+    if len(deduped) != len(db.get(HYP_DB_RESOLVED, [])):
+        db[HYP_DB_RESOLVED] = deduped
         dirty = True
     if dirty:
         save_hypothesis_db(db)
@@ -185,8 +181,8 @@ def load_hypothesis_db():
 
 def save_hypothesis_db(db):
     MAX_RESOLVED = 1000
-    if len(db.get("resolved", [])) > MAX_RESOLVED:
-        db["resolved"] = db["resolved"][-MAX_RESOLVED:]
+    if len(db.get(HYP_DB_RESOLVED, [])) > MAX_RESOLVED:
+        db[HYP_DB_RESOLVED] = db[HYP_DB_RESOLVED][-MAX_RESOLVED:]
     save_json(HYPOTHESIS_DB, db)
 
 def detect_clusters(question):
@@ -205,15 +201,16 @@ def detect_clusters(question):
     return list(found) if found else ["other"]
 
 def calculate_brier_score(db):
-    resolved = [h for h in db.get("resolved", []) if h.get("outcome") in ("YES", "NO")]
-    if len(resolved) < BURN_IN_TRADES:        return None
+    resolved = [h for h in db.get(HYP_DB_RESOLVED, []) if h.get(HYP_OUTCOME) in ("YES", "NO")]
+    if len(resolved) < BURN_IN_TRADES:
+        return None
 
     brier_scores = []
     wins = 0
     losses = 0
     for h in resolved[-BURN_IN_TRADES:]:
-        p = h.get("p_model", 0.5)
-        o = 1 if h.get("outcome") == "YES" else 0
+        p = h.get(HYP_P_MODEL, 0.5)
+        o = 1 if h.get(HYP_OUTCOME) == "YES" else 0
         brier_scores.append((p - o) ** 2)
         if o == 1:
             wins += 1
@@ -225,28 +222,28 @@ def calculate_brier_score(db):
     logger.info(f"Stats: Brier={brier:.3f}, Winrate={winrate:.1%} ({wins}W/{losses}L) [from {len(resolved)} resolved]")
 
     settings = get_settings()
-    old_brier = settings.get("calibration_brier")
+    old_brier = settings.get(SETTINGS_CALIBRATION_BRIER)
 
     if old_brier is not None and brier > 0:
-        if brier > 0.08 and settings.get("signal_threshold", 55) < 65:
-            settings["signal_threshold"] = settings.get("signal_threshold", 55) + 2
-            logger.info(f"[CALIBRATE] Brier {brier:.3f} > 0.08, raising signal_threshold to {settings['signal_threshold']}")
-        elif brier < 0.03 and winrate > 0.1 and settings.get("signal_threshold", 55) > 40:
-            settings["signal_threshold"] = settings.get("signal_threshold", 55) - 2
-            logger.info(f"[CALIBRATE] Brier {brier:.3f} < 0.03, winrate {winrate:.0%}, lowering signal_threshold to {settings['signal_threshold']}")
+        if brier > 0.08 and settings.get(SETTINGS_SIGNAL_THRESHOLD, 55) < 65:
+            settings[SETTINGS_SIGNAL_THRESHOLD] = settings.get(SETTINGS_SIGNAL_THRESHOLD, 55) + 2
+            logger.info(f"[CALIBRATE] Brier {brier:.3f} > 0.08, raising signal_threshold to {settings[SETTINGS_SIGNAL_THRESHOLD]}")
+        elif brier < 0.03 and winrate > 0.1 and settings.get(SETTINGS_SIGNAL_THRESHOLD, 55) > 40:
+            settings[SETTINGS_SIGNAL_THRESHOLD] = settings.get(SETTINGS_SIGNAL_THRESHOLD, 55) - 2
+            logger.info(f"[CALIBRATE] Brier {brier:.3f} < 0.03, winrate {winrate:.0%}, lowering signal_threshold to {settings[SETTINGS_SIGNAL_THRESHOLD]}")
 
-    if winrate == 0 and len(resolved) >= 10 and settings.get("signal_threshold", 55) < 80:
-        settings["signal_threshold"] = min(80, settings.get("signal_threshold", 55) + 5)
-        logger.warning(f"[CALIBRATE] 0% winrate ({len(resolved)} resolved), RAISING signal_threshold to {settings['signal_threshold']} (defensive mode)")
-    elif winrate < 0.30 and len(resolved) >= 20 and settings.get("signal_threshold", 55) < 75:
-        settings["signal_threshold"] = min(75, settings.get("signal_threshold", 55) + 3)
-        logger.info(f"[CALIBRATE] Low winrate ({winrate:.0%}, {len(resolved)} resolved), raising signal_threshold to {settings['signal_threshold']}")
+    if winrate == 0 and len(resolved) >= 10 and settings.get(SETTINGS_SIGNAL_THRESHOLD, 55) < 80:
+        settings[SETTINGS_SIGNAL_THRESHOLD] = min(80, settings.get(SETTINGS_SIGNAL_THRESHOLD, 55) + 5)
+        logger.warning(f"[CALIBRATE] 0% winrate ({len(resolved)} resolved), RAISING signal_threshold to {settings[SETTINGS_SIGNAL_THRESHOLD]} (defensive mode)")
+    elif winrate < 0.30 and len(resolved) >= 20 and settings.get(SETTINGS_SIGNAL_THRESHOLD, 55) < 75:
+        settings[SETTINGS_SIGNAL_THRESHOLD] = min(75, settings.get(SETTINGS_SIGNAL_THRESHOLD, 55) + 3)
+        logger.info(f"[CALIBRATE] Low winrate ({winrate:.0%}, {len(resolved)} resolved), raising signal_threshold to {settings[SETTINGS_SIGNAL_THRESHOLD]}")
 
-    settings["calibration_brier"] = brier
+    settings[SETTINGS_CALIBRATION_BRIER] = brier
     save_settings(settings)
 
     if len(resolved) >= 50:
-        recent_resolved = [h for h in resolved if h.get("resolved_at") and (datetime.now() - datetime.fromisoformat(h["resolved_at"])).days <= 90]
+        recent_resolved = [h for h in resolved if h.get(HYP_RESOLVED_AT) and (datetime.now() - datetime.fromisoformat(h[HYP_RESOLVED_AT])).days <= 90]
         if len(recent_resolved) >= 20:
             from calibration import get_calibrator
             calibrator = get_calibrator()
@@ -259,7 +256,7 @@ def calculate_brier_score(db):
     return brier
 
 def learn_from_results(db):
-    resolved = db.get("resolved", [])
+    resolved = db.get(HYP_DB_RESOLVED, [])
     if len(resolved) < 10:
         return {}
 
@@ -269,25 +266,25 @@ def learn_from_results(db):
     source_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
 
     for h in resolved[-50:]:
-        outcome = h.get("outcome")
+        outcome = h.get(HYP_OUTCOME)
         if outcome not in ("YES", "NO"):
             continue
         is_win = outcome == "YES"
 
-        for factor in h.get("factors", []):
+        for factor in h.get(HYP_FACTORS, []):
             key = f"{factor.get('direction')}:{factor.get('weight')}"
             if is_win:
                 factor_stats[key]["wins"] += 1
             else:
                 factor_stats[key]["losses"] += 1
 
-        for cluster in h.get("clusters", []):
+        for cluster in h.get(HYP_CLUSTERS, []):
             if is_win:
                 cluster_stats[cluster]["wins"] += 1
             else:
                 cluster_stats[cluster]["losses"] += 1
 
-        source_signal = h.get("source_signal", "default")
+        source_signal = h.get(HYP_SOURCE_SIGNAL, "default")
         if is_win:
             source_stats[source_signal]["wins"] += 1
         else:
@@ -341,14 +338,14 @@ def learn_from_results(db):
                 sports_bonus = 0.2 * (1 + (winrate - 0.5))
                 logger.info(f"Source {source}: winrate={winrate:.1%}, adjusted bonus={sports_bonus:.3f}")
 
-    settings["cluster_weights"] = cluster_weights
+    settings[SETTINGS_CLUSTER_WEIGHTS] = cluster_weights
     settings["source_bonus_metaculus"] = metaculus_bonus
     settings["source_bonus_geopol"] = geopol_bonus
     settings["source_bonus_sports"] = sports_bonus
     save_settings(settings)
 
     return {
-        "cluster_weights": cluster_weights,
+        SETTINGS_CLUSTER_WEIGHTS: cluster_weights,
         "source_stats": dict(source_stats)
     }
 
@@ -359,12 +356,12 @@ def backtest_recent(n=20):
     Returns simulation results and recommendations.
     """
     db = load_hypothesis_db()
-    resolved = db.get("resolved", [])
+    resolved = db.get(HYP_DB_RESOLVED, [])
 
     if len(resolved) < 5:
         return {"error": f"Only {len(resolved)} resolved, need at least 5", "recommendation": "skip"}
 
-    recent = [h for h in resolved[-n:] if h.get("outcome") in ("YES", "NO")]
+    recent = [h for h in resolved[-n:] if h.get(HYP_OUTCOME) in ("YES", "NO")]
     if len(recent) < 5:
         return {"error": f"Only {len(recent)} with YES/NO outcome", "recommendation": "skip"}
 
@@ -373,16 +370,16 @@ def backtest_recent(n=20):
     brier_sum = 0
 
     for h in recent:
-        p_model = h.get("p_model", 0.5)
-        market_price = h.get("market_price", 0.5)
-        outcome = 1 if h.get("outcome") == "YES" else 0
+        p_model = h.get(HYP_P_MODEL, 0.5)
+        market_price = h.get(HYP_MARKET_PRICE, 0.5)
+        outcome = 1 if h.get(HYP_OUTCOME) == "YES" else 0
         is_win = outcome == 1
 
         if is_win:
             wins += 1
             pnl = (1 - market_price) / market_price
         else:
-            actual_pnl = h.get("sold_pnl_pct") or h.get("pnl_at_exit")
+            actual_pnl = h.get(HYP_SOLD_PNL_PCT) or h.get(HYP_PNL_AT_EXIT)
             if actual_pnl is not None and actual_pnl != 0:
                 pnl = actual_pnl
             else:
@@ -395,8 +392,8 @@ def backtest_recent(n=20):
     avg_brier = brier_sum / len(recent)
     avg_pnl = total_pnl / len(recent)
 
-    current_signal_threshold = get_settings().get("signal_threshold", 55)
-    current_min_p = get_settings().get("min_p_model", MIN_P_MODEL)
+    get_settings().get(SETTINGS_SIGNAL_THRESHOLD, 55)
+    get_settings().get(SETTINGS_MIN_P_MODEL, MIN_P_MODEL)
 
     recommendations = []
 
@@ -423,9 +420,9 @@ def backtest_recent(n=20):
 
     cluster_wins = defaultdict(lambda: {"wins": 0, "total": 0})
     for h in recent:
-        for c in h.get("clusters", []):
+        for c in h.get(HYP_CLUSTERS, []):
             cluster_wins[c]["total"] += 1
-            if h.get("outcome") == "YES":
+            if h.get(HYP_OUTCOME) == "YES":
                 cluster_wins[c]["wins"] += 1
 
     cluster_performance = {}
@@ -453,16 +450,16 @@ def backtest_recent(n=20):
 def resolve_hypothesis_immediately(slug, current_price, entry_price):
     _cancel_all_tp_orders(slug)
     db = load_hypothesis_db()
-    for h in db["hypotheses"]:
-        if h["slug"] == slug and not h.get("resolved"):
-            h["resolved"] = True
-            h["resolved_at"] = datetime.now().isoformat()
-            h["exit_price"] = current_price
-            h["pnl_at_exit"] = (current_price - entry_price) / entry_price if entry_price > 0 else 0
-            h["exit_type"] = "manual"
-            h["outcome"] = "SOLD"
-            h["sold_pnl_pct"] = (current_price - entry_price) / entry_price if entry_price > 0 else 0
-            db["resolved"].append(h)
+    for h in db[HYP_DB_HYPOTHESES]:
+        if h[HYP_SLUG] == slug and not h.get(HYP_RESOLVED):
+            h[HYP_RESOLVED] = True
+            h[HYP_RESOLVED_AT] = datetime.now().isoformat()
+            h[HYP_EXIT_PRICE] = current_price
+            h[HYP_PNL_AT_EXIT] = (current_price - entry_price) / entry_price if entry_price > 0 else 0
+            h[HYP_EXIT_TYPE] = "manual"
+            h[HYP_OUTCOME] = "SOLD"
+            h[HYP_SOLD_PNL_PCT] = (current_price - entry_price) / entry_price if entry_price > 0 else 0
+            db[HYP_DB_RESOLVED].append(h)
 
             positions = load_json(POSITIONS_FILE, {})
             if slug in positions:
@@ -472,13 +469,13 @@ def resolve_hypothesis_immediately(slug, current_price, entry_price):
                 try:
                     from bayesian_updater import cleanup_slug
                     cleanup_slug(slug)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"[bayesian_cleanup] {type(e).__name__}: {e}")
 
             save_hypothesis_db(db)
 
             settings = get_settings()
-            settings["total_resolved"] = settings.get("total_resolved", 0) + 1
+            settings[SETTINGS_TOTAL_RESOLVED] = settings.get(SETTINGS_TOTAL_RESOLVED, 0) + 1
             save_settings(settings)
             break
 
@@ -487,10 +484,10 @@ def repair_positions_file():
     positions = load_json(POSITIONS_FILE, {})
     dirty = False
     for slug, p in positions.items():
-        entry = p.get("entry_price", 0)
-        high = p.get("high_price", 0)
+        entry = p.get(POS_ENTRY_PRICE, 0)
+        high = p.get(POS_HIGH_PRICE, 0)
         if entry > 0 and high < entry:
-            p["high_price"] = entry
+            p[POS_HIGH_PRICE] = entry
             logger.info(f"[REPAIR] {slug[:40]}... high_price {high:.4f} < entry_price {entry:.4f}, fixed")
             dirty = True
     if dirty:
@@ -501,8 +498,8 @@ def resolve_hypotheses():
     portfolio = get_portfolio()
     portfolio_slugs = {p["market_slug"] for p in portfolio}
 
-    all_hypotheses = db.get("hypotheses", [])
-    unresolved = [h for h in all_hypotheses if not h.get("resolved") and h["slug"] not in portfolio_slugs]
+    all_hypotheses = db.get(HYP_DB_HYPOTHESES, [])
+    unresolved = [h for h in all_hypotheses if not h.get(HYP_RESOLVED) and h[HYP_SLUG] not in portfolio_slugs]
 
     if not unresolved:
         return
@@ -513,28 +510,28 @@ def resolve_hypotheses():
                            capture_output=True, text=True, timeout=20, start_new_session=True)
         for m in json.loads(res.stdout).get("data", []):
             market_map[m["slug"]] = m
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[market_list] {type(e).__name__}: {e}")
 
     new_resolved = 0
     for h in unresolved:
-        slug = h["slug"]
+        slug = h[HYP_SLUG]
         market_data = market_map.get(slug)
 
         if not market_data:
-            h["resolved"] = True
-            h["resolved_at"] = datetime.now().isoformat()
-            h["outcome"] = "UNKNOWN"
-            h["resolution_note"] = "market_not_found_in_api"
-            db["resolved"].append(h)
+            h[HYP_RESOLVED] = True
+            h[HYP_RESOLVED_AT] = datetime.now().isoformat()
+            h[HYP_OUTCOME] = "UNKNOWN"
+            h[HYP_RESOLUTION_NOTE] = "market_not_found_in_api"
+            db[HYP_DB_RESOLVED].append(h)
             new_resolved += 1
             continue
 
         if not market_data.get("closed"):
             continue
 
-        h["resolved"] = True
-        h["resolved_at"] = datetime.now().isoformat()
+        h[HYP_RESOLVED] = True
+        h[HYP_RESOLVED_AT] = datetime.now().isoformat()
 
         outcome = "UNKNOWN"
         if market_data.get("resolution") in ("YES", "NO"):
@@ -543,54 +540,52 @@ def resolve_hypotheses():
             yes_price = market_data.get("outcome_prices", [0.5])[0]
             outcome = "YES" if yes_price > 0.5 else "NO"
 
-        h["outcome"] = outcome
+        h[HYP_OUTCOME] = outcome
 
-        db["resolved"].append(h)
+        db[HYP_DB_RESOLVED].append(h)
         new_resolved += 1
 
     save_hypothesis_db(db)
 
     if new_resolved > 0:
         settings = get_settings()
-        settings["total_resolved"] = len(db.get("resolved", []))
+        settings[SETTINGS_TOTAL_RESOLVED] = len(db.get(HYP_DB_RESOLVED, []))
         save_settings(settings)
 
-        if len(db.get("resolved", [])) >= BURN_IN_TRADES:
+        if len(db.get(HYP_DB_RESOLVED, [])) >= BURN_IN_TRADES:
             calculate_brier_score(db)
             learn_from_results(db)
 
-        for h in db.get("resolved", []):
-            if h.get("outcome") in ("YES", "NO") and h.get("p_model") is not None:
-                try:
+        for h in db.get(HYP_DB_RESOLVED, []):
+            if h.get(HYP_OUTCOME) in ("YES", "NO") and h.get(HYP_P_MODEL) is not None:
+                with contextlib.suppress(Exception):
                     log_calibration_entry(
-                        slug=h["slug"],
-                        question=h.get("question", ""),
-                        p_model=h["p_model"],
+                        slug=h[HYP_SLUG],
+                        question=h.get(HYP_QUESTION, ""),
+                        p_model=h[HYP_P_MODEL],
                         p_calibrated=0,
-                        market_price=h.get("market_price", 0),
-                        actual_outcome=h["outcome"],
-                        cluster=h.get("clusters", ["other"])[0],
-                        entry_price=h.get("market_price", 0),
-                        exit_price=h.get("exit_price", 0),
-                        pnl_pct=h.get("pnl_at_exit", 0),
+                        market_price=h.get(HYP_MARKET_PRICE, 0),
+                        actual_outcome=h[HYP_OUTCOME],
+                        cluster=h.get(HYP_CLUSTERS, ["other"])[0],
+                        entry_price=h.get(HYP_MARKET_PRICE, 0),
+                        exit_price=h.get(HYP_EXIT_PRICE, 0),
+                        pnl_pct=h.get(HYP_PNL_AT_EXIT, 0),
                     )
-                except Exception:
-                    pass
 
         try:
             drift_alert = detect_model_drift()
             if drift_alert:
                 logger.warning(f"[CALIBRATION] {drift_alert}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[drift_detect] {type(e).__name__}: {e}")
 
 
 def _load_price_tracking():
     tracking = load_json(PRICE_TRACKING_FILE, {})
     now = datetime.now()
     stale = [k for k, v in tracking.items()
-             if isinstance(v, dict) and v.get("last_checked")
-             and (now - datetime.fromisoformat(v["last_checked"])).total_seconds() > 86400]
+              if isinstance(v, dict) and v.get(TRACKING_LAST_CHECK)
+             and (now - datetime.fromisoformat(v[TRACKING_LAST_CHECK])).total_seconds() > 86400]
     if stale:
         for k in stale:
             del tracking[k]
@@ -610,8 +605,8 @@ def _check_price_delta(slug, current_price):
     tracking = _load_price_tracking()
     entry = tracking.get(slug)
     if entry:
-        last_price = entry.get("last_price", 0)
-        cached_p_model = entry.get("p_model")
+        last_price = entry.get(TRACKING_LAST_PRICE, 0)
+        cached_p_model = entry.get(TRACKING_P_MODEL)
         if not isinstance(cached_p_model, (int, float)):
             return True, None
         actual_threshold = max(PRICE_DELTA_THRESHOLD, current_price * 0.10)
@@ -627,9 +622,9 @@ def _check_price_delta(slug, current_price):
 def _update_price_tracking(slug, current_price, p_model):
     tracking = _load_price_tracking()
     tracking[slug] = {
-        "last_price": current_price,
-        "p_model": p_model,
-        "last_checked": datetime.now().isoformat(),
+        TRACKING_LAST_PRICE: current_price,
+        TRACKING_P_MODEL: p_model,
+        TRACKING_LAST_CHECK: datetime.now().isoformat(),
     }
     _save_price_tracking(tracking)
 
@@ -639,12 +634,12 @@ def _check_news_cache_freshness(cluster_key):
     TAZ-3: Check source_cache.json freshness for a news cluster.
     Returns True if cache is fresh (< 6 hours), blocking new HTTP requests.
     """
-    cache = load_json(CACHE_FILE, {"metaculus": {}, "news": {}, "last_update": None})
-    news_section = cache.get("news", {})
+    cache = load_json(CACHE_FILE, {CACHE_METACULUS: {}, CACHE_NEWS: {}, CACHE_LAST_UPDATE: None})
+    news_section = cache.get(CACHE_NEWS, {})
     entry = news_section.get(cluster_key)
-    if isinstance(entry, dict) and entry.get("timestamp"):
+    if isinstance(entry, dict) and entry.get(CACHE_TIMESTAMP):
         try:
-            cached_time = datetime.fromisoformat(entry["timestamp"])
+            cached_time = datetime.fromisoformat(entry[CACHE_TIMESTAMP])
             age_seconds = (datetime.now() - cached_time).total_seconds()
             if age_seconds < CACHE_TTL_SECONDS:
                 logger.info(f"[CACHE-FRESH] news cluster '{cluster_key}' age={age_seconds/3600:.1f}h < 6h, using cache")
@@ -656,7 +651,9 @@ def _check_news_cache_freshness(cluster_key):
 
 def execute_trade(market, estimated_size, factors, analysis, balance):
     """Execute trade with advisor pre-check. Returns True if successful."""
-    approved, verdict, adv_conf, adv_reason = advisor_pre_check(market, analysis, estimated_size, balance)
+    if not isinstance(estimated_size, (int, float)) or estimated_size <= 0:
+        return False
+    approved, _verdict, _adv_conf, adv_reason = advisor_pre_check(market, analysis, estimated_size, balance)
     if not approved:
         logger.info(f"[TRADE-BLOCKED] {market['slug']}: {adv_reason}")
         return False
@@ -684,22 +681,22 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
     positions = load_json(POSITIONS_FILE, {})
     if market["slug"] not in positions:
         positions[market["slug"]] = {
-            "entry_price": fill_data.get("price", market["price"]) if fill_data else market["price"],
-            "high_price": fill_data.get("price", market["price"]) if fill_data else market["price"],
-            "trailing_on": False,
-            "stop_loss": market["price"] * 0.7,
-            "last_checked": datetime.now().isoformat(),
-            "metaculus_prob": None,
-            "market_question": market["question"],
-            "outcome": market.get("outcome", "yes"),
-            "clusters": market.get("clusters", ["other"]),
-            "shares": shares,
+            POS_ENTRY_PRICE: fill_data.get("price", market["price"]) if fill_data else market["price"],
+            POS_HIGH_PRICE: fill_data.get("price", market["price"]) if fill_data else market["price"],
+            POS_TRAILING_ON: False,
+            POS_STOP_LOSS: market["price"] * 0.7,
+            POS_LAST_CHECKED: datetime.now().isoformat(),
+            POS_METACULUS_PROB: None,
+            POS_MARKET_QUESTION: market["question"],
+            POS_OUTCOME: market.get("outcome", "yes"),
+            POS_CLUSTERS: market.get("clusters", ["other"]),
+            POS_SHARES: shares,
         }
         save_json(POSITIONS_FILE, positions)
 
     if shares > 0:
         ladder_results = _place_tp_ladder(market["slug"], market["outcome"], shares)
-        for price, shares_placed, ok, method in ladder_results:
+        for price, shares_placed, ok, _method in ladder_results:
             if ok:
                 print(f"   🎯  TP rung placed @${price:.2f} ({shares_placed} shares)")
             else:
@@ -710,25 +707,25 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
         logger.warning(f"[SMART-EXIT] Zero shares for {market['slug']}, skipping TP")
 
     db = load_hypothesis_db()
-    db["hypotheses"].append({
-        "slug": market["slug"],
-        "question": market["question"],
-        "market_price": market["price"],
-        "p_model": analysis["p_model"],
-        "prob_ratio": analysis["prob_ratio"],
-        "confidence": analysis["confidence"],
-        "factors": factors,
-        "clusters": market["clusters"],
-        "size_pct": estimated_size / balance,
-        "created_at": datetime.now().isoformat(),
-        "resolved": False,
-        "tp_limit_placed": True,
-        "tp_limit_price": SMART_EXIT_PRICE,
-        "source_signal": analysis.get("source_signal", "default"),
+    db[HYP_DB_HYPOTHESES].append({
+        HYP_SLUG: market["slug"],
+        HYP_QUESTION: market["question"],
+        HYP_MARKET_PRICE: market["price"],
+        HYP_P_MODEL: analysis["p_model"],
+        HYP_PROB_RATIO: analysis["prob_ratio"],
+        HYP_CONFIDENCE: analysis["confidence"],
+        HYP_FACTORS: factors,
+        HYP_CLUSTERS: market["clusters"],
+        HYP_SIZE_PCT: estimated_size / balance,
+        HYP_CREATED_AT: datetime.now().isoformat(),
+        HYP_RESOLVED: False,
+        HYP_TP_LIMIT_PLACED: True,
+        HYP_TP_LIMIT_PRICE: SMART_EXIT_PRICE,
+        HYP_SOURCE_SIGNAL: analysis.get("source_signal", "default"),
     })
     save_hypothesis_db(db)
 
-    try:
+    with contextlib.suppress(Exception):
         log_trade(
             event_type="BUY",
             slug=market["slug"],
@@ -738,8 +735,6 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
             invested=estimated_size,
             reason=analysis.get("reasoning", "")[:100],
         )
-    except Exception:
-        pass
 
     if _tr():
         meta_prob = analysis.get("p_model")
@@ -771,12 +766,10 @@ def _update_status_file():
             "/root/.openclaw/agents/market_analyst/dotm_status.json",
             "/root/.openclaw/workspace/memory/portfolio-current.json",
         ]:
-            try:
+            with contextlib.suppress(Exception):
                 shutil.copy("/root/dotm-sniper/current_status.json", dest)
-            except Exception:
-                pass
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[status_save] {type(e).__name__}: {e}")
 
 
 def main():
@@ -790,7 +783,7 @@ def _main_inner():
     repair_positions_file()
 
     settings = get_settings()
-    last_backtest = settings.get("last_backtest_timestamp", 0)
+    last_backtest = settings.get(SETTINGS_LAST_BACKTEST, 0)
     import time as _time
     now_ts = _time.time()
     if now_ts - last_backtest >= BACKTEST_COOLDOWN_SECONDS:
@@ -800,7 +793,7 @@ def _main_inner():
             if bt.get("recommendations"):
                 for r in bt["recommendations"]:
                     print(f"   ⚠️  {r['issue']}: {r['suggestion']}")
-        settings["last_backtest_timestamp"] = now_ts
+        settings[SETTINGS_LAST_BACKTEST] = now_ts
         save_settings(settings)
     else:
         hours_ago = (now_ts - last_backtest) / 3600
@@ -819,7 +812,7 @@ def _main_inner():
     total_balance = balance_data.get("total_value", balance)
 
     tier = get_tier_params(total_balance)
-    max_positions = settings.get("MAX_CONCURRENT_TRADES", tier["max_positions"])
+    max_positions = settings.get(SETTINGS_MAX_CONCURRENT, tier["max_positions"])
     print(f"⚙️ Tier={tier['tier']} (balance=${total_balance:.2f}), max_pos={max_positions}, kelly={tier['kelly_mult']}")
     print(f"💰 Balance: ${balance:.2f} (total: ${total_balance:.2f})")
 
@@ -834,7 +827,7 @@ def _main_inner():
 
     markets = fetch_markets()
     db = load_hypothesis_db()
-    existing_slugs = {h["slug"] for h in db.get("hypotheses", []) if not h.get("resolved")}
+    existing_slugs = {h[HYP_SLUG] for h in db.get(HYP_DB_HYPOTHESES, []) if not h.get(HYP_RESOLVED)}
     position_slugs = {p.get("market_slug", "") for p in portfolio}
     already_active = existing_slugs | position_slugs
     gamma_candidates = fetch_gamma_dotm_candidates(existing_slugs | position_slugs)
@@ -853,8 +846,8 @@ def _main_inner():
     available_balance = balance
 
     current_positions_for_clusters = [
-        {"clusters": h.get("clusters", []), "size_pct": h.get("size_pct", 0)}
-        for h in db.get("hypotheses", []) if not h.get("resolved")
+        {HYP_CLUSTERS: h.get(HYP_CLUSTERS, []), HYP_SIZE_PCT: h.get(HYP_SIZE_PCT, 0)}
+        for h in db.get(HYP_DB_HYPOTHESES, []) if not h.get(HYP_RESOLVED)
     ]
 
     market_analyses = {}
@@ -872,7 +865,7 @@ def _main_inner():
             continue
         should_analyze, cached_p = _check_price_delta(m["slug"], m["price"])
         if not should_analyze and cached_p is not None:
-            min_p_model = get_settings().get("min_p_model", MIN_P_MODEL)
+            min_p_model = get_settings().get(SETTINGS_MIN_P_MODEL, MIN_P_MODEL)
             if cached_p >= min_p_model:
                 logger.info(f"[DELTA-PROMOTE] {m['slug'][:40]}... cached p={cached_p:.1%}>={min_p_model:.0%}, promoting to scoring")
             else:
@@ -889,7 +882,7 @@ def _main_inner():
             batch = candidates_to_analyze[batch_start:batch_start + BATCH_SIZE]
             print(f"\n--- Batch {batch_start // BATCH_SIZE + 1} ({len(batch)} markets) ---")
             batch_results = batch_analyze_markets(batch)
-            for m, analysis in zip(batch, batch_results):
+            for m, analysis in zip(batch, batch_results, strict=False):
                 _update_price_tracking(m["slug"], m["price"], analysis["p_model"])
                 market_analyses[m["slug"]] = (m, analysis)
 
@@ -900,7 +893,7 @@ def _main_inner():
         if available_balance < 5:
             break
 
-        can_pass, reason = check_cluster_limits(m["clusters"], current_positions_for_clusters, portfolio_value=total_balance)
+        can_pass, _reason = check_cluster_limits(m["clusters"], current_positions_for_clusters, portfolio_value=total_balance)
         if not can_pass:
             continue
 
@@ -912,7 +905,7 @@ def _main_inner():
         else:
             should_analyze, cached_p = _check_price_delta(m["slug"], m["price"])
             if not should_analyze and cached_p is not None:
-                min_p_model = get_settings().get("min_p_model", MIN_P_MODEL)
+                min_p_model = get_settings().get(SETTINGS_MIN_P_MODEL, MIN_P_MODEL)
                 if cached_p < min_p_model:
                     continue
             analysis = full_market_analysis(m)
@@ -986,24 +979,22 @@ def _main_inner():
             available_balance -= estimated_size
             cluster = m.get("clusters", ["other"])[0]
             current_positions_for_clusters.append({
-                "clusters": [cluster],
-                "size_pct": estimated_size / total_balance
+                HYP_CLUSTERS: [cluster],
+                HYP_SIZE_PCT: estimated_size / total_balance
             })
 
     print(f"\n✅ Bought: {candidates_bought} | Available: ${available_balance:.2f}")
 
     update_daily_stats(balance_data, portfolio, candidates_bought)
 
-    try:
+    with contextlib.suppress(Exception):
         log_equity_snapshot()
-    except Exception:
-        pass
 
     db = load_hypothesis_db()
-    resolved = db.get("resolved", [])
+    resolved = db.get(HYP_DB_RESOLVED, [])
     if len(resolved) >= BURN_IN_TRADES:
         recent = resolved[-BURN_IN_TRADES:]
-        wins = sum(1 for h in recent if h.get("outcome") == "YES")
+        wins = sum(1 for h in recent if h.get(HYP_OUTCOME) == "YES")
         logger.info(f"Cycle complete: bought={candidates_bought}, recent_winrate={wins/len(recent):.1%}")
 
     try:
@@ -1014,38 +1005,20 @@ def _main_inner():
 
 
 # Re-export from extracted modules (at bottom to avoid circular imports)
-from order_manager import (get_order_book, get_best_ask, get_balance, get_portfolio,
-                           buy, _place_limit_sell, _place_tp_limit_order_single,
-                           _place_tp_ladder, _get_open_tp_orders, _cancel_all_tp_orders,
-                           get_actual_fill_price, log_slippage,
-                           MAX_SPREAD_PCT, LIMIT_SPREAD_THRESHOLD, LIMIT_PRICE_BUFFER,
-                           LIMIT_MAX_ATTEMPTS, SLIPPAGE_LOG_FILE)
-from position_manager import (get_tier_params, position_size, check_cluster_limits,
-                              get_category_exposure, check_category_limits,
-                              MAX_EXPOSURE_PER_CATEGORY, CLUSTER_KEYWORDS)
-from sell_executor import (_execute_sell, _check_sell_safety, _log_price_for_atr,
-                           _calculate_atr, _get_atr_stop, _get_atr_trailing_stop,
-                           trailing_stop_check,
-                           TRAILING_ACTIVATION, TRAILING_STOP, CONVERGENCE_TAKE_PROFIT,
-                           MIN_POSITION_CHECK_INTERVAL_HOURS, ATR_STOP_MULTIPLIER,
-                           ATR_TRAILING_MULTIPLIER, ATR_LOOKBACK_DAYS, PRICE_HISTORY_FILE)
-from signal_pipeline import (normalize_probability, calibrate_prediction,
-                             _cluster_score_adjustment, fetch_markets,
+from order_manager import (get_best_ask, get_balance, get_portfolio,  # noqa: E402
+                           buy, _place_tp_ladder, _cancel_all_tp_orders,
+                           get_actual_fill_price, log_slippage)
+from position_manager import (get_tier_params, position_size, check_cluster_limits,  # noqa: E402
+                              check_category_limits,
+                              CLUSTER_KEYWORDS)
+from sell_executor import (trailing_stop_check, TRAILING_STOP,  # noqa: E402, F401
+                           ATR_STOP_MULTIPLIER, ATR_TRAILING_MULTIPLIER,
+                           TRAILING_ACTIVATION, CONVERGENCE_TAKE_PROFIT)
+from signal_pipeline import (fetch_markets,  # noqa: E402, F401
                              fetch_gamma_dotm_candidates, pre_filter_before_batching,
                              full_market_analysis, batch_analyze_markets,
-                             _parse_batch_response, _build_batch_results,
-                             advisor_pre_check, metaculus_search, metaculus_get_question,
-                             get_metaculus_forecast, get_time_decay_threshold,
-                             check_metaculus_gap, _generate_search_queries,
-                             _calculate_metaculus_match, parse_resolve_date, dates_match,
-                             MIN_PROB_RATIO, MAX_P_MODEL_RATIO, MIN_VOLUME,
-                             MIN_TTL_HOURS, MAX_PRICE, ALLOWED_CLUSTERS, BANNED_CLUSTERS,
-                             BATCH_SIZE, CALIBRATION_DAMPING_FACTOR,
-                             CALIBRATION_DOTM_THRESHOLD, CALIBRATION_AGGRESSIVE_PMODEL,
-                             CALIBRATION_METACULUS_LOW, CLUSTER_SCORE_ADJUSTMENTS,
-                             PRE_FILTER_OTHER_MIN_VOLUME, ADVISOR_MODEL,
-                             ADVISOR_MIN_CONFIDENCE, DISPERSION_PENALTY_THRESHOLD,
-                             METACULUS_GAP_THRESHOLD)
+                             advisor_pre_check, BATCH_SIZE,
+                             normalize_probability, calibrate_prediction)
 
 if __name__ == "__main__":
     single_run = len(sys.argv) > 1 and sys.argv[1] == "--once"

@@ -7,10 +7,9 @@ Tests for hermes_advisor.py v5.3.2 hardening:
 """
 import unittest
 import sys
-import json
 import os
 import tempfile
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -21,7 +20,7 @@ class TestProbabilityParsing(unittest.TestCase):
     """Fix #1: Hard Python parsing of probabilities with % stripping."""
 
     def test_percent_stripped_clean(self):
-        val = float(str("45%").replace('%', '').strip())
+        val = float("45%".replace('%', '').strip())
         self.assertAlmostEqual(val, 45.0)
 
     def test_float_string_clean(self):
@@ -63,7 +62,7 @@ class TestProbabilityParsing(unittest.TestCase):
         self.assertTrue(p_hermes_val < (p_bot_val * 0.5))
 
     def test_spaces_and_percent(self):
-        val = float(str(" 45 % ").replace('%', '').strip())
+        val = float(" 45 % ".replace('%', '').strip())
         self.assertAlmostEqual(val, 45.0)
 
     def test_divergence_locked_prevents_yellow_override(self):
@@ -257,7 +256,7 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
         ha.evaluate_emergency_exit()
 
         mock_update.assert_called_once()
-        args, kwargs = mock_update.call_args
+        args, _kwargs = mock_update.call_args
         normalized_status = args[2]
         self.assertEqual(normalized_status, "DIVERGENCE")
 
@@ -283,7 +282,7 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
         ha.evaluate_emergency_exit()
 
         mock_update.assert_called_once()
-        args, kwargs = mock_update.call_args
+        args, _kwargs = mock_update.call_args
         normalized_status = args[2]
         self.assertEqual(normalized_status, "GREEN")
 
@@ -309,7 +308,7 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
         ha.evaluate_emergency_exit()
 
         mock_update.assert_called_once()
-        args, kwargs = mock_update.call_args
+        args, _kwargs = mock_update.call_args
         normalized_status = args[2]
         self.assertEqual(normalized_status, "DIVERGENCE")
 

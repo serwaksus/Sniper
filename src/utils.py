@@ -8,6 +8,7 @@ import os
 import fcntl
 import tempfile
 import logging
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,8 @@ def _lock_file(fd, exclusive=True):
 
 
 def _unlock_file(fd):
-    try:
+    with contextlib.suppress(OSError, AttributeError):
         fcntl.flock(fd, fcntl.LOCK_UN)
-    except (OSError, AttributeError):
-        pass
 
 
 def _normalize_keys(obj):
@@ -64,17 +63,13 @@ def load_json(path, default):
             f.close()
     except Exception:
         if not fd_owned:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(fd)
-            except OSError:
-                pass
         return default
     finally:
         if fd >= 0:
-            try:
+            with contextlib.suppress(OSError):
                 _unlock_file(fd)
-            except OSError:
-                pass
 
 
 def save_json(path, data):
@@ -91,15 +86,11 @@ def save_json(path, data):
             os.replace(tmp_path, path)
         finally:
             _unlock_file(lock_fd)
-            try:
+            with contextlib.suppress(OSError):
                 os.close(lock_fd)
-            except OSError:
-                pass
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 
@@ -119,7 +110,7 @@ def save_json_versioned(path, data, expected_version=None):
             _lock_file(lock_fd, exclusive=True)
             if expected_version is not None:
                 try:
-                    with open(path, 'r') as f:
+                    with open(path) as f:
                         current_data = json.load(f)
                 except Exception:
                     current_data = {}
@@ -138,18 +129,14 @@ def save_json_versioned(path, data, expected_version=None):
                     os.fsync(f.fileno())
                 os.replace(tmp_path, path)
             except Exception:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(tmp_path)
-                except OSError:
-                    pass
                 raise
             return True
         finally:
             _unlock_file(lock_fd)
-            try:
+            with contextlib.suppress(OSError):
                 os.close(lock_fd)
-            except OSError:
-                pass
     except Exception as e:
         logger.error(f"[UTILS] save_json_versioned failed for {path}: {e}")
         return False
@@ -183,17 +170,13 @@ def check_and_write_pid(pid_file):
         return True
     finally:
         _unlock_file(fd)
-        try:
+        with contextlib.suppress(OSError):
             os.close(fd)
-        except OSError:
-            pass
 
 
 def cleanup_pid_file(pid_file):
-    try:
+    with contextlib.suppress(OSError):
         os.unlink(pid_file)
-    except OSError:
-        pass
 
 
 def sanitize_for_prompt(text):
@@ -225,7 +208,7 @@ def rotate_log_if_needed(log_path, max_bytes=MAX_LOG_BYTES, keep_bytes=5*1024*10
         size = os.path.getsize(log_path)
         if size < max_bytes:
             return False
-        with open(log_path, 'r') as f:
+        with open(log_path) as f:
             f.seek(max(0, size - keep_bytes))
             f.readline()
             tail = f.read()
@@ -238,10 +221,8 @@ def rotate_log_if_needed(log_path, max_bytes=MAX_LOG_BYTES, keep_bytes=5*1024*10
                 os.fsync(f.fileno())
             os.replace(tmp_path, log_path)
         except Exception:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
             raise
         logger.info(f"[LOG-ROTATE] {log_path}: {size/1024/1024:.1f}MB -> {len(tail)/1024/1024:.1f}MB")
         return True

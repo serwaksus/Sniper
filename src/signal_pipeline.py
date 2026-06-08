@@ -10,11 +10,12 @@ import requests
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils import load_json, save_json, sanitize_for_prompt
+from schema import *
 from utils import load_env_file
 
 load_env_file()
@@ -105,8 +106,8 @@ def metaculus_search(query, limit=10):
                           timeout=15)
         if resp.status_code == 200:
             return resp.json().get("results", [])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[metaculus_search] {type(e).__name__}: {e}")
     return []
 
 def metaculus_get_question(qid):
@@ -114,8 +115,8 @@ def metaculus_get_question(qid):
         resp = requests.get(f"{METACULUS_URL}{qid}/", headers=METACULUS_HEADERS, timeout=15)
         if resp.status_code == 200:
             return resp.json()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[metaculus_get_question] {type(e).__name__}: {e}")
     return None
 
 def parse_resolve_date(date_str):
@@ -125,12 +126,12 @@ def parse_resolve_date(date_str):
     try:
         from dateutil.parser import parse
         return parse(date_str)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[parse_resolve_date] {type(e).__name__}: {e}")
     try:
         return datetime.fromisoformat(date_str)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[parse_resolve_date] {type(e).__name__}: {e}")
     return None
 
 def dates_match(date1, date2, window_days=DATE_WINDOW_DAYS):
@@ -139,9 +140,9 @@ def dates_match(date1, date2, window_days=DATE_WINDOW_DAYS):
     if d1 is None or d2 is None:
         return False
     if d1.tzinfo is not None:
-        d1 = d1.astimezone(timezone.utc).replace(tzinfo=None)
+        d1 = d1.astimezone(UTC).replace(tzinfo=None)
     if d2.tzinfo is not None:
-        d2 = d2.astimezone(timezone.utc).replace(tzinfo=None)
+        d2 = d2.astimezone(UTC).replace(tzinfo=None)
     diff = abs((d1 - d2).total_seconds() / 86400)
     return diff <= window_days
 
@@ -156,7 +157,7 @@ def get_metaculus_forecast(pm_question, pm_resolve_date=None):
             if (datetime.now() - cached_time).total_seconds() < 3600:
                 return cached
 
-    search_queries = [pm_question] + _generate_search_queries(pm_question)
+    search_queries = [pm_question, *_generate_search_queries(pm_question)]
 
     best_match = None
     raw_best_score = 0
@@ -195,8 +196,8 @@ def get_metaculus_forecast(pm_question, pm_resolve_date=None):
             reveal_dt = datetime.fromisoformat(cp_reveal.replace("Z", "+00:00"))
             if datetime.now(reveal_dt.tzinfo) < reveal_dt:
                 return {"found": False, "probability": None, "reason": "cp_not_revealed"}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[cp_reveal_parse] {type(e).__name__}: {e}")
 
     agg_data = q_data.get("aggregations") if q_data.get("aggregations") is not None else {}
     agg = agg_data.get("recency_weighted") if agg_data.get("recency_weighted") is not None else {}
@@ -220,8 +221,10 @@ def get_metaculus_forecast(pm_question, pm_resolve_date=None):
         pred = q_data.get("prediction") or best_match.get("prediction")
         if pred and isinstance(pred, dict):
             prob = pred.get("number")
-            if prob is None: prob = pred.get("p_above")
-            if prob is None: prob = pred.get("p_below")
+            if prob is None:
+                prob = pred.get("p_above")
+            if prob is None:
+                prob = pred.get("p_below")
             prob = float(prob) if prob is not None else 0.0
 
     if prob is None:
@@ -437,6 +440,11 @@ def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=Non
     3. Legacy dampening fallback
     Then apply extremization to compensate crowd regression-to-mean.
     """
+    if not isinstance(p_model, (int, float)) or p_model <= 0 or p_model >= 1:
+        return p_model, False
+    if not isinstance(market_price, (int, float)) or market_price < 0:
+        return p_model, False
+
     from calibration import get_calibrator
 
     p_calibrated = p_model
@@ -450,8 +458,8 @@ def calibrate_prediction(p_model, market_price, metaculus_prob=None, cluster=Non
             if p_platt is not None:
                 p_calibrated = p_platt
                 method = "platt"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[calibrate_platt] {type(e).__name__}: {e}")
 
     if method == "raw" and resolved_count >= 20:
         calibrator = get_calibrator()
@@ -525,13 +533,13 @@ def fetch_markets():
                 try:
                     end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00")).replace(tzinfo=None)
                     ttl_hours = max(0, (end - now).total_seconds() / 3600)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[ttl_parse] {type(e).__name__}: {e}")
 
             if ttl_hours < MIN_TTL_HOURS:
                 continue
 
-            for outcome, price in zip(m.get("outcomes", []), m.get("outcome_prices", [])):
+            for outcome, price in zip(m.get("outcomes", []), m.get("outcome_prices", []), strict=False):
                 try:
                     price = float(price)
                 except (ValueError, TypeError):
@@ -543,14 +551,14 @@ def fetch_markets():
                     if any(c in BANNED_CLUSTERS for c in clusters):
                         continue
                     is_allowed = any(c in ALLOWED_CLUSTERS for c in clusters)
-                    if any(c in ("sports_nba", "sports_ufc") for c in clusters):
-                        if vol < 250_000 or ttl_hours < 48: continue
+                    if any(c in ("sports_nba", "sports_ufc") for c in clusters) and (vol < 250_000 or ttl_hours < 48):
+                        continue
                     is_other_high_vol = clusters == ["other"] and vol >= PRE_FILTER_OTHER_MIN_VOLUME
                     if not is_allowed and not is_other_high_vol:
                         continue
                     candidates.append({
                         "id": m["condition_id"],
-                        "slug": m["slug"],
+                        HYP_SLUG: m[HYP_SLUG],
                         "question": m["question"],
                         "outcome": outcome,
                         "price": price,
@@ -558,7 +566,7 @@ def fetch_markets():
                         "liquidity": float(m.get("liquidity", 0)),
                         "end_date": end_date,
                         "ttl_hours": ttl_hours,
-                        "clusters": clusters,
+                        HYP_CLUSTERS: clusters,
                         "oracle_type": m.get("oracle_type", "unknown")
                     })
 
@@ -566,8 +574,8 @@ def fetch_markets():
         seen_slugs = set()
         unique = []
         for c in candidates:
-            if c["slug"] not in seen_slugs:
-                seen_slugs.add(c["slug"])
+            if c[HYP_SLUG] not in seen_slugs:
+                seen_slugs.add(c[HYP_SLUG])
                 unique.append(c)
         return unique[:30]
     except Exception as e:
@@ -604,7 +612,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
         for m in markets:
             if m.get("active") is False:
                 continue
-            slug = m.get("slug", "")
+            slug = m.get(HYP_SLUG, "")
             if slug in existing_slugs:
                 continue
             question = m.get("question", "")
@@ -631,11 +639,11 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
                 try:
                     end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00")).replace(tzinfo=None)
                     ttl_hours = max(0, (end - now).total_seconds() / 3600)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[ttl_parse] {type(e).__name__}: {e}")
             if ttl_hours < MIN_TTL_HOURS:
                 continue
-            for outcome, price_str in zip(outcomes, outcome_prices):
+            for outcome, price_str in zip(outcomes, outcome_prices, strict=False):
                 try:
                     price = float(price_str)
                 except (ValueError, TypeError):
@@ -651,7 +659,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
                     continue
                 candidates.append({
                     "id": m.get("conditionId", m.get("condition_id", "")),
-                    "slug": slug,
+                    HYP_SLUG: slug,
                     "question": question,
                     "outcome": outcome,
                     "price": price,
@@ -659,7 +667,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
                     "liquidity": float(m.get("liquidity", 0)),
                     "end_date": end_date,
                     "ttl_hours": ttl_hours,
-                    "clusters": clusters,
+                    HYP_CLUSTERS: clusters,
                     "oracle_type": m.get("oracleType", m.get("oracle_type", "unknown")),
                     "source": "gamma",
                 })
@@ -667,8 +675,8 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
         seen = set()
         unique = []
         for c in candidates:
-            if c["slug"] not in seen and c["slug"] not in existing_slugs:
-                seen.add(c["slug"])
+            if c[HYP_SLUG] not in seen and c[HYP_SLUG] not in existing_slugs:
+                seen.add(c[HYP_SLUG])
                 unique.append(c)
         logger.info(f"[GAMMA] Fetched {len(markets)} markets, {len(unique)} new DOTM candidates")
         return unique[:20]
@@ -690,7 +698,7 @@ def pre_filter_before_batching(markets):
     kept = []
     skipped = []
     for m in markets:
-        clusters = m.get("clusters", ["other"])
+        clusters = m.get(HYP_CLUSTERS, ["other"])
         if any(c in BANNED_CLUSTERS for c in clusters):
             skipped.append(m)
             continue
@@ -698,7 +706,7 @@ def pre_filter_before_batching(markets):
         if is_other:
             volume = m.get("volume", 0)
             if volume < PRE_FILTER_OTHER_MIN_VOLUME:
-                slug = m.get("slug", "unknown")
+                slug = m.get(HYP_SLUG, "unknown")
                 logger.info(f"[PRE-FILTER] Skipping low-volume 'other' market: {slug}")
                 skipped.append(m)
                 continue
@@ -713,14 +721,14 @@ def full_market_analysis(market):
     from dotm_sniper import get_settings, parse_llm_json
     from order_manager import get_best_ask
 
-    cluster = market.get("clusters", ["other"])[0]
+    cluster = market.get(HYP_CLUSTERS, ["other"])[0]
     is_geopol = cluster in ["venezuela", "russia_ukraine", "usa_politics"]
 
     best_ask = None
     polymarket_prob = market["price"]
 
     if market["price"] < 0.35:
-        best_ask = get_best_ask(market["slug"])
+        best_ask = get_best_ask(market[HYP_SLUG])
         polymarket_prob = best_ask if best_ask is not None else market["price"]
 
     metaculus_gap = None
@@ -752,7 +760,7 @@ Best Ask: ${polymarket_prob:.3f}
 
 CRITICAL DOTM METHODOLOGY: This market is priced at {market['price']*100:.1f} cents, meaning the crowd assigns only {market['price']*100:.1f}% chance. For DOTM markets, the crowd systematically underestimates tail risks because:
 1. Recency bias - people overweight the status quo
-2. Black swan blindness - people discount unprecedented but plausible events  
+2. Black swan blindness - people discount unprecedented but plausible events
 3. Time premium - long-dated markets have more time for surprise developments
 
 STEP 1: List 2-3 SPECIFIC plausible scenarios that could make this event happen. Think creatively about catalysts, tipping points, and nonlinear dynamics.
@@ -804,8 +812,8 @@ Rules:
         result = parse_llm_json(content)
         if result:
             p_model_llm = normalize_probability(result.get("estimated_probability", market["price"] * 2))
-            confidence = min(max(float(result.get("confidence", confidence)), 0.1), 0.95)
-            factors = result.get("factors", [])
+            confidence = min(max(float(result.get(HYP_CONFIDENCE, confidence)), 0.1), 0.95)
+            factors = result.get(HYP_FACTORS, [])
         else:
             p_model_llm = market["price"] * 2
             factors = []
@@ -839,7 +847,7 @@ Rules:
         p_model = max_p_model
 
     metaculus_prob_val = metaculus_gap.get("metaculus_prob") if metaculus_gap else None
-    p_model, was_dampened = calibrate_prediction(p_model, market["price"], metaculus_prob_val, cluster=cluster)
+    p_model, _was_dampened = calibrate_prediction(p_model, market["price"], metaculus_prob_val, cluster=cluster)
 
     settings = get_settings()
 
@@ -848,13 +856,13 @@ Rules:
         logger.info(f"[ANALYSIS] p_model={p_model:.1%} < MIN_P_MODEL={min_p_model:.1%}, skipping")
         return {
             "question": market["question"],
-            "slug": market["slug"],
+            HYP_SLUG: market[HYP_SLUG],
             "market_price": market["price"],
-            "p_model": p_model,
+            HYP_P_MODEL: p_model,
             "prob_ratio": 0,
-            "confidence": confidence,
+            HYP_CONFIDENCE: confidence,
             "action": "SKIP",
-            "factors": [],
+            HYP_FACTORS: [],
             "source_signal": "default",
             "reasoning": f"p_model too low ({p_model:.1%})",
             "best_ask": best_ask
@@ -903,7 +911,7 @@ Rules:
 
     try:
         from social_buzz import compute_buzz_score
-        buzz = compute_buzz_score(market.get("slug", ""), market.get("question", ""))
+        buzz = compute_buzz_score(market.get(HYP_SLUG, ""), market.get("question", ""))
         buzz_score = buzz.get("buzz_score", 0)
         signal_score += buzz_score
     except Exception:
@@ -933,13 +941,13 @@ Rules:
 
     return {
         "question": market["question"],
-        "slug": market["slug"],
+        HYP_SLUG: market[HYP_SLUG],
         "market_price": market["price"],
-        "p_model": p_model,
+        HYP_P_MODEL: p_model,
         "prob_ratio": prob_ratio,
-        "confidence": confidence,
+        HYP_CONFIDENCE: confidence,
         "action": action,
-        "factors": factors,
+        HYP_FACTORS: factors,
         "source_signal": source_signal,
         "signal_score": signal_score,
         "reasoning": f"score={signal_score:.0f}/{min_signal}(horizon), ratio={prob_ratio:.2f}x, conf={confidence:.2f}, src={source_signal}, meta_align={metaculus_alignment:+d}",
@@ -959,7 +967,7 @@ def batch_analyze_markets(markets):
     metaculus_cache = {}
     for m in markets:
         if m.get("price", 0) < 0.35:
-            slug = m.get("slug", "")
+            slug = m.get(HYP_SLUG, "")
             question = m.get("question", "")
             end_date = m.get("end_date")
             meta = get_metaculus_forecast(question, end_date)
@@ -968,18 +976,18 @@ def batch_analyze_markets(markets):
             else:
                 metaculus_cache[slug] = None
         else:
-            metaculus_cache[m.get("slug")] = None
+            metaculus_cache[m.get(HYP_SLUG)] = None
 
     batch_items = []
     for m in markets:
-        slug = m.get("slug", "")
+        slug = m.get(HYP_SLUG, "")
         question = m.get("question", "")
         price = m.get("price", 0)
         volume = m.get("volume", 0)
         ttl_hours = m.get("ttl_hours", 999)
-        cluster = m.get("clusters", ["other"])[0]
+        cluster = m.get(HYP_CLUSTERS, ["other"])[0]
         batch_items.append({
-            "slug": slug,
+            HYP_SLUG: slug,
             "question": question,
             "market_price": round(price, 4),
             "volume": round(volume, 0),
@@ -1073,7 +1081,7 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
     cleaned = content.strip()
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
+        lines = [line for line in lines if not line.strip().startswith("```")]
         cleaned = "\n".join(lines)
 
     for prefix in ("```json", "```JSON", "```"):
@@ -1159,19 +1167,19 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
     """
     from dotm_sniper import get_settings
 
-    slug_to_item = {it["slug"]: it for it in batch_items}
-    slug_to_idx = {it["slug"]: i for i, it in enumerate(batch_items)}
+    slug_to_item = {it[HYP_SLUG]: it for it in batch_items}
+    {it[HYP_SLUG]: i for i, it in enumerate(batch_items)}
 
     results_map = {}
     for item in parsed_array:
         if not isinstance(item, dict):
             continue
 
-        slug = item.get("slug", "")
+        slug = item.get(HYP_SLUG, "")
         if slug not in slug_to_item:
             if len(results_map) < len(batch_items):
                 unmatched_idx = len(results_map)
-                slug = batch_items[unmatched_idx]["slug"]
+                slug = batch_items[unmatched_idx][HYP_SLUG]
             else:
                 continue
 
@@ -1183,8 +1191,8 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         cluster = bi["cluster"]
 
         p_model_llm = normalize_probability(item.get("estimated_probability", market_price * 2))
-        confidence = min(max(float(item.get("confidence", 0.6)), 0.1), 0.95)
-        factors = item.get("factors", [])
+        confidence = min(max(float(item.get(HYP_CONFIDENCE, 0.6)), 0.1), 0.95)
+        factors = item.get(HYP_FACTORS, [])
 
         max_p_model = market_price * MAX_P_MODEL_RATIO
         p_model = min(p_model_llm, max_p_model)
@@ -1200,13 +1208,13 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         if p_model < min_p_model - 0.001:
             results_map[slug] = {
                 "question": bi["question"],
-                "slug": slug,
+                HYP_SLUG: slug,
                 "market_price": market_price,
-                "p_model": p_model,
+                HYP_P_MODEL: p_model,
                 "prob_ratio": 0,
-                "confidence": confidence,
+                HYP_CONFIDENCE: confidence,
                 "action": "SKIP",
-                "factors": [],
+                HYP_FACTORS: [],
                 "source_signal": "default",
                 "reasoning": f"p_model too low ({p_model:.1%})",
                 "best_ask": None,
@@ -1295,13 +1303,13 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
 
         results_map[slug] = {
             "question": bi["question"],
-            "slug": slug,
+            HYP_SLUG: slug,
             "market_price": market_price,
-            "p_model": p_model,
+            HYP_P_MODEL: p_model,
             "prob_ratio": prob_ratio,
-            "confidence": confidence,
+            HYP_CONFIDENCE: confidence,
             "action": action,
-            "factors": factors,
+            HYP_FACTORS: factors,
             "source_signal": source_signal,
             "signal_score": signal_score,
             "reasoning": f"score={signal_score:.0f}/{min_signal}(batch), ratio={prob_ratio:.2f}x, conf={confidence:.2f}, src={source_signal}",
@@ -1310,18 +1318,18 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
 
     results = []
     for bi in batch_items:
-        if bi["slug"] in results_map:
-            results.append(results_map[bi["slug"]])
+        if bi[HYP_SLUG] in results_map:
+            results.append(results_map[bi[HYP_SLUG]])
         else:
             results.append({
                 "question": bi["question"],
-                "slug": bi["slug"],
+                HYP_SLUG: bi[HYP_SLUG],
                 "market_price": bi["market_price"],
-                "p_model": bi["market_price"] * 2,
+                HYP_P_MODEL: bi["market_price"] * 2,
                 "prob_ratio": 2.0,
-                "confidence": 0.5,
+                HYP_CONFIDENCE: 0.5,
                 "action": "SKIP",
-                "factors": [],
+                HYP_FACTORS: [],
                 "source_signal": "default",
                 "reasoning": "batch_parse_fallback",
                 "best_ask": None,
@@ -1338,10 +1346,10 @@ def advisor_pre_check(market, analysis, estimated_size=0, balance=1):
     Returns (approved: bool, verdict: str, confidence: float, reason: str)
     """
     question = market.get("question", "")
-    slug = market.get("slug", "")
+    slug = market.get(HYP_SLUG, "")
     price = market.get("price", 0)
-    p_model = analysis.get("p_model", 0)
-    factors = analysis.get("factors", [])
+    p_model = analysis.get(HYP_P_MODEL, 0)
+    factors = analysis.get(HYP_FACTORS, [])
     score = analysis.get("signal_score", 0)
     reasoning = analysis.get("reasoning", "")
 
@@ -1420,9 +1428,9 @@ Rules:
             return False, "UNKNOWN", 0.0, f"advisor_parse_error: {parse_err}"
 
         verdict = result.get("verdict", "UNKNOWN")
-        confidence = result.get("confidence", 0.0)
+        confidence = result.get(HYP_CONFIDENCE, 0.0)
         advisor_p = result.get("p_estimate", 0)
-        advisor_factors = result.get("factors", [])
+        advisor_factors = result.get(HYP_FACTORS, [])
 
         logger.info(
             f"[ADVISOR] verdict={verdict} conf={confidence:.2f} "
@@ -1434,7 +1442,7 @@ Rules:
             logger.info(f"[ADVISOR] ✅ Trade APPROVED by advisor ({verdict}, conf={confidence:.2f})")
             return True, verdict, confidence, "approved"
         elif verdict == "WARNING" and confidence < ADVISOR_MIN_CONFIDENCE:
-            logger.info(f"[ADVISOR] ⚠️ Trade WARNING (advisor uncertain), allowing small position")
+            logger.info("[ADVISOR] ⚠️ Trade WARNING (advisor uncertain), allowing small position")
             return True, verdict, confidence, "advisor_warning_allowed"
         elif verdict == "DIVERGE":
             size_pct = estimated_size / balance if balance > 0 else 1

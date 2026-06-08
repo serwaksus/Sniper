@@ -51,7 +51,7 @@ class TestCronValidator(unittest.TestCase):
         }
         self.write_jobs(jobs)
         validator = CronValidator(self.jobs_path)
-        valid, errors, warnings = validator.validate_all()
+        valid, errors, _warnings = validator.validate_all()
         self.assertTrue(valid, f"Expected valid but got errors: {errors}")
 
     def test_agent_turn_with_python_warning(self):
@@ -77,7 +77,7 @@ class TestCronValidator(unittest.TestCase):
         }
         self.write_jobs(jobs)
         validator = CronValidator(self.jobs_path)
-        valid, errors, warnings = validator.validate_all()
+        valid, _errors, warnings = validator.validate_all()
         self.assertTrue(valid)
         self.assertTrue(any('agentTurn with python' in w for w in warnings))
 
@@ -100,7 +100,7 @@ class TestCronValidator(unittest.TestCase):
         }
         self.write_jobs(jobs)
         validator = CronValidator(self.jobs_path)
-        valid, errors, warnings = validator.validate_all()
+        valid, errors, _warnings = validator.validate_all()
         self.assertFalse(valid)
         self.assertTrue(any('no payload.kind' in e for e in errors))
 
@@ -123,7 +123,7 @@ class TestCronValidator(unittest.TestCase):
         }
         self.write_jobs(jobs)
         validator = CronValidator(self.jobs_path)
-        valid, errors, warnings = validator.validate_all()
+        valid, _errors, _warnings = validator.validate_all()
         self.assertFalse(valid)
 
     def test_consecutive_errors_detected(self):
@@ -148,7 +148,7 @@ class TestCronValidator(unittest.TestCase):
         }
         self.write_jobs(jobs)
         validator = CronValidator(self.jobs_path)
-        valid, errors, warnings = validator.validate_all()
+        valid, errors, _warnings = validator.validate_all()
         self.assertFalse(valid)
         self.assertTrue(any('consecutive errors' in e for e in errors))
 
@@ -173,7 +173,7 @@ class TestCronValidator(unittest.TestCase):
         }
         self.write_jobs(jobs)
         validator = CronValidator(self.jobs_path)
-        valid, errors, warnings = validator.validate_all()
+        valid, _errors, warnings = validator.validate_all()
         self.assertTrue(valid)
         self.assertTrue(any('exec_unavailable' in w for w in warnings))
 
@@ -183,7 +183,7 @@ class TestCronValidator(unittest.TestCase):
             f.write("{ invalid json }")
 
         validator = CronValidator(self.jobs_path)
-        valid, errors, warnings = validator.validate_all()
+        valid, errors, _warnings = validator.validate_all()
         self.assertFalse(valid)
         self.assertTrue(any('Invalid JSON' in e for e in errors))
 
@@ -198,7 +198,7 @@ class TestCronValidator(unittest.TestCase):
         }
         self.write_jobs(jobs)
         validator = CronValidator(self.jobs_path)
-        valid, errors, warnings = validator.validate_all()
+        valid, _errors, _warnings = validator.validate_all()
         self.assertFalse(valid)
 
 
@@ -208,7 +208,7 @@ class TestPayloadKindDecision(unittest.TestCase):
     def test_shell_for_direct_script(self):
         """If running a script directly, use shell type"""
         command = "python3 /root/dotm-sniper/advisor_script.py"
-        validator = CronValidator()
+        CronValidator()
 
         is_shell_appropriate = (
             command.endswith('.py') or
@@ -221,7 +221,7 @@ class TestPayloadKindDecision(unittest.TestCase):
     def test_agent_turn_for_conversation(self):
         """If sending a message to agent, use agentTurn"""
         message = "analyze the current portfolio and suggest actions"
-        validator = CronValidator()
+        CronValidator()
 
         is_agent_appropriate = not (
             message.endswith('.py') or

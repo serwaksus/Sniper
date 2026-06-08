@@ -30,7 +30,7 @@ def load_env():
 
 load_env()
 
-def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_days: int = None) -> dict:
+def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_days: int | None = None) -> dict:
     """
     Search for recent news headlines based on market keywords.
     Returns dict with headlines, sources, and timestamps.

@@ -8,14 +8,11 @@ import json
 import tempfile
 import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from dotm_sniper import (
     repair_positions_file,
     POSITIONS_FILE,
-    load_json,
-    save_json,
 )
 
 
@@ -45,7 +42,7 @@ class TestRepairPositionsFile(unittest.TestCase):
         }
         path = self._set_path(data)
         repair_positions_file()
-        result = json.load(open(path))
+        result = json.load(open(path))  # noqa: SIM115
         self.assertGreaterEqual(result["slug-a"]["high_price"], result["slug-a"]["entry_price"])
         self.assertEqual(result["slug-a"]["high_price"], 0.25)
 
@@ -55,13 +52,13 @@ class TestRepairPositionsFile(unittest.TestCase):
         }
         path = self._set_path(data)
         repair_positions_file()
-        result = json.load(open(path))
+        result = json.load(open(path))  # noqa: SIM115
         self.assertEqual(result["slug-b"]["high_price"], 0.15)
 
     def test_empty_positions(self):
         path = self._set_path({})
         repair_positions_file()
-        result = json.load(open(path))
+        result = json.load(open(path))  # noqa: SIM115
         self.assertEqual(result, {})
 
     def test_multiple_positions_mixed(self):
@@ -72,7 +69,7 @@ class TestRepairPositionsFile(unittest.TestCase):
         }
         path = self._set_path(data)
         repair_positions_file()
-        result = json.load(open(path))
+        result = json.load(open(path))  # noqa: SIM115
         self.assertEqual(result["slug-ok"]["high_price"], 0.12)
         self.assertEqual(result["slug-bad"]["high_price"], 0.30)
         self.assertEqual(result["slug-equal"]["high_price"], 0.15)
@@ -83,7 +80,7 @@ class TestRepairPositionsFile(unittest.TestCase):
         }
         path = self._set_path(data)
         repair_positions_file()
-        result = json.load(open(path))
+        result = json.load(open(path))  # noqa: SIM115
         self.assertEqual(result["slug-no-entry"]["high_price"], 0.20)
 
 
@@ -128,7 +125,6 @@ class TestCompositeScoring(unittest.TestCase):
         }
 
     def test_ratio_score_max_is_30(self):
-        import dotm_sniper
         prob_ratio = 10.0
         ratio_score = min(prob_ratio / 3.0, 1.0) * 30
         self.assertEqual(ratio_score, 30.0)
@@ -367,7 +363,7 @@ class TestPreFilterBeforeBatching(unittest.TestCase):
     def test_no_clusters_defaults_to_other(self):
         m = self._make_market(slug="no-clusters", clusters=None, volume=50000)
         m.pop("clusters", None)
-        kept, skipped = self.module.pre_filter_before_batching([m])
+        _kept, skipped = self.module.pre_filter_before_batching([m])
         self.assertEqual(len(skipped), 1)
 
 

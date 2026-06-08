@@ -120,12 +120,11 @@ class TestCalibratePrediction(unittest.TestCase):
     def _mock_calibrate(self, p_model, market_price, metaculus_prob=None, cluster=None):
         p_calibrated = p_model
         dampened = False
-        if cluster != "other" and market_price <= 0.10:
-            if p_model > 0.20:
-                meta_low = metaculus_prob is None or metaculus_prob < 0.10
-                if meta_low:
-                    p_calibrated = p_model * 0.65
-                    dampened = True
+        if cluster != "other" and market_price <= 0.10 and p_model > 0.20:
+            meta_low = metaculus_prob is None or metaculus_prob < 0.10
+            if meta_low:
+                p_calibrated = p_model * 0.65
+                dampened = True
         return p_calibrated, dampened
 
     def test_aggressive_dampened_no_metaculus(self):
@@ -134,15 +133,15 @@ class TestCalibratePrediction(unittest.TestCase):
         self.assertLess(p, 0.30)
 
     def test_conservative_no_dampening(self):
-        p, dampened = self._mock_calibrate(0.15, 0.08, metaculus_prob=None, cluster="ai_tech")
+        _p, dampened = self._mock_calibrate(0.15, 0.08, metaculus_prob=None, cluster="ai_tech")
         self.assertFalse(dampened)
 
     def test_high_metaculus_prevents_dampening(self):
-        p, dampened = self._mock_calibrate(0.30, 0.08, metaculus_prob=0.25, cluster="ai_tech")
+        _p, dampened = self._mock_calibrate(0.30, 0.08, metaculus_prob=0.25, cluster="ai_tech")
         self.assertFalse(dampened)
 
     def test_other_cluster_no_dampening(self):
-        p, dampened = self._mock_calibrate(0.30, 0.08, metaculus_prob=None, cluster="other")
+        _p, dampened = self._mock_calibrate(0.30, 0.08, metaculus_prob=None, cluster="other")
         self.assertFalse(dampened)
 
 

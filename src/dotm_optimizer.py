@@ -61,7 +61,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_grid_lock = threading.Lock()
+_grid_lock = threading.RLock()
 _progress_counter = {"done": 0, "total": 0}
 
 
@@ -400,7 +400,7 @@ def main():
           f"{len(COMPOSITE_THRESHOLDS) * len(VOLUME_THRESHOLDS)} combinations")
     print(f"  Workers: {GRID_MAX_WORKERS}\n")
 
-    is_grid, best_is, is_best_outcomes = grid_search(is_markets)
+    is_grid, best_is, _is_best_outcomes = grid_search(is_markets)
 
     print(f"\n  Best IS: score>={best_is['composite_threshold']}, "
           f"conf>={best_is['min_confidence']:.2f} => "

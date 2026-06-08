@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
+from schema import *
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
     if not force_market and spread > LIMIT_SPREAD_THRESHOLD:
         positions = load_json(POSITIONS_FILE, {})
         pos = positions.get(slug, {})
-        limit_attempts = pos.get("limit_sell_attempts", 0)
+        limit_attempts = pos.get(POS_LIMIT_SELL_ATTEMPTS, 0)
 
         if _get_om()._get_open_tp_orders(slug):
             logger.info(f"[LIMIT-SELL] {slug[:40]}... limit already pending")
@@ -109,11 +110,11 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
                 f"[LIMIT-SELL] {slug[:40]}... spread=${spread:.4f} > ${LIMIT_SPREAD_THRESHOLD}, "
                 f"placing limit at ${limit_price:.4f} (attempt {limit_attempts + 1}/{LIMIT_MAX_ATTEMPTS})"
             )
-            ok, reason = _get_om()._place_limit_sell(slug, outcome, shares, limit_price)
+            ok, _reason = _get_om()._place_limit_sell(slug, outcome, shares, limit_price)
             if ok:
-                pos["limit_sell_attempts"] = limit_attempts + 1
-                pos["limit_sell_price"] = limit_price
-                pos["limit_sell_since"] = datetime.now().isoformat()
+                pos[POS_LIMIT_SELL_ATTEMPTS] = limit_attempts + 1
+                pos[POS_LIMIT_SELL_PRICE] = limit_price
+                pos[POS_LIMIT_SELL_SINCE] = datetime.now().isoformat()
                 positions[slug] = pos
                 save_json(POSITIONS_FILE, positions)
                 return False, limit_price, "limit_pending"
@@ -129,8 +130,8 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
             return True, best_bid, "market"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[market_sell] {type(e).__name__}: {e}")
     return False, best_bid, "market_failed"
 
 
@@ -145,8 +146,8 @@ def _log_price_for_atr(slug: str, price: float):
             slug_data = slug_data[-1008:]
         history[slug] = slug_data
         save_json(PRICE_HISTORY_FILE, history)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[atr_log] {type(e).__name__}: {e}")
 
 
 def _calculate_atr(slug: str, current_price: float) -> float:
@@ -234,13 +235,13 @@ def trailing_stop_check():
     now = datetime.now()
 
     db = sniper.load_hypothesis_db()
-    resolved_slugs = {h["slug"] for h in db.get("resolved", [])}
+    resolved_slugs = {h[HYP_SLUG] for h in db.get(HYP_DB_RESOLVED, [])}
 
     for pos in portfolio:
         slug = pos["market_slug"]
         shares = pos.get("shares", 0)
         stored_positions = load_json(POSITIONS_FILE, {})
-        stored_entry = stored_positions.get(slug, {}).get("entry_price", 0) if slug in stored_positions else 0
+        stored_entry = stored_positions.get(slug, {}).get(POS_ENTRY_PRICE, 0) if slug in stored_positions else 0
         entry_price = stored_entry if stored_entry > 0 else pos.get("avg_entry_price", 0)
         outcome = pos.get("outcome", "yes")
 
@@ -253,8 +254,8 @@ def trailing_stop_check():
                 try:
                     from bayesian_updater import cleanup_slug
                     cleanup_slug(slug)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
             continue
 
         book = om.get_order_book(slug)
@@ -273,30 +274,30 @@ def trailing_stop_check():
         if slug not in positions:
             atr_stop = _get_atr_stop(slug, entry_price, current_price)
             positions[slug] = {
-                "entry_price": entry_price,
-                "high_price": max(entry_price, current_price),
-                "trailing_on": False,
-                "stop_loss": atr_stop,
-                "stop_type": "atr",
-                "last_checked": now.isoformat(),
-                "metaculus_prob": None,
-                "market_question": pos.get("market_question", ""),
-                "outcome": pos.get("outcome", "yes"),
-                "clusters": pos.get("clusters", []),
-                "shares": shares
+                POS_ENTRY_PRICE: entry_price,
+                POS_HIGH_PRICE: max(entry_price, current_price),
+                POS_TRAILING_ON: False,
+                POS_STOP_LOSS: atr_stop,
+                POS_STOP_TYPE: "atr",
+                POS_LAST_CHECKED: now.isoformat(),
+                POS_METACULUS_PROB: None,
+                POS_MARKET_QUESTION: pos.get("market_question", ""),
+                POS_OUTCOME: pos.get("outcome", "yes"),
+                POS_CLUSTERS: pos.get("clusters", []),
+                POS_SHARES: shares
             }
             save_json(POSITIONS_FILE, positions)
 
         p = positions[slug]
 
-        if p.get("selling_in_progress"):
+        if p.get(POS_SELLING_IN_PROGRESS):
             logger.info(f"[SKIP] {slug[:40]}... sell already in progress")
             continue
 
         last_checked = None
-        if p.get("last_checked"):
+        if p.get(POS_LAST_CHECKED):
             try:
-                last_checked = datetime.fromisoformat(p["last_checked"])
+                last_checked = datetime.fromisoformat(p[POS_LAST_CHECKED])
             except Exception:
                 last_checked = None
 
@@ -305,39 +306,39 @@ def trailing_stop_check():
             logger.info(f"[POLLING] {slug[:40]}... skipping, checked {(now - last_checked).total_seconds()/3600:.1f}h ago")
             continue
 
-        p["last_checked"] = now.isoformat()
+        p[POS_LAST_CHECKED] = now.isoformat()
 
-        p["high_price"] = max(p.get("high_price", current_price), current_price, entry_price)
+        p[POS_HIGH_PRICE] = max(p.get(POS_HIGH_PRICE, current_price), current_price, entry_price)
 
-        if p["high_price"] > entry_price * (1 + TRAILING_ACTIVATION):
-            p["trailing_on"] = True
-            atr_trail = _get_atr_trailing_stop(slug, p["high_price"], current_price)
-            fixed_trail = p["high_price"] * (1 - TRAILING_STOP)
-            p["stop_loss"] = max(atr_trail, fixed_trail)
+        if p[POS_HIGH_PRICE] > entry_price * (1 + TRAILING_ACTIVATION):
+            p[POS_TRAILING_ON] = True
+            atr_trail = _get_atr_trailing_stop(slug, p[POS_HIGH_PRICE], current_price)
+            fixed_trail = p[POS_HIGH_PRICE] * (1 - TRAILING_STOP)
+            p[POS_STOP_LOSS] = max(atr_trail, fixed_trail)
 
         meta = sniper.get_metaculus_forecast(pos.get("market_question", ""), None)
         metaculus_prob = None
         if meta.get("found"):
             metaculus_prob = meta.get("probability")
-            p["metaculus_prob"] = metaculus_prob
+            p[POS_METACULUS_PROB] = metaculus_prob
 
         positions[slug] = p
         save_json(POSITIONS_FILE, positions)
 
-        if not om._get_open_tp_orders(slug) and current_price < 0.70 and not p.get("tp_ladder_failed"):
+        if not om._get_open_tp_orders(slug) and current_price < 0.70 and not p.get(POS_TP_LADDER_FAILED):
             try:
                 ladder_results = om._place_tp_ladder(slug, outcome, shares)
                 if any(ok for _, _, ok, _ in ladder_results):
                     logger.info(f"[TP-REFRESH] Placed TP ladder for {slug[:40]}... (was missing)")
                 else:
-                    p["tp_ladder_failed"] = True
+                    p[POS_TP_LADDER_FAILED] = True
             except Exception:
-                p["tp_ladder_failed"] = True
+                p[POS_TP_LADDER_FAILED] = True
 
         sold = False
         sold_reason = ""
 
-        p["selling_in_progress"] = True
+        p[POS_SELLING_IN_PROGRESS] = True
         positions[slug] = p
         save_json(POSITIONS_FILE, positions)
 
@@ -363,15 +364,15 @@ def trailing_stop_check():
             elif convergence >= CONVERGENCE_TAKE_PROFIT:
                 logger.info(f"[CONVERGENCE] {slug[:40]}... convergence={convergence:.2f} but TP ladder active, letting limits execute")
 
-        if not sold and current_price <= p.get("stop_loss", 0):
+        if not sold and current_price <= p.get(POS_STOP_LOSS, 0):
             sold_reason = f"atr_stop: price=${current_price:.4f} <= atr_stop"
             logger.warning(f"[STOP-LOSS] ATR stop triggered: {slug[:40]}... price=${current_price:.4f}")
             try:
                 pos_data = positions.get(slug, {})
-                limit_attempts = pos_data.get("limit_sell_attempts", 0)
+                limit_attempts = pos_data.get(POS_LIMIT_SELL_ATTEMPTS, 0)
                 force = limit_attempts >= LIMIT_MAX_ATTEMPTS
                 if not force:
-                    safe, safe_reason, sell_price = _check_sell_safety(slug, current_price, shares)
+                    safe, safe_reason, _sell_price = _check_sell_safety(slug, current_price, shares)
                     if not safe:
                         logger.warning(
                             f"[STOP-DELAYED] {slug[:40]}... sell unsafe: {safe_reason}. "
@@ -396,19 +397,19 @@ def trailing_stop_check():
                         pnl_abs = shares * (eff_price - entry_price)
                         if sniper._tr():
                             sniper._tr().alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[stop_loss_sell] {type(e).__name__}: {e}")
 
-        if not sold and p.get("trailing_on") and current_price <= p.get("stop_loss", 0):
-            if not p.get("trailing_confirmed"):
-                p["trailing_confirmed"] = True
-                p["trailing_confirm_time"] = now.isoformat()
+        if not sold and p.get(POS_TRAILING_ON) and current_price <= p.get(POS_STOP_LOSS, 0):
+            if not p.get(POS_TRAILING_CONFIRMED):
+                p[POS_TRAILING_CONFIRMED] = True
+                p[POS_TRAILING_CONFIRM_TIME] = now.isoformat()
                 logger.info(f"[TRAILING-STOP] Confirming for {slug[:40]}... (1/2)")
                 positions[slug] = p
                 save_json(POSITIONS_FILE, positions)
                 continue
             else:
-                confirm_time = p.get("trailing_confirm_time")
+                confirm_time = p.get(POS_TRAILING_CONFIRM_TIME)
                 if confirm_time:
                     try:
                         elapsed = (now - datetime.fromisoformat(confirm_time)).total_seconds()
@@ -417,14 +418,14 @@ def trailing_stop_check():
                             continue
                     except (ValueError, TypeError):
                         pass
-            sold_reason = f"trailing={current_price:.3f} <= {p.get('stop_loss', 0):.3f}"
+            sold_reason = f"trailing={current_price:.3f} <= {p.get(POS_STOP_LOSS, 0):.3f}"
             logger.info(f"[TRAILING-STOP] Triggered for {slug[:40]}...")
             try:
                 sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                 if sold:
                     logger.info(f"SOLD trailing stop ({method}): {slug}")
-                    p.pop("trailing_confirmed", None)
-                    p.pop("trailing_confirm_time", None)
+                    p.pop(POS_TRAILING_CONFIRMED, None)
+                    p.pop(POS_TRAILING_CONFIRM_TIME, None)
                     pnl_abs = shares * (eff_price - entry_price)
                     actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                     if sniper._tr():
@@ -432,8 +433,8 @@ def trailing_stop_check():
                             sniper._tr().alert_take_profit(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
                         else:
                             sniper._tr().alert_stop_loss(slug, pos.get("market_question", ""), actual_pnl * 100, pnl_abs)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[trailing_stop_sell] {type(e).__name__}: {e}")
 
         if not sold and current_price >= 0.75:
             tp_orders = om._get_open_tp_orders(slug)
@@ -447,8 +448,8 @@ def trailing_stop_check():
                         pnl_abs = shares * (eff_price - entry_price)
                         if sniper._tr():
                             sniper._tr().alert_take_profit(slug, pos.get("market_question", ""), pnl_pct * 100, pnl_abs)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"[take_profit_sell] {type(e).__name__}: {e}")
             else:
                 logger.info(f"[TAKE-PROFIT] {slug[:40]}... +{pnl_pct:.0f}% but TP ladder active, letting limit orders execute")
 
@@ -470,8 +471,8 @@ def trailing_stop_check():
                     pnl_abs=shares * (eff_price_val - entry_price),
                     reason=sold_reason,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[trade_log] {type(e).__name__}: {e}")
             fresh = load_json(POSITIONS_FILE, {})
             if slug in fresh:
                 del fresh[slug]
@@ -479,10 +480,10 @@ def trailing_stop_check():
                 try:
                     from bayesian_updater import cleanup_slug
                     cleanup_slug(slug)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
         else:
-            p.pop("selling_in_progress", None)
+            p.pop(POS_SELLING_IN_PROGRESS, None)
             positions[slug] = p
             save_json(POSITIONS_FILE, positions)
 
@@ -495,8 +496,8 @@ def trailing_stop_check():
             try:
                 from bayesian_updater import cleanup_slug
                 cleanup_slug(s)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
             logger.info(f"[CLEANUP] Removed stale position: {s}")
     if stale:
         save_json(POSITIONS_FILE, positions)

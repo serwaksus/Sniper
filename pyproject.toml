@@ -1,7 +1,24 @@
-[lint]
-select = ["E", "F", "W", "B", "SIM", "UP"]
-ignore = ["E501", "SIM108", "SIM105"]
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["src", "tests"]
 
-[lint.per-file-ignores]
-"__init__.py" = ["F401"]
-"tests/*" = ["F401", "F841"]
+[tool.ruff.lint]
+select = ["F", "E", "W", "UP", "B", "SIM", "TCH", "RUF"]
+ignore = ["E501", "E731", "SIM108"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["datetime.timedelta"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/news_scanner.py" = ["RUF001"]
+"src/dotm_report.py" = ["RUF001"]
+"tests/test_contracts.py" = ["F403", "F405"]
+"src/calibration_tracker.py" = ["F403", "F405"]
+"src/dotm_sniper.py" = ["F403", "F405"]
+"src/equity_tracker.py" = ["F403", "F405"]
+"src/health_monitor.py" = ["F403", "F405"]
+"src/hermes_advisor.py" = ["F403", "F405"]
+"src/order_manager.py" = ["F403", "F405"]
+"src/sell_executor.py" = ["F403", "F405"]
+"src/signal_pipeline.py" = ["F403", "F405"]

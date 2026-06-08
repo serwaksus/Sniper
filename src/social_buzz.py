@@ -19,7 +19,7 @@ import logging
 import threading
 import requests
 import feedparser
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -39,7 +39,7 @@ GOOGLE_NEWS_URL = "https://news.google.com/rss/search"
 REDDIT_URL = "https://www.reddit.com/search.json"
 
 
-from utils import load_env_file
+from utils import load_env_file  # noqa: E402
 load_env_file()
 
 
@@ -59,7 +59,7 @@ def _get_cached(slug: str) -> dict | None:
         return None
     try:
         ts = datetime.fromisoformat(entry["timestamp"])
-        if (datetime.now(timezone.utc) - ts).total_seconds() < BUZZ_CACHE_TTL:
+        if (datetime.now(UTC) - ts).total_seconds() < BUZZ_CACHE_TTL:
             return entry
     except (ValueError, KeyError):
         pass
@@ -70,7 +70,7 @@ def _set_cached(slug: str, result: dict):
     cache = _get_cache()
     if not isinstance(cache, dict):
         cache = {"entries": {}}
-    _utcnow = datetime.now(timezone.utc)
+    _utcnow = datetime.now(UTC)
     result["timestamp"] = _utcnow.isoformat()
     cache.setdefault("entries", {})[slug] = result
     cutoff = _utcnow - timedelta(seconds=BUZZ_CACHE_TTL * 2)
@@ -137,7 +137,7 @@ def _extract_keywords_simple(question: str) -> list[str]:
     return combined[:5]
 
 
-_GDELT_LOCK = threading.Lock()
+_GDELT_LOCK = threading.RLock()
 _GDELT_LAST_FAIL = 0.0
 _GDELT_COOLDOWN = 600
 _GDELT_FAIL_COUNT = 0
@@ -218,13 +218,13 @@ def fetch_google_news(keywords: list[str]) -> dict:
             return {"count": 0, "status": f"error_{resp.status_code}"}
 
         feed = feedparser.parse(resp.text)
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        cutoff = datetime.now(UTC) - timedelta(hours=24)
         count = 0
         for entry in feed.entries:
             try:
                 pub = entry.get("published_parsed")
                 if pub:
-                    pub_dt = datetime(*pub[:6], tzinfo=timezone.utc)
+                    pub_dt = datetime(*pub[:6], tzinfo=UTC)
                     if pub_dt >= cutoff:
                         count += 1
                 else:

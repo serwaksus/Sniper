@@ -14,6 +14,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
+from schema import *
 
 CALIBRATION_LOG = "/root/dotm-sniper/calibration_log.json"
 HYPOTHESIS_DB = "/root/dotm-sniper/hypothesis_db.json"
@@ -32,18 +33,18 @@ def log_calibration_entry(slug: str, question: str, p_model: float,
     if not isinstance(log, dict):
         log = {"entries": []}
 
-    if any(e.get("slug") == slug for e in log.get("entries", [])):
+    if any(e.get(HYP_SLUG) == slug for e in log.get("entries", [])):
         return
 
     actual_bin = 1.0 if actual_outcome == "YES" else 0.0
 
     log["entries"].append({
         "timestamp": datetime.now().isoformat(),
-        "slug": slug,
+        HYP_SLUG: slug,
         "question": question[:80],
-        "p_model": round(p_model, 4),
+        HYP_P_MODEL: round(p_model, 4),
         "p_calibrated": round(p_calibrated, 4),
-        "market_price": round(market_price, 4),
+        HYP_MARKET_PRICE: round(market_price, 4),
         "actual_outcome": actual_outcome,
         "actual_bin": actual_bin,
         "cluster": cluster,
@@ -75,9 +76,9 @@ def compute_calibration_curve(bins: int = 10) -> dict:
     for i in range(bins):
         low = i * bucket_size
         high = (i + 1) * bucket_size
-        in_bucket = [e for e in actual_outcomes if low <= e["p_model"] < high]
+        in_bucket = [e for e in actual_outcomes if low <= e[HYP_P_MODEL] < high]
         if in_bucket:
-            avg_predicted = sum(e["p_model"] for e in in_bucket) / len(in_bucket)
+            avg_predicted = sum(e[HYP_P_MODEL] for e in in_bucket) / len(in_bucket)
             avg_actual = sum(e["actual_bin"] for e in in_bucket) / len(in_bucket)
             buckets.append({
                 "range": f"{low:.0%}-{high:.0%}",
@@ -97,16 +98,16 @@ def compute_calibration_curve(bins: int = 10) -> dict:
                 "abs_error": 0,
             })
 
-    brier = sum((e["p_model"] - e["actual_bin"]) ** 2 for e in actual_outcomes) / len(actual_outcomes)
+    brier = sum((e[HYP_P_MODEL] - e["actual_bin"]) ** 2 for e in actual_outcomes) / len(actual_outcomes)
     cal_entries = [e for e in actual_outcomes if e.get("p_calibrated") is not None]
     if cal_entries:
         brier_cal = sum((e["p_calibrated"] - e["actual_bin"]) ** 2 for e in cal_entries) / len(cal_entries)
     else:
         brier_cal = None
 
-    low_p = [e for e in actual_outcomes if e["p_model"] < 0.15]
+    low_p = [e for e in actual_outcomes if e[HYP_P_MODEL] < 0.15]
     if low_p:
-        low_p_predicted = sum(e["p_model"] for e in low_p) / len(low_p)
+        low_p_predicted = sum(e[HYP_P_MODEL] for e in low_p) / len(low_p)
         low_p_actual = sum(e["actual_bin"] for e in low_p) / len(low_p)
         overestimation = round((low_p_predicted - low_p_actual) / max(low_p_predicted, 0.01), 2)
     else:
@@ -123,7 +124,7 @@ def compute_calibration_curve(bins: int = 10) -> dict:
         wins = sum(1 for e in centries if e["pnl_pct"] > 0)
         losses = sum(1 for e in centries if e["pnl_pct"] < 0)
         avg_pnl = sum(e["pnl_pct"] for e in centries) / len(centries) if centries else 0
-        cluster_brier = sum((e["p_model"] - e["actual_bin"]) ** 2 for e in centries) / len(centries)
+        cluster_brier = sum((e[HYP_P_MODEL] - e["actual_bin"]) ** 2 for e in centries) / len(centries)
         cluster_stats[cluster] = {
             "count": len(centries),
             "win_rate": round(wins / max(wins + losses, 1), 3),
@@ -134,7 +135,7 @@ def compute_calibration_curve(bins: int = 10) -> dict:
     total = len(actual_outcomes)
     correct_direction = 0
     for e in actual_outcomes:
-        pred_yes = e["p_model"] > 0.5
+        pred_yes = e[HYP_P_MODEL] > 0.5
         actual_yes = e["actual_outcome"] == "YES"
         if pred_yes == actual_yes:
             correct_direction += 1
@@ -166,12 +167,12 @@ def detect_model_drift(window_days: int = 90, min_trades: int = 10) -> str | Non
     if len(recent) < min_trades:
         return None
 
-    recent_brier = sum((e["p_model"] - e["actual_bin"]) ** 2 for e in recent) / len(recent)
+    recent_brier = sum((e[HYP_P_MODEL] - e["actual_bin"]) ** 2 for e in recent) / len(recent)
     older = [e for e in entries if e.get("timestamp", "") < cutoff and e.get("actual_outcome") in ("YES", "NO")]
     if len(older) < min_trades:
         return None
 
-    older_brier = sum((e["p_model"] - e["actual_bin"]) ** 2 for e in older) / len(older)
+    older_brier = sum((e[HYP_P_MODEL] - e["actual_bin"]) ** 2 for e in older) / len(older)
     degradation = recent_brier - older_brier
 
     if degradation > 0.05:
@@ -181,37 +182,37 @@ def detect_model_drift(window_days: int = 90, min_trades: int = 10) -> str | Non
 
 
 def sync_from_hypothesis_db():
-    db = load_json(HYPOTHESIS_DB, {"hypotheses": [], "resolved": []})
+    db = load_json(HYPOTHESIS_DB, {HYP_DB_HYPOTHESES: [], HYP_RESOLVED: []})
     if not isinstance(db, dict):
         return 0
 
     log = load_json(CALIBRATION_LOG, {"entries": []})
     if not isinstance(log, dict):
         log = {"entries": []}
-    existing_slugs = {e["slug"] for e in log["entries"]}
+    existing_slugs = {e[HYP_SLUG] for e in log["entries"]}
 
     added = 0
-    for h in db.get("hypotheses", []):
-        if not h.get("resolved"):
+    for h in db.get(HYP_DB_HYPOTHESES, []):
+        if not h.get(HYP_RESOLVED):
             continue
-        if h.get("slug") in existing_slugs:
+        if h.get(HYP_SLUG) in existing_slugs:
             continue
-        if h.get("outcome") not in ("YES", "NO"):
+        if h.get(HYP_OUTCOME) not in ("YES", "NO"):
             continue
-        if h.get("p_model") is None:
+        if h.get(HYP_P_MODEL) is None:
             continue
 
         log["entries"].append({
             "timestamp": h.get("resolved_at", datetime.now().isoformat()),
-            "slug": h["slug"],
+            HYP_SLUG: h[HYP_SLUG],
             "question": h.get("question", "")[:80],
-            "p_model": h.get("p_model", 0),
+            HYP_P_MODEL: h.get(HYP_P_MODEL, 0),
             "p_calibrated": 0,
-            "market_price": h.get("market_price", 0),
-            "actual_outcome": h["outcome"],
-            "actual_bin": 1.0 if h["outcome"] == "YES" else 0.0,
+            HYP_MARKET_PRICE: h.get(HYP_MARKET_PRICE, 0),
+            "actual_outcome": h[HYP_OUTCOME],
+            "actual_bin": 1.0 if h[HYP_OUTCOME] == "YES" else 0.0,
             "cluster": h.get("clusters", ["other"])[0] if h.get("clusters") else "other",
-            "entry_price": h.get("market_price", 0),
+            "entry_price": h.get(HYP_MARKET_PRICE, 0),
             "exit_price": h.get("exit_price", 0),
             "pnl_pct": h.get("pnl_at_exit", 0),
         })
@@ -256,9 +257,9 @@ def _train_platt_cluster(p_models: list[float], outcomes: list[float]) -> dict |
 
     a, b = 0.0, 0.0
     lr = 0.1
-    for epoch in range(200):
+    for _epoch in range(200):
         grad_a, grad_b = 0.0, 0.0
-        for p, y in zip(p_models, outcomes):
+        for p, y in zip(p_models, outcomes, strict=False):
             p = max(1e-6, min(1 - 1e-6, p))
             logit = math.log(p / (1 - p))
             pred = _sigmoid(a * logit + b)
@@ -280,23 +281,23 @@ def train_platt_models() -> dict:
         log = {"entries": []}
     entries = [e for e in log.get("entries", []) if e.get("actual_outcome") in ("YES", "NO")]
 
-    db = load_json(HYPOTHESIS_DB, {"hypotheses": [], "resolved": []})
+    db = load_json(HYPOTHESIS_DB, {HYP_DB_HYPOTHESES: [], HYP_RESOLVED: []})
     if isinstance(db, dict):
-        seen = {e["slug"] for e in log.get("entries", [])}
-        for h in db.get("hypotheses", []):
-            if not h.get("resolved"):
+        seen = {e[HYP_SLUG] for e in log.get("entries", [])}
+        for h in db.get(HYP_DB_HYPOTHESES, []):
+            if not h.get(HYP_RESOLVED):
                 continue
-            if h.get("outcome") in ("YES", "NO") and h.get("slug") not in seen and h.get("p_model") is not None:
+            if h.get(HYP_OUTCOME) in ("YES", "NO") and h.get(HYP_SLUG) not in seen and h.get(HYP_P_MODEL) is not None:
                 entries.append({
-                    "p_model": h["p_model"],
-                    "actual_bin": 1.0 if h["outcome"] == "YES" else 0.0,
+                    HYP_P_MODEL: h[HYP_P_MODEL],
+                    "actual_bin": 1.0 if h[HYP_OUTCOME] == "YES" else 0.0,
                     "cluster": h.get("clusters", ["other"])[0] if h.get("clusters") else "other",
                 })
 
     by_cluster = defaultdict(lambda: {"p": [], "y": []})
     for e in entries:
         cluster = e.get("cluster", "other")
-        by_cluster[cluster]["p"].append(e["p_model"])
+        by_cluster[cluster]["p"].append(e[HYP_P_MODEL])
         by_cluster[cluster]["y"].append(e["actual_bin"])
 
     global_ps = []

@@ -121,7 +121,7 @@ def simulate_buy(
             result["reason"] = f"spread={spread:.1%} > {MAX_SPREAD_PCT:.0%}"
             return result
 
-    mid_price = (best_ask + best_bid) / 2 if best_bid > 0 else best_ask
+    (best_ask + best_bid) / 2 if best_bid > 0 else best_ask
 
     effective_price, shares, cost = walk_the_book(asks, amount_usd)
 
@@ -226,7 +226,7 @@ def simulate_tp_ladder(
     entry_price: float,
     current_price: float,
     liquidity: float,
-    ladder: list[tuple[float, float]] = None,
+    ladder: list[tuple[float, float]] | None = None,
 ) -> dict:
     """
     Simulate TP ladder execution.
@@ -259,7 +259,7 @@ def simulate_tp_ladder(
             rungs_failed += 1
             continue
 
-        eff_price, filled, proceeds = walk_the_book_sell(bids, rung_shares)
+        _eff_price, filled, proceeds = walk_the_book_sell(bids, rung_shares)
         if filled > 0:
             fee = proceeds * FEE_PCT
             net_proceeds = proceeds - fee

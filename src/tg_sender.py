@@ -12,7 +12,6 @@ Features:
 import os
 import sys
 import time
-import json
 import logging
 import socket
 import threading
@@ -43,7 +42,7 @@ def _patched_getaddrinfo(host, port, *args, **kwargs):
     return _orig_getaddrinfo(host, port, *args, **kwargs)
 socket.getaddrinfo = _patched_getaddrinfo
 
-_tg_lock = threading.Lock()
+_tg_lock = threading.RLock()
 
 
 def _get_credentials():
@@ -141,7 +140,7 @@ def flush_queue(max_messages=10):
             try:
                 if _send_once(token, chat_id, msg["message"]):
                     sent += 1
-                    logger.info(f"[TG-FLUSH] Delivered queued message")
+                    logger.info("[TG-FLUSH] Delivered queued message")
                 else:
                     msg["attempts"] = msg.get("attempts", 0) + 1
                     if msg["attempts"] < 10:

@@ -144,9 +144,7 @@ def evaluate_improvement(baseline_path=BACKTEST_BASELINE_PATH,
     brier_per_cluster = defaultdict(lambda: {"before": [], "after": []})
 
     wins_before = 0
-    wins_after = 0
     losses_before = 0
-    losses_after = 0
     total_traded = 0
 
     for r in results:

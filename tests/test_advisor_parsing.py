@@ -101,7 +101,7 @@ class TestParseFailures(unittest.TestCase):
         self.assertIn("{", err)
 
     def test_malformed_json(self):
-        result, err = parse_llm_advisor_response('{"broken": json}')
+        result, _err = parse_llm_advisor_response('{"broken": json}')
         self.assertIsNone(result)
 
 
@@ -176,17 +176,17 @@ class TestSchemaValidation(unittest.TestCase):
             self.assertEqual(result["verdict"], v)
 
     def test_non_dict_input(self):
-        result, err = parse_llm_advisor_response('[1, 2, 3]')
+        result, _err = parse_llm_advisor_response('[1, 2, 3]')
         self.assertIsNone(result)
 
     def test_boundary_p_estimate_zero(self):
         obj = dict(VALID_RESULT, p_estimate=0.0)
-        result, err = parse_llm_advisor_response(json.dumps(obj))
+        _result, err = parse_llm_advisor_response(json.dumps(obj))
         self.assertIsNone(err)
 
     def test_boundary_p_estimate_one(self):
         obj = dict(VALID_RESULT, p_estimate=1.0)
-        result, err = parse_llm_advisor_response(json.dumps(obj))
+        _result, err = parse_llm_advisor_response(json.dumps(obj))
         self.assertIsNone(err)
 
 

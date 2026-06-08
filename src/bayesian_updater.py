@@ -19,7 +19,7 @@ BAYESIAN_STATE_FILE = "/root/dotm-sniper/bayesian_state.json"
 
 logger = logging.getLogger(__name__)
 
-_bayes_lock = threading.Lock()
+_bayes_lock = threading.RLock()
 
 
 NEWS_LIKELIHOOD = {
@@ -49,8 +49,8 @@ def _get_effective_likelihoods():
                 if cat in base:
                     base[cat] = {"p_yes_given_news": vals["p_yes_given_news"],
                                  "label": base[cat]["label"], "adapted": True, "samples": vals["samples"]}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[bayesian_init] {type(e).__name__}: {e}")
 
     _ADAPTIVE_CACHE["data"] = base
     _ADAPTIVE_CACHE["loaded_at"] = now

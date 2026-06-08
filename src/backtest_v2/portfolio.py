@@ -67,7 +67,7 @@ class Position:
 
 
 class PortfolioTracker:
-    def __init__(self, starting_balance: float = 500.0, profile: dict = None):
+    def __init__(self, starting_balance: float = 500.0, profile: dict | None = None):
         self.starting_balance = starting_balance
         self.balance = starting_balance
         self.positions: dict[str, Position] = {}
@@ -164,7 +164,7 @@ class PortfolioTracker:
         del self.positions[slug]
 
     def position_size(self, p_model: float, market_price: float, cluster: str = "other",
-                      best_ask: float = None) -> float:
+                      best_ask: float | None = None) -> float:
         tier = get_tier(self.balance + sum(p.cost for p in self.positions.values()))
         effective_price = best_ask if best_ask is not None else market_price
         if effective_price <= 0.001:

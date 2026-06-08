@@ -1,0 +1,138 @@
+"""Single source of truth for JSON keys shared across modules."""
+
+# --- equity_curve.json ---
+EQUITY_TIMESTAMP = "timestamp"
+EQUITY_CASH = "cash"
+EQUITY_POSITIONS_VALUE = "positions_value"
+EQUITY_TOTAL = "total_equity"
+EQUITY_UNREALIZED_PNL = "unrealized_pnl"
+EQUITY_NUM_POSITIONS = "num_positions"
+EQUITY_POSITIONS = "positions"
+EQUITY_SNAPSHOTS = "snapshots"
+
+# --- trades_journal.json ---
+JOURNAL_TRADES = "trades"
+JOURNAL_TIMESTAMP = "timestamp"
+JOURNAL_EVENT = "event"
+JOURNAL_SLUG = "slug"
+JOURNAL_QUESTION = "question"
+JOURNAL_ENTRY_PRICE = "entry_price"
+JOURNAL_EXIT_PRICE = "exit_price"
+JOURNAL_SHARES = "shares"
+JOURNAL_INVESTED = "invested"
+JOURNAL_PNL_PCT = "pnl_pct"
+JOURNAL_PNL_ABS = "pnl_abs"
+JOURNAL_REASON = "reason"
+
+# --- positions.json ---
+POS_ENTRY_PRICE = "entry_price"
+POS_HIGH_PRICE = "high_price"
+POS_STOP_LOSS = "stop_loss"
+POS_STOP_TYPE = "stop_type"
+POS_TRAILING_ON = "trailing_on"
+POS_TRAILING_CONFIRMED = "trailing_confirmed"
+POS_TRAILING_CONFIRM_TIME = "trailing_confirm_time"
+POS_SELLING_IN_PROGRESS = "selling_in_progress"
+POS_IN_EMERGENCY_EXIT = "in_emergency_exit"
+POS_SHARES = "shares"
+POS_CLUSTERS = "clusters"
+POS_OUTCOME = "outcome"
+POS_MARKET_QUESTION = "market_question"
+POS_METACULUS_PROB = "metaculus_prob"
+POS_LAST_CHECKED = "last_checked"
+POS_EMERGENCY_EXIT_FAILED = "emergency_exit_failed"
+POS_LAST_EMERGENCY_ATTEMPT = "last_emergency_attempt"
+POS_LIMIT_SELL_ATTEMPTS = "limit_sell_attempts"
+POS_LIMIT_SELL_PRICE = "limit_sell_price"
+POS_LIMIT_SELL_SINCE = "limit_sell_since"
+POS_TP_LADDER_FAILED = "tp_ladder_failed"
+POS_PARTIAL_FILLS = "partial_fills"
+POS_PARTIAL_PROCEEDS = "partial_proceeds"
+POS_SHARES_AT_TP_OPEN = "shares_at_tp_open"
+
+# --- hypothesis_db.json (top-level) ---
+HYP_DB_HYPOTHESES = "hypotheses"
+HYP_DB_RESOLVED = "resolved"
+
+# --- hypothesis_db.json (per-hypothesis) ---
+HYP_SLUG = "slug"
+HYP_QUESTION = "question"
+HYP_MARKET_PRICE = "market_price"
+HYP_P_MODEL = "p_model"
+HYP_PROB_RATIO = "prob_ratio"
+HYP_CONFIDENCE = "confidence"
+HYP_FACTORS = "factors"
+HYP_CLUSTERS = "clusters"
+HYP_SIZE_PCT = "size_pct"
+HYP_CREATED_AT = "created_at"
+HYP_RESOLVED = "resolved"
+HYP_RESOLVED_AT = "resolved_at"
+HYP_OUTCOME = "outcome"
+HYP_SOURCE_SIGNAL = "source_signal"
+HYP_TP_LIMIT_PLACED = "tp_limit_placed"
+HYP_TP_LIMIT_PRICE = "tp_limit_price"
+HYP_RESOLUTION_NOTE = "resolution_note"
+HYP_EXIT_PRICE = "exit_price"
+HYP_PNL_AT_EXIT = "pnl_at_exit"
+HYP_EXIT_TYPE = "exit_type"
+HYP_SOLD_PNL_PCT = "sold_pnl_pct"
+
+# --- health_state.json ---
+HEALTH_LAST_CYCLE_START = "last_cycle_start"
+HEALTH_LAST_ALERTS = "last_alerts"
+HEALTH_LAST_EQUITY = "last_equity"
+
+# --- bot_settings.json ---
+SETTINGS_SIGNAL_THRESHOLD = "signal_threshold"
+SETTINGS_MIN_P_MODEL = "min_p_model"
+SETTINGS_MIN_CONFIDENCE = "min_confidence"
+SETTINGS_MAX_CONCURRENT = "MAX_CONCURRENT_TRADES"
+SETTINGS_TOTAL_RESOLVED = "total_resolved"
+SETTINGS_LAST_BACKTEST = "last_backtest_timestamp"
+SETTINGS_CALIBRATION_BRIER = "calibration_brier"
+SETTINGS_POSITION_SIZE_PCT = "position_size_pct"
+SETTINGS_STARTING_BALANCE = "starting_balance"
+SETTINGS_CLUSTER_WEIGHTS = "cluster_weights"
+SETTINGS_CLUSTER_SCORE_ADJUSTMENTS = "cluster_score_adjustments"
+SETTINGS_SIGNAL_THRESHOLD_LONG = "signal_threshold_long_horizon"
+SETTINGS_SIGNAL_THRESHOLD_MEDIUM = "signal_threshold_medium_horizon"
+SETTINGS_VERSION = "__version"
+
+# --- price_tracking.json (per-slug entry) ---
+TRACKING_P_MODEL = "p_model"
+TRACKING_LAST_PRICE = "last_price"
+TRACKING_LAST_CHECK = "last_checked"
+
+# --- hermes_alert_state.json ---
+ALERT_POSITION_STATUS = "position_status"
+ALERT_LAST_NOTIFIED = "last_notified_at"
+ALERT_HOLD_COUNTS = "hold_counts"
+ALERT_UPDATED_AT = "updated_at"
+
+# --- source_cache.json ---
+CACHE_METACULUS = "metaculus"
+CACHE_NEWS = "news"
+CACHE_LAST_UPDATE = "last_update"
+CACHE_TIMESTAMP = "timestamp"
+
+# --- calibration_log.json ---
+CAL_LOG_ENTRIES = "entries"
+CAL_LOG_SLUG = "slug"
+CAL_LOG_P_MODEL = "p_model"
+CAL_LOG_P_CALIBRATED = "p_calibrated"
+CAL_LOG_MARKET_PRICE = "market_price"
+CAL_LOG_ACTUAL_OUTCOME = "actual_outcome"
+CAL_LOG_ACTUAL_BIN = "actual_bin"
+CAL_LOG_CLUSTER = "cluster"
+CAL_LOG_PNL_PCT = "pnl_pct"
+
+# --- calibration_model.json ---
+CAL_MODEL_Y_THRESHOLDS = "y_thresholds_"
+CAL_MODEL_X_THRESHOLDS = "X_thresholds_"
+
+# --- platt_model.json ---
+PLATT_MODELS = "models"
+PLATT_TRAINED_AT = "trained_at"
+PLATT_A = "a"
+PLATT_B = "b"
+PLATT_SAMPLES = "samples"

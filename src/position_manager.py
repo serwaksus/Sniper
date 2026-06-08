@@ -108,7 +108,7 @@ def get_category_exposure(balance, portfolio=None):
             exposure[cat] += shares_value
 
     # Log current exposure summary
-    total_exposure = sum(exposure.values())
+    sum(exposure.values())
     for cat, val in sorted(exposure.items(), key=lambda x: -x[1]):
         pct = val / balance if balance > 0 else 0
         logger.info(f"[EXPOSURE] {cat}: ${val:.2f} ({pct:.1%} of balance)")
@@ -131,7 +131,7 @@ def check_category_limits(new_market, new_order_value, total_balance, portfolio=
 
     # NOTE: Inconsistent category detection — get_category_exposure (line ~93) uses CLUSTER_KEYWORDS
     # on slug/question text, while here we use pre-computed clusters from the market object.
-    slug = new_market.get("slug", "").lower()
+    new_market.get("slug", "").lower()
     clusters = new_market.get("clusters", [])
 
     new_categories = set(clusters)
@@ -189,6 +189,12 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
     Returns:
         Dollar amount to bet
     """
+    if not isinstance(p_model, (int, float)) or p_model < 0:
+        return 0
+    if not isinstance(market_price, (int, float)) or market_price <= 0:
+        return 0
+    if not isinstance(balance, (int, float)) or balance <= 0:
+        return 0
     if balance <= 0:
         logger.warning(f"[KELLY] balance=${balance:.2f} <= 0, skipping")
         return 0
@@ -207,7 +213,8 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
         return 0
     b = (1 - effective_price) / effective_price
 
-    p = p_model; q = 1 - p
+    p = p_model
+    q = 1 - p
     kelly_full = (b * p - q) / b
 
     logger.info(f"[KELLY] p={p:.3f}, b={b:.2f}, q={q:.3f}, kelly_full={kelly_full:.4f}")

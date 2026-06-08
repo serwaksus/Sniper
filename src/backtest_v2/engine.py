@@ -40,7 +40,7 @@ def _estimate_signal(market: dict, use_metaculus: bool = True,
     vol = market.get("volume", 1000)
     liq = market.get("liquidity", 100)
     ttl_days = market.get("ttl_days", 30)
-    resolution = market.get("resolution", "NO")
+    market.get("resolution", "NO")
 
     base_ratio = 2.5 if price < 0.03 else (2.0 if price < 0.07 else 1.5)
 
@@ -103,8 +103,8 @@ def run_backtest(
     use_news: bool = True,
     force_refresh: bool = False,
     seed: int = 42,
-    markets: list = None,
-    profile: dict = None,
+    markets: list | None = None,
+    profile: dict | None = None,
 ) -> dict:
     """
     Run realistic event-driven backtest with a single chronological loop.
