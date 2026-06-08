@@ -58,26 +58,61 @@ def load_positions():
     rows = conn.execute("SELECT slug, data FROM positions").fetchall()
     return {row['slug']: json.loads(row['data']) for row in rows}
 
+def _validate_position(data):
+    if not isinstance(data, dict):
+        return
+    for key in ("entry_price", "shares", "stop_loss", "high_price"):
+        val = data.get(key)
+        if val is not None and not isinstance(val, (int, float)):
+            raise ValueError(f"Position field '{key}' must be numeric, got {type(val).__name__}: {val}")
+    shares = data.get("shares")
+    if shares is not None and shares < 0:
+        raise ValueError(f"Position shares must be >= 0, got {shares}")
+
 def save_positions(positions_dict):
-    """Save all positions (full replace)."""
     conn = _get_conn()
     now = time.time()
     conn.execute("BEGIN IMMEDIATE")
-    conn.execute("DELETE FROM positions")
+    current_slugs = [row[0] for row in conn.execute("SELECT slug FROM positions").fetchall()]
+    for slug in current_slugs:
+        if slug not in positions_dict:
+            conn.execute("DELETE FROM positions WHERE slug = ?", (slug,))
     for slug, data in positions_dict.items():
+        try:
+            _validate_position(data)
+        except ValueError as e:
+            import logging
+            logging.getLogger(__name__).error(f"[DB-VALIDATE] {e}")
+            raise
         conn.execute(
-            "INSERT INTO positions (slug, data, updated_at) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO positions (slug, data, updated_at) VALUES (?, ?, ?)",
             (slug, json.dumps(data, default=str), now)
         )
     conn.commit()
 
 def update_position(slug, data):
-    """Update or insert a single position (merge-safe)."""
     conn = _get_conn()
-    conn.execute(
-        "INSERT OR REPLACE INTO positions (slug, data, updated_at) VALUES (?, ?, ?)",
-        (slug, json.dumps(data, default=str), time.time())
-    )
+    now = time.time()
+    try:
+        _validate_position(data)
+    except ValueError as e:
+        import logging
+        logging.getLogger(__name__).error(f"[DB-VALIDATE] {e}")
+        raise
+    conn.execute("BEGIN IMMEDIATE")
+    existing = conn.execute("SELECT data FROM positions WHERE slug = ?", (slug,)).fetchone()
+    if existing:
+        merged = json.loads(existing['data'])
+        merged.update(data)
+        conn.execute(
+            "INSERT OR REPLACE INTO positions (slug, data, updated_at) VALUES (?, ?, ?)",
+            (slug, json.dumps(merged, default=str), now)
+        )
+    else:
+        conn.execute(
+            "INSERT OR REPLACE INTO positions (slug, data, updated_at) VALUES (?, ?, ?)",
+            (slug, json.dumps(data, default=str), now)
+        )
     conn.commit()
 
 def delete_position(slug):
@@ -87,10 +122,15 @@ def delete_position(slug):
     conn.commit()
 
 def merge_save_positions(updated_positions):
-    """Merge updated positions into existing data (same as hermes _merge_save_positions)."""
     conn = _get_conn()
     now = time.time()
     for slug, data in updated_positions.items():
+        try:
+            _validate_position(data)
+        except ValueError as e:
+            import logging
+            logging.getLogger(__name__).error(f"[DB-VALIDATE] {e}")
+            raise
         existing = conn.execute(
             "SELECT data FROM positions WHERE slug = ?", (slug,)
         ).fetchone()
@@ -111,16 +151,18 @@ def load_hypotheses():
     return {"hypotheses": {row['slug']: json.loads(row['data']) for row in rows}}
 
 def save_hypotheses(db_dict):
-    """Save hypothesis database."""
     conn = _get_conn()
     now = time.time()
     hypotheses = db_dict.get("hypotheses", {})
     conn.execute("BEGIN IMMEDIATE")
-    conn.execute("DELETE FROM hypotheses")
+    current_slugs = [row[0] for row in conn.execute("SELECT slug FROM hypotheses").fetchall()]
+    for slug in current_slugs:
+        if slug not in hypotheses:
+            conn.execute("DELETE FROM hypotheses WHERE slug = ?", (slug,))
     for slug, data in hypotheses.items():
         resolved = 1 if data.get("resolved") else 0
         conn.execute(
-            "INSERT INTO hypotheses (slug, data, resolved, updated_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO hypotheses (slug, data, resolved, updated_at) VALUES (?, ?, ?, ?)",
             (slug, json.dumps(data, default=str), resolved, now)
         )
     conn.commit()
@@ -155,13 +197,23 @@ def load_hypothesis(slug):
     return json.loads(row['data']) if row else None
 
 def update_hypothesis(slug, data):
-    """Update or insert a single hypothesis."""
     conn = _get_conn()
+    now = time.time()
     resolved = 1 if data.get("resolved") else 0
-    conn.execute(
-        "INSERT OR REPLACE INTO hypotheses (slug, data, resolved, updated_at) VALUES (?, ?, ?, ?)",
-        (slug, json.dumps(data, default=str), resolved, time.time())
-    )
+    conn.execute("BEGIN IMMEDIATE")
+    existing = conn.execute("SELECT data FROM hypotheses WHERE slug = ?", (slug,)).fetchone()
+    if existing:
+        merged = json.loads(existing['data'])
+        merged.update(data)
+        conn.execute(
+            "INSERT OR REPLACE INTO hypotheses (slug, data, resolved, updated_at) VALUES (?, ?, ?, ?)",
+            (slug, json.dumps(merged, default=str), resolved, now)
+        )
+    else:
+        conn.execute(
+            "INSERT OR REPLACE INTO hypotheses (slug, data, resolved, updated_at) VALUES (?, ?, ?, ?)",
+            (slug, json.dumps(data, default=str), resolved, now)
+        )
     conn.commit()
 
 def delete_hypothesis(slug):

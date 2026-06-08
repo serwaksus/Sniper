@@ -38,3 +38,5 @@ ENV/
 sniper.pid
 *.migrated
 sniper.db
+sniper.db-shm
+sniper.db-wal

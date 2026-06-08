@@ -801,6 +801,40 @@ def _summarize_cache():
         return "cache=error"
 
 
+def _check_sqlite_integrity(state):
+    try:
+        import db
+        db.init_db()
+        conn = db._get_conn()
+        result = conn.execute("PRAGMA integrity_check").fetchone()
+        if result[0] != "ok":
+            return ("SQLITE_CORRUPT",
+                    f"🗄️ <b>SQLite integrity check FAILED</b>\n"
+                    f"• Result: {result[0]}")
+        pos_count = conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
+        hyp_count = conn.execute("SELECT COUNT(*) FROM hypotheses").fetchone()[0]
+        logger.info(f"[SQLITE] integrity=ok positions={pos_count} hypotheses={hyp_count}")
+        return None
+    except Exception as e:
+        return ("SQLITE_ERROR",
+                f"🗄️ <b>SQLite error</b>\n"
+                f"• {str(e)[:100]}")
+
+
+def _check_trade_activity(state):
+    try:
+        import db as _db
+        settings = _db.load_settings()
+        no_trade_cycles = settings.get("no_trade_cycles", 0)
+        if no_trade_cycles >= 3:
+            return ("TRADE_ACTIVITY",
+                    f"💤 <b>No trades for {no_trade_cycles} cycles</b>\n"
+                    f"• Bot alive but not evaluating trades — check signal pipeline")
+        return None
+    except Exception:
+        return None
+
+
 def run_health_check():
     state = _load_state()
     lines = _read_recent_log(hours=24)
@@ -830,6 +864,8 @@ def run_health_check():
         lambda: _check_api_keys(state),
         lambda: _check_memory(state),
         lambda: _check_log_size(state),
+        lambda: _check_sqlite_integrity(state),
+        lambda: _check_trade_activity(state),
     ]
 
     summaries = [
@@ -856,6 +892,8 @@ def run_health_check():
         lambda: "api_keys=deepseek_ping",
         lambda: "memory=ps_aux_rss",
         lambda: "log_size=7_files_50mb",
+        lambda: "sqlite=integrity_check",
+        lambda: "trade_activity=cycle_counter",
     ]
 
     check_names = [
@@ -864,7 +902,7 @@ def run_health_check():
         "hypothesis_db", "winrate", "calib_overfit", "cache",
         "telegram", "crash_freq", "json_integrity", "cron_health",
         "llm_errors", "screen_sessions", "disk_inodes", "pm_trader",
-        "api_keys", "memory", "log_size",
+        "api_keys", "memory", "log_size", "sqlite_integrity", "trade_activity",
     ]
 
     issue_count = 0
@@ -895,7 +933,7 @@ def run_health_check():
     _save_state(state)
 
     if issue_count == 0:
-        logger.info("[HEALTH] All 23 checks passed")
+        logger.info("[HEALTH] All 25 checks passed")
         return
 
     for alert_key, message in alerts:
@@ -905,7 +943,7 @@ def run_health_check():
 
 
 def run_hourly_report():
-    """Run all 23 checks, send ONE aggregated Telegram message with all issues.
+    """Run all 25 checks, send ONE aggregated Telegram message with all issues.
     Called by cron every hour. Ignores cooldown — always reports full status."""
     state = _load_state()
     lines = _read_recent_log(hours=24)
@@ -934,6 +972,8 @@ def run_hourly_report():
         lambda: _check_api_keys(state),
         lambda: _check_memory(state),
         lambda: _check_log_size(state),
+        lambda: _check_sqlite_integrity(state),
+        lambda: _check_trade_activity(state),
     ]
 
     check_names = [
@@ -942,7 +982,7 @@ def run_hourly_report():
         "hypothesis_db", "winrate", "calib_overfit", "cache",
         "telegram", "crash_freq", "json_integrity", "cron_health",
         "llm_errors", "screen_sessions", "disk_inodes", "pm_trader",
-        "api_keys", "memory", "log_size",
+        "api_keys", "memory", "log_size", "sqlite_integrity", "trade_activity",
     ]
 
     issues = []
@@ -967,7 +1007,7 @@ def run_hourly_report():
 
     ts = datetime.now().strftime("%m/%d %H:%M")
     if not issues:
-        logger.info(f"[HOURLY] ({ts}): All 23 checks OK")
+        logger.info(f"[HOURLY] ({ts}): All 25 checks OK")
         return []
 
     msg = f"🔬 DOTM Hourly ({ts}): {len(issues)} issues / {ok_count} OK\n\n"

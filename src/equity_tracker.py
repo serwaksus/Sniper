@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils import load_json, save_json
+from utils import load_json, save_json, check_and_write_pid, cleanup_pid_file
 from schema import (
     EQUITY_CASH, EQUITY_NUM_POSITIONS, EQUITY_POSITIONS, EQUITY_POSITIONS_VALUE,
     EQUITY_SNAPSHOTS, EQUITY_TIMESTAMP, EQUITY_TOTAL, EQUITY_UNREALIZED_PNL,
@@ -266,4 +266,10 @@ def main():
 
 
 if __name__ == "__main__":
+    EQUITY_PID_FILE = "/tmp/equity_tracker.pid"
+    if not check_and_write_pid(EQUITY_PID_FILE):
+        print("Another equity_tracker instance running, exiting")
+        sys.exit(1)
+    import atexit
+    atexit.register(lambda: cleanup_pid_file(EQUITY_PID_FILE))
     main()

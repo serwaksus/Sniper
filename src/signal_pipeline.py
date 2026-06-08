@@ -76,6 +76,17 @@ DATE_WINDOW_DAYS = 7
 
 CACHE_FILE = "/root/dotm-sniper/source_cache.json"
 
+_llm_call_times = []
+
+def _check_llm_circuit_breaker():
+    now = time.time()
+    _llm_call_times[:] = [t for t in _llm_call_times if now - t < 3600]
+    if len(_llm_call_times) >= 60:
+        logger.warning("[LLM-CB] Circuit breaker: 60 calls/hour limit reached, skipping")
+        return False
+    _llm_call_times.append(now)
+    return True
+
 
 # ── Cache helpers ────────────────────────────────────────────
 
@@ -782,25 +793,30 @@ Rules:
 - IMPORTANT: For DOTM markets (price < 5%), even small probability increases are significant"""
 
     resp = None
-    for _attempt in range(3):
-        try:
-            resp = requests.post(URL, headers=HEADERS, json={
-                "model": MODEL_MAIN,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 500
-            }, timeout=60)
-            break
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as _e:
-            if _attempt < 2:
-                _backoff = 2 ** (_attempt + 1)
-                logger.warning(f"[ANALYSIS] LLM retry {_attempt+1}/3 in {_backoff}s: {_e}")
-                time.sleep(_backoff)
-            else:
-                logger.error(f"[ANALYSIS] LLM error after 3 retries: {_e}")
-                p_model_llm = market["price"] * 2
-                factors = []
-                resp = None
+    if not _check_llm_circuit_breaker():
+        p_model_llm = market["price"] * 2
+        factors = []
+        resp = None
+    else:
+        for _attempt in range(3):
+            try:
+                resp = requests.post(URL, headers=HEADERS, json={
+                    "model": MODEL_MAIN,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 500
+                }, timeout=60)
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as _e:
+                if _attempt < 2:
+                    _backoff = 2 ** (_attempt + 1)
+                    logger.warning(f"[ANALYSIS] LLM retry {_attempt+1}/3 in {_backoff}s: {_e}")
+                    time.sleep(_backoff)
+                else:
+                    logger.error(f"[ANALYSIS] LLM error after 3 retries: {_e}")
+                    p_model_llm = market["price"] * 2
+                    factors = []
+                    resp = None
     try:
         if resp is None:
             raise Exception("LLM unavailable after retries")
@@ -1034,23 +1050,27 @@ Rules:
 CRITICAL REGULATION FOR CONFIDENCE SCORING: Do NOT default to a flat 0.65 confidence across multiple markets just to pass filters. You must utilize the full analytical spectrum from 0.65 to 1.0 based on the robustness of available data, market volume, and time to resolution. If a market has weak evidence, score it near 0.65. If the evidence is solid and aligned with predictive markets, score it between 0.80 and 0.95. Generating a flat 0.65 across the entire batch will break the downstream composite scoring and will be treated as an invalid evaluation."""
 
     resp = None
-    for _attempt in range(3):
-        try:
-            resp = requests.post(URL, headers=HEADERS, json={
-                "model": MODEL_MAIN,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 2000
-            }, timeout=90)
-            break
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as _e:
-            if _attempt < 2:
-                _backoff = 2 ** (_attempt + 1)
-                logger.warning(f"[BATCH] LLM retry {_attempt+1}/3 in {_backoff}s: {_e}")
-                time.sleep(_backoff)
-            else:
-                logger.error(f"[BATCH] LLM error after 3 retries: {_e}")
-                resp = None
+    if not _check_llm_circuit_breaker():
+        logger.warning("[BATCH] Circuit breaker tripped, falling back to individual analysis")
+        resp = None
+    else:
+        for _attempt in range(3):
+            try:
+                resp = requests.post(URL, headers=HEADERS, json={
+                    "model": MODEL_MAIN,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 2000
+                }, timeout=90)
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as _e:
+                if _attempt < 2:
+                    _backoff = 2 ** (_attempt + 1)
+                    logger.warning(f"[BATCH] LLM retry {_attempt+1}/3 in {_backoff}s: {_e}")
+                    time.sleep(_backoff)
+                else:
+                    logger.error(f"[BATCH] LLM error after 3 retries: {_e}")
+                    resp = None
     try:
         if resp is None:
             raise Exception("LLM unavailable after retries")
@@ -1400,6 +1420,13 @@ Rules:
 - UNKNOWN: Insufficient information to verify. Default safe choice."""
 
     try:
+        if not _check_llm_circuit_breaker():
+            size_pct = estimated_size / balance if balance > 0 else 1
+            if size_pct <= 0.02:
+                logger.info("[ADVISOR] Circuit breaker, but micro-position <=2%, allowing")
+                return True, "UNKNOWN", 0.0, "advisor_cb_micro_override"
+            logger.warning("[ADVISOR] Circuit breaker tripped, blocking trade")
+            return False, "UNKNOWN", 0.0, "advisor_circuit_breaker"
         resp = requests.post(URL, headers=HEADERS, json={
             "model": ADVISOR_MODEL,
             "messages": [{"role": "user", "content": prompt}],

@@ -12,12 +12,17 @@ import logging
 import os
 import re
 import sys
-import fcntl
+import atexit
 import html
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
-from utils import load_json, save_json, _normalize_keys, _strip_dict_keys_recursive, sanitize_for_prompt
+from utils import load_json, save_json, sanitize_for_prompt, check_and_write_pid, cleanup_pid_file
+from positions_db import load_all as load_positions
+from hypotheses_db import load_all as load_hypotheses
+
+ADVISOR_PID_FILE = "/tmp/advisor_script.pid"
+atexit.register(lambda: cleanup_pid_file(ADVISOR_PID_FILE))
 
 load_json_safe = load_json
 save_json_safe = save_json
@@ -241,7 +246,7 @@ def get_bot_status():
     return {"portfolio": [], "balance": {}}
 
 def get_positions_tracking():
-    return load_json_safe('/root/dotm-sniper/positions.json', {})
+    return load_positions()
 
 def analyze_market(market_slug, market_question, current_price, entry_price):
     prompt = f"""You are DOTM Advisor - independent analyst comparing analysis with a trading bot.
@@ -291,7 +296,7 @@ Return ONLY JSON:
 
 def get_hypothesis_p_model(slug):
     try:
-        db = load_json('/root/dotm-sniper/hypothesis_db.json', {})
+        db = load_hypotheses()
         for h in db.get('hypotheses', []):
             if h['slug'] == slug and not h.get('resolved'):
                 return h.get('p_model')
@@ -508,4 +513,7 @@ def run_advisory_cycle():
     _update_advisor_state(analyzed, schedule)
 
 if __name__ == "__main__":
+    if not check_and_write_pid(ADVISOR_PID_FILE):
+        print("Another advisor_script instance running, exiting")
+        sys.exit(1)
     run_advisory_cycle()

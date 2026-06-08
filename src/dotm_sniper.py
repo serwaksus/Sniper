@@ -171,6 +171,24 @@ def parse_llm_json(response_text):
 
 
 
+def validate_settings(s):
+    errors = []
+    if s.get("min_p_model", 0) <= 0:
+        errors.append("min_p_model must be > 0")
+    if s.get("max_concurrent_trades", 1) <= 0:
+        errors.append("max_concurrent_trades must be >= 1")
+    if not (0 < s.get("signal_threshold", 55) <= 100):
+        errors.append("signal_threshold must be in (0, 100]")
+    if not (0 <= s.get("min_confidence", 0.65) <= 1):
+        errors.append("min_confidence must be in [0, 1]")
+    if s.get("position_size_pct", 0.03) <= 0:
+        errors.append("position_size_pct must be > 0")
+    if errors:
+        logger.error(f"[SETTINGS-INVALID] {errors}")
+        raise ValueError(f"Invalid settings: {errors}")
+    return s
+
+
 def get_settings():
     s = load_json(SETTINGS_FILE, {
         SETTINGS_MIN_CONFIDENCE: MIN_CONFIDENCE,
@@ -353,6 +371,7 @@ def _main_inner():
     repair_positions_file()
 
     settings = get_settings()
+    validate_settings(settings)
     last_backtest = settings.get(SETTINGS_LAST_BACKTEST, 0)
     import time as _time
     now_ts = _time.time()
@@ -552,6 +571,8 @@ def _main_inner():
                 HYP_CLUSTERS: [cluster],
                 HYP_SIZE_PCT: estimated_size / total_balance
             })
+
+        time.sleep(0.5)
 
     print(f"\n✅ Bought: {candidates_bought} | Available: ${available_balance:.2f}")
 

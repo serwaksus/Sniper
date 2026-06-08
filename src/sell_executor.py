@@ -133,7 +133,17 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
 
     logger.info(f"[MARKET-SELL] {slug[:40]}... bid={best_bid:.4f} spread=${spread:.4f}")
     try:
-        res = subprocess.run(["pm-trader", "sell", slug, outcome, str(int(shares))],
+        current_portfolio = _get_om().get_portfolio()
+        if current_portfolio is None:
+            return False, best_bid, "portfolio_error"
+        actual_shares = 0
+        for p in current_portfolio:
+            if p.get("slug") == slug or p.get("market_slug") == slug:
+                actual_shares = float(p.get("size", p.get("shares", 0)))
+                break
+        if actual_shares <= 0:
+            return False, best_bid, "already_sold"
+        res = subprocess.run(["pm-trader", "sell", slug, outcome, str(int(actual_shares))],
                              capture_output=True, text=True, timeout=20, start_new_session=True)
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
@@ -240,7 +250,7 @@ def trailing_stop_check():
         logger.error("[STOP_LOSS] Portfolio API error, skipping this cycle")
         return
     if not portfolio:
-        return
+        pass
 
     current_slugs = {p["market_slug"] for p in portfolio}
     now = datetime.now()
@@ -300,8 +310,23 @@ def trailing_stop_check():
         p = positions[slug]
 
         if p.get(POS_SELLING_IN_PROGRESS):
-            logger.info(f"[SKIP] {slug[:40]}... sell already in progress")
-            continue
+            sell_since = p.get(POS_LIMIT_SELL_SINCE)
+            if sell_since:
+                try:
+                    elapsed = (datetime.utcnow() - datetime.fromisoformat(str(sell_since))).total_seconds()
+                    if elapsed > 3600:
+                        logger.warning(f"[STUCK-SELL] {slug[:60]} selling_in_progress for {int(elapsed)}s, clearing")
+                        p[POS_SELLING_IN_PROGRESS] = False
+                        positions_db.update(slug, {POS_SELLING_IN_PROGRESS: False})
+                    else:
+                        logger.info(f"[SKIP] {slug[:40]}... sell already in progress")
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            else:
+                logger.warning(f"[STUCK-SELL] {slug[:60]} selling_in_progress without timestamp, clearing")
+                p[POS_SELLING_IN_PROGRESS] = False
+                positions_db.update(slug, {POS_SELLING_IN_PROGRESS: False})
 
         last_checked = None
         if p.get(POS_LAST_CHECKED):
