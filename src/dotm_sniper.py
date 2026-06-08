@@ -24,10 +24,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 
 import positions_db
+import hypotheses_db
 from news_scanner import check_market_news
 from utils import load_json, save_json, check_and_write_pid, cleanup_pid_file
 from equity_tracker import log_equity_snapshot
 from correlation_matrix import check_correlation_limit
+from db import load_settings as _db_load_settings, save_settings as _db_save_settings
 from schema import (
     HYP_CLUSTERS,
     HYP_DB_HYPOTHESES,
@@ -189,46 +191,32 @@ def validate_settings(s):
     return s
 
 
-def get_settings():
-    s = load_json(SETTINGS_FILE, {
+def _default_settings():
+    return {
         SETTINGS_MIN_CONFIDENCE: MIN_CONFIDENCE,
         SETTINGS_POSITION_SIZE_PCT: MAX_POS_PCT,
         SETTINGS_CALIBRATION_BRIER: None,
         SETTINGS_TOTAL_RESOLVED: 0,
         SETTINGS_SIGNAL_THRESHOLD: 55,
-        SETTINGS_MIN_P_MODEL: MIN_P_MODEL
-    })
+        SETTINGS_MIN_P_MODEL: MIN_P_MODEL,
+    }
+
+def get_settings():
+    s = _db_load_settings()
+    if not s:
+        s = _default_settings()
+        _db_save_settings(s)
     return s
 
 def save_settings(s):
     s[SETTINGS_VERSION] = s.get(SETTINGS_VERSION, 0) + 1
-    save_json(SETTINGS_FILE, s)
+    _db_save_settings(s)
 
 def load_hypothesis_db():
-    db = load_json(HYPOTHESIS_DB, {HYP_DB_HYPOTHESES: [], HYP_DB_RESOLVED: []})
-    dirty = False
-    active = [h for h in db.get(HYP_DB_HYPOTHESES, []) if not h.get(HYP_RESOLVED)]
-    if len(active) != len(db.get(HYP_DB_HYPOTHESES, [])):
-        db[HYP_DB_HYPOTHESES] = active
-        dirty = True
-    deduped = []
-    seen = set()
-    for h in db.get(HYP_DB_RESOLVED, []):
-        if h[HYP_SLUG] not in seen:
-            deduped.append(h)
-            seen.add(h[HYP_SLUG])
-    if len(deduped) != len(db.get(HYP_DB_RESOLVED, [])):
-        db[HYP_DB_RESOLVED] = deduped
-        dirty = True
-    if dirty:
-        save_hypothesis_db(db)
-    return db
+    return hypotheses_db.load_all()
 
 def save_hypothesis_db(db):
-    MAX_RESOLVED = 1000
-    if len(db.get(HYP_DB_RESOLVED, [])) > MAX_RESOLVED:
-        db[HYP_DB_RESOLVED] = db[HYP_DB_RESOLVED][-MAX_RESOLVED:]
-    save_json(HYPOTHESIS_DB, db)
+    hypotheses_db.save_all(db)
 
 def detect_clusters(question):
     question_lower = question.lower()
