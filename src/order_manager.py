@@ -24,8 +24,8 @@ def get_order_book(slug):
         data = json.loads(res.stdout)
         asks = data.get("data", {}).get("asks", [])
         bids = data.get("data", {}).get("bids", [])
-        best_ask = float(asks[0].get("price", 0)) if asks and asks[0].get("price") is not None else None
-        best_bid = float(bids[0].get("price", 0)) if bids and bids[0].get("price") is not None else None
+        best_ask = float(asks[0]["price"]) if asks and float(asks[0].get("price", 0)) > 0 else None
+        best_bid = float(bids[0]["price"]) if bids and float(bids[0].get("price", 0)) > 0 else None
         if best_bid is not None and best_ask is not None:
             mid_price = (best_bid + best_ask) / 2
         else:
@@ -166,12 +166,10 @@ def _place_tp_ladder(slug, outcome, total_shares):
         shares = round(total_shares * pct)
         shares = max(shares, 1)
         if shares * price < 5.0:
-            shares = max(round(5.0 / price), 1)
-        if allocated + shares > total_shares: shares = total_shares - allocated
-        if shares <= 0: continue
-        if shares * price < 5.0:
-            logger.debug(f"[TP-LADDER] Skipping rung @{price:.2f}: value=${shares*price:.2f} < $5 min")
-            continue
+            if allocated < total_shares:
+                shares = total_shares - allocated
+            if shares * price < 5.0:
+                return []
         ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
         results.append((price, shares, ok, m)); allocated += shares
     logger.info(f"[TP-LADDER] {slug[:40]}... placed {len(results)} rungs, {total_shares - allocated} held to expiry")
@@ -194,8 +192,8 @@ def _cancel_all_tp_orders(slug):
         for order in orders:
             order_id = order.get("id")
             if order_id:
-                subprocess.run(["pm-trader", "orders", "cancel", str(order_id)], timeout=20, start_new_session=True)
-                logger.info(f"[TP-CANCEL] Canceled sell order {order_id} for {slug[:40]}...")
+                res = subprocess.run(["pm-trader", "orders", "cancel", str(order_id)], timeout=20, start_new_session=True)
+                logger.info(f"[TP-CANCEL] Canceled sell order {order_id} for {slug[:40]}..., rc={res.returncode}")
     except Exception as e:
         logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
 

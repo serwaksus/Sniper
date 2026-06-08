@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from utils import load_env_file
+from utils import load_env_file, save_json
 load_env_file()
 
 
@@ -164,6 +164,8 @@ class TelegramReporter:
 def get_balance():
     try:
         res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15)
+        if res.returncode != 0:
+            return None
         data = json.loads(res.stdout).get("data", {})
         logger.info(f"Balance fetched: ${data.get('total_value', 0):.2f}")
         return data
@@ -234,8 +236,7 @@ def main():
 
     status_file = "/root/dotm-sniper/current_status.json"
     try:
-        with open(status_file, 'w') as f:
-            json.dump({"balance": balance, "portfolio": portfolio, "updated_at": datetime.now().isoformat()}, f, indent=2, default=str)
+        save_json(status_file, {"balance": balance, "portfolio": portfolio, "updated_at": datetime.now().isoformat()})
         import shutil
         for dest in [
             "/root/.openclaw/workspace/dotm_status.json",

@@ -5,6 +5,7 @@ Learns optimal p_model -> p_calibrated mapping from historical data
 import os
 import sys
 import logging
+import threading
 import numpy as np
 from sklearn.isotonic import IsotonicRegression
 
@@ -23,6 +24,8 @@ class IsotonicCalibrator:
         self.is_fitted = False
 
     def fit(self, hypotheses):
+        self.models = {}
+        self.is_fitted = False
         cluster_data = {}
         for h in hypotheses:
             if h.get("outcome") not in ("YES", "NO"):
@@ -109,12 +112,15 @@ class IsotonicCalibrator:
             return False
 
 
+_calibrator_lock = threading.Lock()
 _calibrator_instance = None
 
 
 def get_calibrator():
     global _calibrator_instance
     if _calibrator_instance is None:
-        _calibrator_instance = IsotonicCalibrator()
-        _calibrator_instance.load()
+        with _calibrator_lock:
+            if _calibrator_instance is None:
+                _calibrator_instance = IsotonicCalibrator()
+                _calibrator_instance.load()
     return _calibrator_instance

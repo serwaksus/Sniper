@@ -103,18 +103,6 @@ def update_daily_stats(balance, portfolio, trades_this_cycle):
     stats["pnl"] = balance.get("total_value", 0) - starting
     save_json(DAILY_STATS_FILE, stats)
 
-def load_cache():
-    cache = load_json(CACHE_FILE, {"metaculus": {}, "news": {}, "last_update": None})
-    now = datetime.now()
-    for section in ("metaculus", "news"):
-        entries = cache.get(section, {})
-        stale = [k for k, v in entries.items()
-                 if isinstance(v, dict) and v.get("timestamp")
-                 and (now - datetime.fromisoformat(v["timestamp"])).total_seconds() > 86400]
-        for k in stale:
-            del entries[k]
-    return cache
-
 def parse_llm_json(response_text):
     start = response_text.find('{')
     if start == -1:
@@ -152,10 +140,6 @@ def parse_llm_json(response_text):
         except json.JSONDecodeError:
             pass
     return None
-
-def save_cache(cache):
-    cache["last_update"] = datetime.now().isoformat()
-    save_json(CACHE_FILE, cache)
 
 def extract_keywords(question):
     stop_words = {"will", "the", "a", "an", "be", "by", "of", "in", "on", "at", "to", "for", "this", "that", "is", "are", "was", "were"}
@@ -246,20 +230,16 @@ def calculate_brier_score(db):
     if old_brier is not None and brier > 0:
         if brier > 0.08 and settings.get("signal_threshold", 55) < 65:
             settings["signal_threshold"] = settings.get("signal_threshold", 55) + 2
-            save_settings(settings)
             logger.info(f"[CALIBRATE] Brier {brier:.3f} > 0.08, raising signal_threshold to {settings['signal_threshold']}")
         elif brier < 0.03 and winrate > 0.1 and settings.get("signal_threshold", 55) > 40:
             settings["signal_threshold"] = settings.get("signal_threshold", 55) - 2
-            save_settings(settings)
             logger.info(f"[CALIBRATE] Brier {brier:.3f} < 0.03, winrate {winrate:.0%}, lowering signal_threshold to {settings['signal_threshold']}")
 
     if winrate == 0 and len(resolved) >= 10 and settings.get("signal_threshold", 55) < 80:
         settings["signal_threshold"] = min(80, settings.get("signal_threshold", 55) + 5)
-        save_settings(settings)
         logger.warning(f"[CALIBRATE] 0% winrate ({len(resolved)} resolved), RAISING signal_threshold to {settings['signal_threshold']} (defensive mode)")
     elif winrate < 0.30 and len(resolved) >= 20 and settings.get("signal_threshold", 55) < 75:
         settings["signal_threshold"] = min(75, settings.get("signal_threshold", 55) + 3)
-        save_settings(settings)
         logger.info(f"[CALIBRATE] Low winrate ({winrate:.0%}, {len(resolved)} resolved), raising signal_threshold to {settings['signal_threshold']}")
 
     settings["calibration_brier"] = brier
@@ -287,7 +267,6 @@ def learn_from_results(db):
     factor_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
     cluster_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
     source_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
-    signal_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
 
     for h in resolved[-50:]:
         outcome = h.get("outcome")
@@ -633,6 +612,8 @@ def _check_price_delta(slug, current_price):
     if entry:
         last_price = entry.get("last_price", 0)
         cached_p_model = entry.get("p_model")
+        if not isinstance(cached_p_model, (int, float)):
+            return True, None
         actual_threshold = max(PRICE_DELTA_THRESHOLD, current_price * 0.10)
         if cached_p_model is not None and abs(current_price - last_price) < actual_threshold:
             logger.info(
@@ -824,10 +805,6 @@ def _main_inner():
     else:
         hours_ago = (now_ts - last_backtest) / 3600
         logger.info(f"[BACKTEST-COOLDOWN] Skipping, last run {hours_ago:.1f}h ago (cooldown={BACKTEST_COOLDOWN_SECONDS/3600:.0f}h)")
-    tier = get_tier_params(500)
-    max_positions = settings.get("MAX_CONCURRENT_TRADES", tier["max_positions"])
-    print(f"⚙️ Tier={tier['tier']}, thresholds: signal={settings.get('signal_threshold', 55)}, min_p_model={settings.get('min_p_model', 0.05):.0%}, confidence={settings['min_confidence']:.2f}, max_pos={max_positions}")
-
     resolve_hypotheses()
     trailing_stop_check()
 

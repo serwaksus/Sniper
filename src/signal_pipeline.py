@@ -10,7 +10,7 @@ import requests
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -138,17 +138,16 @@ def dates_match(date1, date2, window_days=DATE_WINDOW_DAYS):
     d2 = parse_resolve_date(date2)
     if d1 is None or d2 is None:
         return False
-    try:
-        diff = abs((d1 - d2).total_seconds() / 86400)
-    except TypeError:
-        d1 = d1.replace(tzinfo=None) if d1.tzinfo else d1
-        d2 = d2.replace(tzinfo=None) if d2.tzinfo else d2
-        diff = abs((d1 - d2).total_seconds() / 86400)
+    if d1.tzinfo is not None:
+        d1 = d1.astimezone(timezone.utc).replace(tzinfo=None)
+    if d2.tzinfo is not None:
+        d2 = d2.astimezone(timezone.utc).replace(tzinfo=None)
+    diff = abs((d1 - d2).total_seconds() / 86400)
     return diff <= window_days
 
 def get_metaculus_forecast(pm_question, pm_resolve_date=None):
     cache = load_cache()
-    cache_key = pm_question[:120]
+    cache_key = pm_question
 
     if cache_key in cache.get("metaculus", {}):
         cached = cache["metaculus"][cache_key]
@@ -275,7 +274,9 @@ def _generate_search_queries(question):
             phrase = " ".join(words[i:j])
             if len(phrase) >= 4:
                 queries.append(phrase)
-    return queries[:5]
+                if len(queries) >= 5:
+                    return queries
+    return queries
 
 
 def _calculate_metaculus_match(pm_question, result):
@@ -414,7 +415,7 @@ def normalize_probability(p):
     if p is None:
         return 0
     p = float(p)
-    if p > 1.0:
+    if p > 5.0:
         p = p / 100.0
     return max(0.0, min(1.0, p))
 
@@ -535,7 +536,7 @@ def fetch_markets():
                     price = float(price)
                 except (ValueError, TypeError):
                     continue
-                if price is None or price <= 0 or price > 1.0:
+                if price <= 0 or price > 1.0:
                     continue
                 if price <= MAX_PRICE:
                     clusters = detect_clusters(m["question"])
@@ -838,8 +839,6 @@ Rules:
         p_model = max_p_model
 
     metaculus_prob_val = metaculus_gap.get("metaculus_prob") if metaculus_gap else None
-    p_model_raw = p_model
-
     p_model, was_dampened = calibrate_prediction(p_model, market["price"], metaculus_prob_val, cluster=cluster)
 
     settings = get_settings()
@@ -1194,8 +1193,6 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
         if metaculus_cache:
             metaculus_prob = metaculus_cache.get(slug)
 
-        p_model_raw = p_model
-
         p_model, _ = calibrate_prediction(p_model, market_price, metaculus_prob, cluster=cluster)
 
         settings = get_settings()
@@ -1257,7 +1254,6 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
             from social_buzz import compute_buzz_score
             buzz = compute_buzz_score(slug, bi.get("question", ""))
             batch_buzz = buzz.get("buzz_score", 0)
-            signal_score += batch_buzz
         except Exception:
             batch_buzz = 0
 
@@ -1285,6 +1281,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
                 logger.info(f"[META-OVERRIDE-BATCH] {slug[:30]}... p_model={p_model:.1%} from metaculus={metaculus_prob_val:.1%}")
 
         prob_ratio = p_model / market_price if market_price > 0 else 0
+        ratio_score = min(prob_ratio / 3.0, 1.0) * 30
         signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + batch_buzz
 
         action = "BUY" if signal_score >= min_signal and confidence >= settings.get("min_confidence", MIN_CONFIDENCE) and prob_ratio >= MIN_PROB_RATIO else "SKIP"

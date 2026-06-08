@@ -129,7 +129,8 @@ def check_category_limits(new_market, new_order_value, total_balance, portfolio=
     """
     exposure = get_category_exposure(total_balance, portfolio)
 
-    # Detect categories for new market
+    # NOTE: Inconsistent category detection — get_category_exposure (line ~93) uses CLUSTER_KEYWORDS
+    # on slug/question text, while here we use pre-computed clusters from the market object.
     slug = new_market.get("slug", "").lower()
     clusters = new_market.get("clusters", [])
 
@@ -188,6 +189,9 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
     Returns:
         Dollar amount to bet
     """
+    if balance <= 0:
+        logger.warning(f"[KELLY] balance=${balance:.2f} <= 0, skipping")
+        return 0
     if market_price <= 0:
         logger.warning("[KELLY] market_price <= 0, using minimum $5")
         return 0

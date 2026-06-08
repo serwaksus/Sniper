@@ -83,7 +83,15 @@ def _fetch_ddg_news_fallback(keywords: list[str], max_results: int, max_age_days
     Applies freshness filter: only results within max_age_days.
     """
     query = "+".join([requests.utils.quote(k) for k in keywords[:3]])
-    url = f"https://duckduckgo.com/html/?q={query}+news&df=m&ia=news"
+    if max_age_days <= 1:
+        df = "d"
+    elif max_age_days <= 7:
+        df = "w"
+    elif max_age_days <= 30:
+        df = "m"
+    else:
+        df = "y"
+    url = f"https://duckduckgo.com/html/?q={query}+news&df={df}&ia=news"
 
     try:
         headers = {

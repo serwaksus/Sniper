@@ -9,6 +9,7 @@ import sys
 import math
 import time
 import logging
+import threading
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +18,8 @@ from utils import load_json, save_json
 BAYESIAN_STATE_FILE = "/root/dotm-sniper/bayesian_state.json"
 
 logger = logging.getLogger(__name__)
+
+_bayes_lock = threading.Lock()
 
 
 NEWS_LIKELIHOOD = {
@@ -68,65 +71,67 @@ def _logodds_to_prob(lo: float) -> float:
 
 
 def init_posterior(slug: str, p_model: float, p_market: float):
-    state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
-    if not isinstance(state, dict):
-        state = {"positions": {}}
+    with _bayes_lock:
+        state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
+        if not isinstance(state, dict):
+            state = {"positions": {}}
 
-    prior_logodds = _prob_to_logodds(p_model)
-    market_logodds = _prob_to_logodds(p_market)
+        prior_logodds = _prob_to_logodds(p_model)
+        market_logodds = _prob_to_logodds(p_market)
 
-    state["positions"][slug] = {
-        "p_model_entry": round(p_model, 6),
-        "p_market_entry": round(p_market, 6),
-        "prior_logodds": round(prior_logodds, 4),
-        "posterior_logodds": round(prior_logodds, 4),
-        "posterior_prob": round(p_model, 6),
-        "market_logodds": round(market_logodds, 4),
-        "updates": 0,
-        "last_update": datetime.now().isoformat(),
-        "history": [{"t": datetime.now().isoformat(), "posterior": round(p_model, 6), "event": "init"}],
-    }
+        state["positions"][slug] = {
+            "p_model_entry": round(p_model, 6),
+            "p_market_entry": round(p_market, 6),
+            "prior_logodds": round(prior_logodds, 4),
+            "posterior_logodds": round(prior_logodds, 4),
+            "posterior_prob": round(p_model, 6),
+            "market_logodds": round(market_logodds, 4),
+            "updates": 0,
+            "last_update": datetime.now().isoformat(),
+            "history": [{"t": datetime.now().isoformat(), "posterior": round(p_model, 6), "event": "init"}],
+        }
 
-    save_json(BAYESIAN_STATE_FILE, state)
+        save_json(BAYESIAN_STATE_FILE, state)
     logger.info(f"[BAYES] Init {slug[:40]}... prior={p_model:.1%}, logodds={prior_logodds:.2f}")
 
 
 def update_posterior(slug: str, news_category: str, llm_assessment: str | None = None) -> float | None:
-    state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
-    if not isinstance(state, dict):
-        state = {"positions": {}}
+    with _bayes_lock:
+        state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
+        if not isinstance(state, dict):
+            state = {"positions": {}}
 
-    pos = state["positions"].get(slug)
-    if not pos:
-        return None
+        pos = state["positions"].get(slug)
+        if not pos:
+            return None
 
-    likelihoods = _get_effective_likelihoods()
-    likelihood = likelihoods.get(news_category, likelihoods.get("neutral", NEWS_LIKELIHOOD["neutral"]))
-    p_yes_given_news = likelihood["p_yes_given_news"]
-    p_no_given_news = 1 - p_yes_given_news
+        likelihoods = _get_effective_likelihoods()
+        likelihood = likelihoods.get(news_category, likelihoods.get("neutral", NEWS_LIKELIHOOD["neutral"]))
+        p_yes_given_news = likelihood["p_yes_given_news"]
+        p_no_given_news = 1 - p_yes_given_news
 
-    prior = pos["posterior_logodds"]
-    p_prior = _logodds_to_prob(prior)
+        prior = pos["posterior_logodds"]
+        p_prior = _logodds_to_prob(prior)
 
-    lr = math.log(max(p_yes_given_news, 1e-8) / max(p_no_given_news, 1e-8))
-    new_posterior = prior + lr
+        lr = math.log(max(p_yes_given_news, 1e-8) / max(p_no_given_news, 1e-8))
+        new_posterior = prior + lr
 
-    pos["posterior_logodds"] = round(new_posterior, 4)
-    pos["posterior_prob"] = round(_logodds_to_prob(new_posterior), 6)
-    pos["updates"] = pos.get("updates", 0) + 1
-    pos["last_update"] = datetime.now().isoformat()
+        pos["posterior_logodds"] = round(new_posterior, 4)
+        pos["posterior_prob"] = round(_logodds_to_prob(new_posterior), 6)
+        pos["updates"] = pos.get("updates", 0) + 1
+        pos["last_update"] = datetime.now().isoformat()
 
-    if len(pos.get("history", [])) > 100:
-        pos["history"] = pos["history"][-100:]
-    pos.setdefault("history", []).append({
-        "t": datetime.now().isoformat(),
-        "posterior": round(_logodds_to_prob(new_posterior), 6),
-        "event": news_category,
-        "lr": round(lr, 4),
-    })
+        if len(pos.get("history", [])) > 100:
+            pos["history"] = pos["history"][-100:]
+        pos.setdefault("history", []).append({
+            "t": datetime.now().isoformat(),
+            "posterior": round(_logodds_to_prob(new_posterior), 6),
+            "event": news_category,
+            "lr": round(lr, 4),
+        })
 
-    state["positions"][slug] = pos
-    save_json(BAYESIAN_STATE_FILE, state)
+        state["positions"][slug] = pos
+        save_json(BAYESIAN_STATE_FILE, state)
 
     new_prob = _logodds_to_prob(new_posterior)
     p_entry = pos.get("p_model_entry", 0.5)
@@ -215,8 +220,9 @@ Category:"""
 
 
 def cleanup_slug(slug: str):
-    state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
-    if not isinstance(state, dict):
-        return
-    state.get("positions", {}).pop(slug, None)
-    save_json(BAYESIAN_STATE_FILE, state)
+    with _bayes_lock:
+        state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
+        if not isinstance(state, dict):
+            return
+        state.get("positions", {}).pop(slug, None)
+        save_json(BAYESIAN_STATE_FILE, state)

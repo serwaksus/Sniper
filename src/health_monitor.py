@@ -123,7 +123,8 @@ def _check_no_trades(lines, state):
 # ── Check 2: Equity drawdown ────────────────────────────────────
 def _check_equity_drawdown(state):
     try:
-        data = json.load(open(EQUITY_FILE))
+        with open(EQUITY_FILE) as _f:
+            data = json.load(_f)
         snaps = data.get("snapshots", [])
         if len(snaps) < 2:
             return None
@@ -201,7 +202,8 @@ def _check_order_health(state):
 
 # ── Check 4: API health ─────────────────────────────────────────
 def _check_api_health(lines, state):
-    hour_lines = _read_last_hour_log()
+    cutoff = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    hour_lines = [l for l in lines if l[:19] >= cutoff]
     issues = []
 
     llm_errors = sum(1 for l in hour_lines if "LLM error" in l or "LLM unavailable" in l)
@@ -296,7 +298,8 @@ def _check_disk_space(state):
 # ── Check 9: Hypothesis DB growth ───────────────────────────────
 def _check_hypothesis_db(state):
     try:
-        db = json.load(open(HYPOTHESIS_DB_FILE))
+        with open(HYPOTHESIS_DB_FILE) as _f:
+            db = json.load(_f)
         hypotheses = db.get("hypotheses", [])
         unresolved = [h for h in hypotheses if not h.get("resolved")]
         if len(unresolved) > 50:
@@ -311,7 +314,8 @@ def _check_hypothesis_db(state):
 # ── Check 10: Winrate tracker ───────────────────────────────────
 def _check_winrate(state):
     try:
-        db = json.load(open(HYPOTHESIS_DB_FILE))
+        with open(HYPOTHESIS_DB_FILE) as _f:
+            db = json.load(_f)
         resolved = [h for h in db.get("hypotheses", []) if h.get("resolved")]
         if len(resolved) < WINRATE_MIN_SAMPLE:
             return None
@@ -330,7 +334,8 @@ def _check_winrate(state):
 # ── Calibration overfit ─────────────────────────────────────────
 def _check_calibration_overfit(state):
     try:
-        model = json.load(open(CALIBRATION_MODEL_FILE))
+        with open(CALIBRATION_MODEL_FILE) as _f:
+            model = json.load(_f)
     except Exception:
         return None
     issues = []
@@ -351,10 +356,14 @@ def _check_calibration_overfit(state):
 # ── Cache anomalies ─────────────────────────────────────────────
 def _check_cache(state):
     try:
-        tracking = json.load(open(PRICE_TRACKING_FILE))
+        with open(PRICE_TRACKING_FILE) as _f:
+            tracking = json.load(_f)
     except Exception:
         return None
-    high = sum(1 for v in tracking.values() if v.get("p_model", 0) >= 0.85)
+    cutoff = datetime.now() - timedelta(hours=48)
+    high = sum(1 for v in tracking.values()
+               if v.get("p_model", 0) >= 0.85
+               and (not v.get("last_checked") or datetime.fromisoformat(v["last_checked"]) < cutoff))
     if high > 0:
         return "CACHE", f"📦 <b>Cache: {high} entries p_model >= 85%</b>\n• Likely stale — clear price_tracking.json"
     return None
@@ -372,21 +381,12 @@ def _check_telegram(state):
         token, chat_id = _get_credentials()
         if not token:
             return "TG_NO_CRED", "📡 <b>Telegram: no credentials</b>\n• Check .env TG_BOT_TOKEN/TG_CHAT_ID"
-        orig_getaddrinfo = socket.getaddrinfo
-        def _patched(host, port, *a, **kw):
-            if host == TG_API_HOST:
-                return [orig_getaddrinfo(TG_WORKING_IP, port, *a, **kw)[0]]
-            return orig_getaddrinfo(host, port, *a, **kw)
-        socket.getaddrinfo = _patched
-        try:
-            resp = rq.get(
-                f"https://{TG_API_HOST}/bot{token}/getMe",
-                timeout=10,
-            )
-            if not resp.ok:
-                return "TG_API_FAIL", f"📡 <b>Telegram API error</b>\n• getMe returned {resp.status_code}"
-        finally:
-            socket.getaddrinfo = orig_getaddrinfo
+        resp = rq.get(
+            f"https://{TG_API_HOST}/bot{token}/getMe",
+            timeout=10,
+        )
+        if not resp.ok:
+            return "TG_API_FAIL", f"📡 <b>Telegram API error</b>\n• getMe returned {resp.status_code}"
     except Exception as e:
         return "TG_UNREACHABLE", f"📡 <b>Telegram unreachable</b>\n• {str(e)[:100]}"
     return None
@@ -487,7 +487,7 @@ def _check_screen_sessions(state):
                 capture_output=True, text=True, timeout=5, start_new_session=True
             )
             count = sum(1 for l in res.stdout.split("\n")
-                        if l.strip().startswith("root") and f"python3 src/{proc_name}" in l
+                        if f"python3 src/{proc_name}" in l
                         and "SCREEN" not in l and "bash -c" not in l)
             if count == 0:
                 issues.append(f"{proc_name}: NOT RUNNING")
@@ -562,7 +562,22 @@ def _check_pm_trader_health(state):
 
 
 # ── Check 21: API key validity ─────────────────────────────────
+_API_KEY_CACHE = {"ts": None, "issues": None}
+
+
 def _check_api_keys(state):
+    now = datetime.now()
+    if _API_KEY_CACHE["ts"] is not None:
+        try:
+            if (now - _API_KEY_CACHE["ts"]).total_seconds() < 6 * 3600:
+                if _API_KEY_CACHE["issues"]:
+                    return ("API_KEYS",
+                            "🔑 <b>API key issues</b>\n" +
+                            "\n".join(f"• {i}" for i in _API_KEY_CACHE["issues"]))
+                return None
+        except Exception:
+            pass
+
     issues = []
     deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")
     if not deepseek_key:
@@ -596,6 +611,9 @@ def _check_api_keys(state):
                 issues.append("DeepSeek: 429 Rate Limited")
         except Exception as e:
             issues.append(f"DeepSeek: unreachable ({str(e)[:60]})")
+
+    _API_KEY_CACHE["ts"] = now
+    _API_KEY_CACHE["issues"] = issues if issues else None
 
     if issues:
         return ("API_KEYS",
@@ -678,7 +696,8 @@ def _summarize_no_trades(lines):
 
 def _summarize_equity(state):
     try:
-        data = json.load(open(EQUITY_FILE))
+        with open(EQUITY_FILE) as _f:
+            data = json.load(_f)
         snaps = data.get("snapshots", [])
         if snaps:
             eq = snaps[-1].get("total_equity", 0)
@@ -734,7 +753,8 @@ def _summarize_disk():
 
 def _summarize_hypotheses():
     try:
-        db = json.load(open(HYPOTHESIS_DB_FILE))
+        with open(HYPOTHESIS_DB_FILE) as _f:
+            db = json.load(_f)
         hyps = db.get("hypotheses", [])
         open_h = sum(1 for h in hyps if not h.get("resolved"))
         resolved = sum(1 for h in hyps if h.get("resolved"))
@@ -745,7 +765,8 @@ def _summarize_hypotheses():
 
 def _summarize_winrate():
     try:
-        db = json.load(open(HYPOTHESIS_DB_FILE))
+        with open(HYPOTHESIS_DB_FILE) as _f:
+            db = json.load(_f)
         resolved = [h for h in db.get("hypotheses", []) if h.get("resolved")]
         wins = sum(1 for h in resolved if h.get("pnl_pct", 0) > 0)
         total = len(resolved)
@@ -757,7 +778,8 @@ def _summarize_winrate():
 
 def _summarize_calib():
     try:
-        model = json.load(open(CALIBRATION_MODEL_FILE))
+        with open(CALIBRATION_MODEL_FILE) as _f:
+            model = json.load(_f)
         clusters = []
         for c, d in model.items():
             y = d.get("y_thresholds_", [])
@@ -771,7 +793,8 @@ def _summarize_calib():
 
 def _summarize_cache():
     try:
-        tracking = json.load(open(PRICE_TRACKING_FILE))
+        with open(PRICE_TRACKING_FILE) as _f:
+            tracking = json.load(_f)
         total = len(tracking)
         high = sum(1 for v in tracking.values() if v.get("p_model", 0) >= 0.85)
         return f"tracked={total} high_p={high}"

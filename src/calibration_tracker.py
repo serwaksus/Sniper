@@ -268,7 +268,7 @@ def _train_platt_cluster(p_models: list[float], outcomes: list[float]) -> dict |
             grad_b += (pred - y)
         a -= lr * grad_a / len(p_models)
         b -= lr * grad_b / len(p_models)
-        if abs(grad_a) < 1e-5 and abs(grad_b) < 1e-5:
+        if abs(grad_a) / len(p_models) < 1e-5 and abs(grad_b) / len(p_models) < 1e-5:
             break
 
     return {"a": round(a, 6), "b": round(b, 6), "samples": len(p_models)}

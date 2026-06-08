@@ -14,6 +14,8 @@ import sys
 import time
 import json
 import logging
+import socket
+import threading
 import requests
 from datetime import datetime
 
@@ -33,6 +35,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_orig_getaddrinfo = socket.getaddrinfo
+def _patched_getaddrinfo(host, port, *args, **kwargs):
+    if host == TG_API_HOST:
+        results = _orig_getaddrinfo(TG_WORKING_IP, port, *args, **kwargs)
+        return [results[0]] if results else _orig_getaddrinfo(host, port, *args, **kwargs)
+    return _orig_getaddrinfo(host, port, *args, **kwargs)
+socket.getaddrinfo = _patched_getaddrinfo
+
+_tg_lock = threading.Lock()
+
 
 def _get_credentials():
     token = os.environ.get("TG_BOT_TOKEN", "")
@@ -51,18 +63,6 @@ def _get_credentials():
 
 
 def _send_once(token, chat_id, message, timeout=SEND_TIMEOUT):
-    import socket
-    import urllib3
-    from urllib3.util.connection import allowed_gai_family
-    
-    orig_getaddrinfo = socket.getaddrinfo
-    def _patched_getaddrinfo(host, port, *args, **kwargs):
-        if host == TG_API_HOST:
-            results = orig_getaddrinfo(TG_WORKING_IP, port, *args, **kwargs)
-            return [results[0]] if results else orig_getaddrinfo(host, port, *args, **kwargs)
-        return orig_getaddrinfo(host, port, *args, **kwargs)
-    
-    socket.getaddrinfo = _patched_getaddrinfo
     try:
         resp = requests.post(
             f"https://{TG_API_HOST}/bot{token}/sendMessage",
@@ -75,8 +75,8 @@ def _send_once(token, chat_id, message, timeout=SEND_TIMEOUT):
             timeout=timeout,
         )
         return resp.ok
-    finally:
-        socket.getaddrinfo = orig_getaddrinfo
+    except Exception:
+        return False
 
 
 def send_telegram(message, max_retries=3, queue_on_fail=True):
@@ -103,57 +103,59 @@ def send_telegram(message, max_retries=3, queue_on_fail=True):
 
 
 def _enqueue(message):
-    queue = load_json(QUEUE_FILE, [])
-    now = datetime.now().isoformat()
-    queue.append({"message": message, "queued_at": now, "attempts": 0})
-    cutoff = datetime.now().timestamp() - MAX_AGE_HOURS * 3600
-    queue = [
-        m for m in queue
-        if datetime.fromisoformat(m["queued_at"]).timestamp() > cutoff
-    ]
-    if len(queue) > MAX_QUEUE_SIZE:
-        queue = queue[-MAX_QUEUE_SIZE:]
-    save_json(QUEUE_FILE, queue)
+    with _tg_lock:
+        queue = load_json(QUEUE_FILE, [])
+        now = datetime.now().isoformat()
+        queue.append({"message": message, "queued_at": now, "attempts": 0})
+        cutoff = datetime.now().timestamp() - MAX_AGE_HOURS * 3600
+        queue = [
+            m for m in queue
+            if datetime.fromisoformat(m["queued_at"]).timestamp() > cutoff
+        ]
+        if len(queue) > MAX_QUEUE_SIZE:
+            queue = queue[-MAX_QUEUE_SIZE:]
+        save_json(QUEUE_FILE, queue)
     logger.info(f"[TG-QUEUE] Queued message (queue size: {len(queue)})")
 
 
 def flush_queue(max_messages=10):
-    queue = load_json(QUEUE_FILE, [])
-    if not queue:
-        logger.info("[TG-FLUSH] Queue empty")
-        return 0
+    with _tg_lock:
+        queue = load_json(QUEUE_FILE, [])
+        if not queue:
+            logger.info("[TG-FLUSH] Queue empty")
+            return 0
 
-    token, chat_id = _get_credentials()
-    if not token or not chat_id:
-        logger.warning("[TG-FLUSH] No credentials")
-        return 0
+        token, chat_id = _get_credentials()
+        if not token or not chat_id:
+            logger.warning("[TG-FLUSH] No credentials")
+            return 0
 
-    sent = 0
-    remaining = []
-    cutoff = datetime.now().timestamp() - MAX_AGE_HOURS * 3600
+        sent = 0
+        remaining = []
+        cutoff = datetime.now().timestamp() - MAX_AGE_HOURS * 3600
 
-    for msg in queue[:max_messages]:
-        ts = datetime.fromisoformat(msg["queued_at"]).timestamp()
-        if ts < cutoff:
-            continue
-        try:
-            if _send_once(token, chat_id, msg["message"]):
-                sent += 1
-                logger.info(f"[TG-FLUSH] Delivered queued message")
-            else:
+        for msg in queue[:max_messages]:
+            ts = datetime.fromisoformat(msg["queued_at"]).timestamp()
+            if ts < cutoff:
+                continue
+            try:
+                if _send_once(token, chat_id, msg["message"]):
+                    sent += 1
+                    logger.info(f"[TG-FLUSH] Delivered queued message")
+                else:
+                    msg["attempts"] = msg.get("attempts", 0) + 1
+                    if msg["attempts"] < 10:
+                        remaining.append(msg)
+                    else:
+                        logger.warning("[TG-FLUSH] Dropping message after 10 failed attempts")
+            except Exception as e:
                 msg["attempts"] = msg.get("attempts", 0) + 1
+                logger.warning(f"[TG-FLUSH] Send failed (attempt {msg['attempts']}): {e}")
                 if msg["attempts"] < 10:
                     remaining.append(msg)
-                else:
-                    logger.warning("[TG-FLUSH] Dropping message after 10 failed attempts")
-        except Exception as e:
-            msg["attempts"] = msg.get("attempts", 0) + 1
-            logger.warning(f"[TG-FLUSH] Send failed (attempt {msg['attempts']}): {e}")
-            if msg["attempts"] < 10:
-                remaining.append(msg)
 
-    remaining.extend(queue[max_messages:])
-    save_json(QUEUE_FILE, remaining)
+        remaining.extend(queue[max_messages:])
+        save_json(QUEUE_FILE, remaining)
     logger.info(f"[TG-FLUSH] Sent {sent}, remaining {len(remaining)}")
     return sent
 

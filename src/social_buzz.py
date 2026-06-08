@@ -16,6 +16,7 @@ import sys
 import json
 import time
 import logging
+import threading
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
@@ -72,6 +73,13 @@ def _set_cached(slug: str, result: dict):
     _utcnow = datetime.now(timezone.utc)
     result["timestamp"] = _utcnow.isoformat()
     cache.setdefault("entries", {})[slug] = result
+    cutoff = _utcnow - timedelta(seconds=BUZZ_CACHE_TTL * 2)
+    entries = cache.get("entries", {})
+    stale = [k for k, v in entries.items()
+             if isinstance(v, dict) and v.get("timestamp")
+             and datetime.fromisoformat(v["timestamp"]) < cutoff]
+    for k in stale:
+        del entries[k]
     _save_cache(cache)
 
 
@@ -129,6 +137,7 @@ def _extract_keywords_simple(question: str) -> list[str]:
     return combined[:5]
 
 
+_GDELT_LOCK = threading.Lock()
 _GDELT_LAST_FAIL = 0.0
 _GDELT_COOLDOWN = 600
 _GDELT_FAIL_COUNT = 0
@@ -136,9 +145,10 @@ _GDELT_FAIL_COUNT = 0
 
 def fetch_gdelt(keywords: list[str]) -> dict:
     global _GDELT_LAST_FAIL, _GDELT_FAIL_COUNT
-    cooldown = min(_GDELT_COOLDOWN * (2 ** _GDELT_FAIL_COUNT), 3600)
-    if (time.time() - _GDELT_LAST_FAIL) < cooldown:
-        return {"count": 0, "tone": 0, "status": "cooldown"}
+    with _GDELT_LOCK:
+        cooldown = min(_GDELT_COOLDOWN * (2 ** _GDELT_FAIL_COUNT), 3600)
+        if (time.time() - _GDELT_LAST_FAIL) < cooldown:
+            return {"count": 0, "tone": 0, "status": "cooldown"}
 
     query = " ".join(keywords[:3])
     try:
@@ -151,15 +161,18 @@ def fetch_gdelt(keywords: list[str]) -> dict:
         }, timeout=8, headers={"User-Agent": "DotmSniper/1.0"})
         if resp.status_code == 429:
             logger.warning("[BUZZ-GDELT] Rate limited")
-            _GDELT_LAST_FAIL = time.time()
-            _GDELT_FAIL_COUNT += 1
+            with _GDELT_LOCK:
+                _GDELT_LAST_FAIL = time.time()
+                _GDELT_FAIL_COUNT += 1
             return {"count": 0, "tone": 0, "status": "rate_limited"}
         if resp.status_code != 200:
-            _GDELT_LAST_FAIL = time.time()
-            _GDELT_FAIL_COUNT += 1
+            with _GDELT_LOCK:
+                _GDELT_LAST_FAIL = time.time()
+                _GDELT_FAIL_COUNT += 1
             return {"count": 0, "tone": 0, "status": f"error_{resp.status_code}"}
 
-        _GDELT_FAIL_COUNT = 0
+        with _GDELT_LOCK:
+            _GDELT_FAIL_COUNT = 0
 
         data = resp.json()
         articles = data.get("articles", [])
@@ -185,8 +198,9 @@ def fetch_gdelt(keywords: list[str]) -> dict:
         return {"count": count, "tone": round(avg_tone, 2), "sentiment": sentiment, "status": "ok"}
     except Exception as e:
         logger.debug(f"[BUZZ-GDELT] Error: {e}")
-        _GDELT_LAST_FAIL = time.time()
-        _GDELT_FAIL_COUNT += 1
+        with _GDELT_LOCK:
+            _GDELT_LAST_FAIL = time.time()
+            _GDELT_FAIL_COUNT += 1
         return {"count": 0, "tone": 0, "status": f"error: {e}"}
 
 
@@ -268,25 +282,17 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
     reddit_norm = min(reddit.get("count", 0) / 20, 1.0)
 
     total_buzz = 0
-    weights_used = 0
-    total_weight = 0
 
     if gdelt.get("status") == "ok":
         total_buzz += 0.50 * gdelt_norm
-        weights_used += 0.50
-    total_weight += 0.50
 
     if google.get("status") == "ok":
         total_buzz += 0.35 * google_norm
-        weights_used += 0.35
-    total_weight += 0.35
 
     if reddit.get("status") == "ok":
         total_buzz += 0.15 * reddit_norm
-        weights_used += 0.15
-    total_weight += 0.15
 
-    if weights_used > 0 and sources_active < 2:
+    if sources_active == 1:
         total_buzz = total_buzz * 0.7
 
     buzz_score = round(total_buzz * 20, 1)

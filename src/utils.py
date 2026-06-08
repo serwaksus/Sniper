@@ -56,6 +56,7 @@ def load_json(path, default):
     fd_owned = False
     try:
         f = os.fdopen(fd, 'r')
+        fd = -1
         fd_owned = True
         try:
             return _normalize_keys(json.load(f))
@@ -69,10 +70,11 @@ def load_json(path, default):
                 pass
         return default
     finally:
-        try:
-            _unlock_file(fd)
-        except OSError:
-            pass
+        if fd >= 0:
+            try:
+                _unlock_file(fd)
+            except OSError:
+                pass
 
 
 def save_json(path, data):
@@ -111,17 +113,43 @@ def load_json_versioned(path, default):
 
 def save_json_versioned(path, data, expected_version=None):
     try:
-        if expected_version is not None:
-            current_data = load_json(path, {})
-            current_version = current_data.get("__version", 0) if isinstance(current_data, dict) else 0
-            if current_version != expected_version:
-                logger.warning(f"[UTILS] Version mismatch for {path}: expected={expected_version}, actual={current_version}")
-                return False
-        if isinstance(data, dict):
-            data = dict(data)
-            data["__version"] = expected_version + 1 if expected_version is not None else data.get("__version", 0) + 1
-        save_json(path, data)
-        return True
+        dir_name = os.path.dirname(path) or '.'
+        lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
+        try:
+            _lock_file(lock_fd, exclusive=True)
+            if expected_version is not None:
+                try:
+                    with open(path, 'r') as f:
+                        current_data = json.load(f)
+                except Exception:
+                    current_data = {}
+                current_version = current_data.get("__version", 0) if isinstance(current_data, dict) else 0
+                if current_version != expected_version:
+                    logger.warning(f"[UTILS] Version mismatch for {path}: expected={expected_version}, actual={current_version}")
+                    return False
+            if isinstance(data, dict):
+                data = dict(data)
+                data["__version"] = expected_version + 1 if expected_version is not None else data.get("__version", 0) + 1
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+            try:
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(_strip_dict_keys_recursive(data), f, indent=2, default=str)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+            return True
+        finally:
+            _unlock_file(lock_fd)
+            try:
+                os.close(lock_fd)
+            except OSError:
+                pass
     except Exception as e:
         logger.error(f"[UTILS] save_json_versioned failed for {path}: {e}")
         return False
@@ -182,6 +210,8 @@ def load_env_file(path="/root/dotm-sniper/.env"):
     with open(path) as f:
         for line in f:
             line = line.strip()
+            if line.startswith("export "):
+                line = line[7:]
             if line and not line.startswith('#') and '=' in line:
                 key, val = line.split('=', 1)
                 val = val.strip().strip('"').strip("'")
@@ -199,8 +229,20 @@ def rotate_log_if_needed(log_path, max_bytes=MAX_LOG_BYTES, keep_bytes=5*1024*10
             f.seek(max(0, size - keep_bytes))
             f.readline()
             tail = f.read()
-        with open(log_path, 'w') as f:
-            f.write(tail)
+        dir_name = os.path.dirname(log_path) or '.'
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                f.write(tail)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, log_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         logger.info(f"[LOG-ROTATE] {log_path}: {size/1024/1024:.1f}MB -> {len(tail)/1024/1024:.1f}MB")
         return True
     except Exception as e:

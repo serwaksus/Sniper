@@ -239,7 +239,9 @@ def trailing_stop_check():
     for pos in portfolio:
         slug = pos["market_slug"]
         shares = pos.get("shares", 0)
-        entry_price = pos.get("avg_entry_price", 0)
+        stored_positions = load_json(POSITIONS_FILE, {})
+        stored_entry = stored_positions.get(slug, {}).get("entry_price", 0) if slug in stored_positions else 0
+        entry_price = stored_entry if stored_entry > 0 else pos.get("avg_entry_price", 0)
         outcome = pos.get("outcome", "yes")
 
         if slug in resolved_slugs:
@@ -287,6 +289,10 @@ def trailing_stop_check():
 
         p = positions[slug]
 
+        if p.get("selling_in_progress"):
+            logger.info(f"[SKIP] {slug[:40]}... sell already in progress")
+            continue
+
         last_checked = None
         if p.get("last_checked"):
             try:
@@ -318,13 +324,15 @@ def trailing_stop_check():
         positions[slug] = p
         save_json(POSITIONS_FILE, positions)
 
-        if not om._get_open_tp_orders(slug) and current_price < 0.70:
+        if not om._get_open_tp_orders(slug) and current_price < 0.70 and not p.get("tp_ladder_failed"):
             try:
                 ladder_results = om._place_tp_ladder(slug, outcome, shares)
                 if any(ok for _, _, ok, _ in ladder_results):
                     logger.info(f"[TP-REFRESH] Placed TP ladder for {slug[:40]}... (was missing)")
+                else:
+                    p["tp_ladder_failed"] = True
             except Exception:
-                pass
+                p["tp_ladder_failed"] = True
 
         sold = False
         sold_reason = ""
@@ -355,7 +363,7 @@ def trailing_stop_check():
             elif convergence >= CONVERGENCE_TAKE_PROFIT:
                 logger.info(f"[CONVERGENCE] {slug[:40]}... convergence={convergence:.2f} but TP ladder active, letting limits execute")
 
-        if not sold and current_price <= _get_atr_stop(slug, entry_price, current_price):
+        if not sold and current_price <= p.get("stop_loss", 0):
             sold_reason = f"atr_stop: price=${current_price:.4f} <= atr_stop"
             logger.warning(f"[STOP-LOSS] ATR stop triggered: {slug[:40]}... price=${current_price:.4f}")
             try:

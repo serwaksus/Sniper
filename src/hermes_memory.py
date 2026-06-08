@@ -10,6 +10,7 @@ import sys
 import json
 import math
 import logging
+import threading
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -20,6 +21,8 @@ MEMORY_FILE = "/root/dotm-sniper/hermes_memory.json"
 SKILLS_FILE = "/root/dotm-sniper/hermes_skills.json"
 
 logger = logging.getLogger(__name__)
+
+_memory_lock = threading.Lock()
 
 _DEFAULT_MEMORY = {
     "predictions": {},
@@ -55,58 +58,60 @@ def _save_memory(data):
 
 def log_prediction(slug, question, p_bot, p_hermes, verdict, status,
                    reason="", cluster="", news_category=""):
-    m = _load_memory()
-    m["predictions"][slug] = {
-        "question": question,
-        "p_bot": round(p_bot, 4),
-        "p_hermes": round(p_hermes, 4),
-        "verdict": verdict,
-        "status": status,
-        "reason": reason[:200],
-        "cluster": cluster,
-        "news_category": news_category,
-        "timestamp": datetime.now().isoformat(),
-    }
-    if len(m["predictions"]) > _MAX_PREDICTIONS:
-        slugs = list(m["predictions"].keys())
-        for s in slugs[:len(slugs) - _MAX_PREDICTIONS]:
-            del m["predictions"][s]
-    _save_memory(m)
+    with _memory_lock:
+        m = _load_memory()
+        m["predictions"][slug] = {
+            "question": question,
+            "p_bot": round(p_bot, 4),
+            "p_hermes": round(p_hermes, 4),
+            "verdict": verdict,
+            "status": status,
+            "reason": reason[:200],
+            "cluster": cluster,
+            "news_category": news_category,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if len(m["predictions"]) > _MAX_PREDICTIONS:
+            slugs = list(m["predictions"].keys())
+            for s in slugs[:len(slugs) - _MAX_PREDICTIONS]:
+                del m["predictions"][s]
+        _save_memory(m)
 
 
 def resolve_prediction(slug, actual_outcome):
-    m = _load_memory()
-    pred = m["predictions"].pop(slug, None)
-    if not pred:
-        return
+    with _memory_lock:
+        m = _load_memory()
+        pred = m["predictions"].pop(slug, None)
+        if not pred:
+            return
 
-    p_hermes = pred.get("p_hermes", 0.5)
-    if actual_outcome == "yes":
-        correct = p_hermes >= 0.5
-    else:
-        correct = p_hermes < 0.5
-    abs_error = abs(p_hermes - (1.0 if actual_outcome == "yes" else 0.0))
+        p_hermes = pred.get("p_hermes", 0.5)
+        if actual_outcome == "yes":
+            correct = p_hermes >= 0.5
+        else:
+            correct = p_hermes < 0.5
+        abs_error = abs(p_hermes - (1.0 if actual_outcome == "yes" else 0.0))
 
-    entry = {
-        "slug": slug,
-        "question": pred.get("question", ""),
-        "p_bot": pred.get("p_bot", 0),
-        "p_hermes": pred.get("p_hermes", 0),
-        "verdict": pred.get("verdict", ""),
-        "cluster": pred.get("cluster", ""),
-        "news_category": pred.get("news_category", ""),
-        "actual_outcome": actual_outcome,
-        "correct": correct,
-        "abs_error": round(abs_error, 4),
-        "predicted_at": pred.get("timestamp", ""),
-        "resolved_at": datetime.now().isoformat(),
-    }
-    m["resolved"].append(entry)
+        entry = {
+            "slug": slug,
+            "question": pred.get("question", ""),
+            "p_bot": pred.get("p_bot", 0),
+            "p_hermes": pred.get("p_hermes", 0),
+            "verdict": pred.get("verdict", ""),
+            "cluster": pred.get("cluster", ""),
+            "news_category": pred.get("news_category", ""),
+            "actual_outcome": actual_outcome,
+            "correct": correct,
+            "abs_error": round(abs_error, 4),
+            "predicted_at": pred.get("timestamp", ""),
+            "resolved_at": datetime.now().isoformat(),
+        }
+        m["resolved"].append(entry)
 
-    _update_calibration(m, entry)
-    _update_adaptive_likelihood(m, entry)
+        _update_calibration(m, entry)
+        _update_adaptive_likelihood(m, entry)
 
-    _save_memory(m)
+        _save_memory(m)
     logger.info(
         f"[HERMES-MEMORY] Resolved {slug[:40]}... "
         f"p_hermes={p_hermes:.1%} actual={actual_outcome} "
@@ -140,24 +145,10 @@ def _update_adaptive_likelihood(memory, entry):
     bucket = al.setdefault(cat, {
         "count": 0,
         "yes_count": 0,
-        "avg_p_hermes_when_yes": 0.0,
-        "avg_p_hermes_when_no": 0.0,
-        "total_p_yes": 0.0,
-        "total_p_no": 0.0,
     })
     bucket["count"] += 1
     if entry["actual_outcome"] == "yes":
         bucket["yes_count"] += 1
-        bucket["total_p_yes"] += entry["p_hermes"]
-    else:
-        bucket["total_p_no"] += entry["p_hermes"]
-
-    n_yes = bucket["yes_count"]
-    n_no = bucket["count"] - n_yes
-    if n_yes > 0:
-        bucket["avg_p_hermes_when_yes"] = round(bucket["total_p_yes"] / n_yes, 4)
-    if n_no > 0:
-        bucket["avg_p_hermes_when_no"] = round(bucket["total_p_no"] / n_no, 4)
 
 
 def get_adaptive_likelihoods(min_samples=5):

@@ -36,6 +36,7 @@ CORRELATED_GROUPS = {
 
 MAX_CORRELATED_GROUP_PCT = 0.25
 MAX_SINGLE_CLUSTER_PCT = 0.50
+MAX_OTHER_CLUSTER_PCT = 0.25
 
 
 def _get_price_series(slug: str, min_points: int = 5) -> list[float]:
@@ -62,7 +63,7 @@ def compute_pairwise_correlation(slug_a: str, slug_b: str) -> float | None:
     a = series_a[-min_len:]
     b = series_b[-min_len:]
 
-    ret_a = [(a[i] - a[i-1]) / max(abs(a[i-1]), 1e-6) for i in range(1, len(a))]
+    ret_a = [math.log(a[i] / a[i-1]) for i in range(1, len(a)) if a[i-1] > 0.005 and a[i] > 0]
     ret_b = [(b[i] - b[i-1]) / max(abs(b[i-1]), 1e-6) for i in range(1, len(b))]
 
     if not ret_a or not ret_b:
@@ -136,6 +137,9 @@ def check_correlation_limit(new_cluster: str, positions: dict, balance: float,
             break
 
     if not new_group:
+        if new_cluster == "other" and new_cluster_pct > MAX_OTHER_CLUSTER_PCT:
+            return False, (f"other_cluster exposure={new_cluster_pct:.1%} > "
+                           f"{MAX_OTHER_CLUSTER_PCT:.0%}")
         return True, "ok"
 
     group_clusters = CORRELATED_GROUPS[new_group]

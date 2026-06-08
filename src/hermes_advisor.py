@@ -274,7 +274,7 @@ def reconcile_positions():
             logger.warning(f"[HERMES] Empty portfolio but {len(positions)} tracked positions — API may be down, skipping reconciliation")
             return
 
-        portfolio_slugs = {p["market_slug"] for p in portfolio}
+        portfolio_slugs = {p.get("market_slug", "") for p in portfolio if p.get("market_slug")}
 
         deleted_slugs = set()
         updated_positions = {}
@@ -783,7 +783,17 @@ def _resolve_predictions_loop():
         try:
             time.sleep(3600)
             _check_resolved_markets()
-            if datetime.now().hour % 6 == 0 and datetime.now().minute < 5:
+            from hermes_memory import _load_memory
+            m = _load_memory()
+            last_skill = m.get("last_skill_generation")
+            should_gen = not last_skill
+            if last_skill:
+                try:
+                    elapsed = (datetime.now() - datetime.fromisoformat(last_skill)).total_seconds()
+                    should_gen = elapsed >= 6 * 3600
+                except Exception:
+                    should_gen = True
+            if should_gen:
                 skills = generate_skills()
                 if skills:
                     logger.info(f"[HERMES-SKILLS] Generated {len(skills)} skills")
@@ -798,7 +808,7 @@ def _check_resolved_markets():
     if not predictions:
         return
 
-    slugs = list(predictions.keys())[:10]
+    slugs = list(predictions.keys())
     try:
         res = subprocess.run(
             ["pm-trader", "orders", "list"],
