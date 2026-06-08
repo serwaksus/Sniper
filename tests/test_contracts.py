@@ -277,7 +277,7 @@ class TestSettingsContract:
         assert SETTINGS_SIGNAL_THRESHOLD == "signal_threshold"
         assert SETTINGS_MIN_P_MODEL == "min_p_model"
         assert SETTINGS_MIN_CONFIDENCE == "min_confidence"
-        assert SETTINGS_MAX_CONCURRENT == "MAX_CONCURRENT_TRADES"
+        assert SETTINGS_MAX_CONCURRENT == "max_concurrent_trades"
         assert SETTINGS_TOTAL_RESOLVED == "total_resolved"
         assert SETTINGS_LAST_BACKTEST == "last_backtest_timestamp"
 

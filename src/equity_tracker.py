@@ -4,22 +4,27 @@ import json
 import os
 import sys
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
-from schema import *
+from schema import (
+    EQUITY_CASH, EQUITY_NUM_POSITIONS, EQUITY_POSITIONS, EQUITY_POSITIONS_VALUE,
+    EQUITY_SNAPSHOTS, EQUITY_TIMESTAMP, EQUITY_TOTAL, EQUITY_UNREALIZED_PNL,
+)
 
 EQUITY_FILE = "/root/dotm-sniper/equity_curve.json"
 TRADES_JOURNAL_FILE = "/root/dotm-sniper/trades_journal.json"
 
-LOG_FILE = "/root/dotm-sniper/equity_tracker.log"
+LOG_FILE = "/root/dotm-sniper/logs/equity_tracker.log"
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3),
         logging.StreamHandler()
     ]
 )

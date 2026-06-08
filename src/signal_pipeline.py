@@ -4,6 +4,7 @@ Extracted from dotm_sniper.py v5.3.0.
 """
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import re
 import requests
@@ -15,7 +16,7 @@ from datetime import datetime, UTC
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils import load_json, save_json, sanitize_for_prompt
-from schema import *
+from schema import HYP_CLUSTERS, HYP_CONFIDENCE, HYP_FACTORS, HYP_P_MODEL, HYP_SLUG
 from utils import load_env_file
 
 load_env_file()
@@ -27,7 +28,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3),
         logging.StreamHandler()
     ],
     force=True

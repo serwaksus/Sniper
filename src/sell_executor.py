@@ -7,7 +7,14 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
-from schema import *
+from schema import (
+    HYP_DB_RESOLVED, HYP_SLUG,
+    POS_CLUSTERS, POS_ENTRY_PRICE, POS_HIGH_PRICE, POS_LAST_CHECKED,
+    POS_LIMIT_SELL_ATTEMPTS, POS_LIMIT_SELL_PRICE, POS_LIMIT_SELL_SINCE,
+    POS_MARKET_QUESTION, POS_METACULUS_PROB, POS_OUTCOME, POS_SELLING_IN_PROGRESS,
+    POS_SHARES, POS_STOP_LOSS, POS_STOP_TYPE, POS_TP_LADDER_FAILED,
+    POS_TRAILING_CONFIRM_TIME, POS_TRAILING_CONFIRMED, POS_TRAILING_ON,
+)
 
 logger = logging.getLogger(__name__)
 

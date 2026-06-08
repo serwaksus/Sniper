@@ -1,0 +1,26 @@
+# Install:
+#   sudo cp hermes.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable hermes
+#   sudo systemctl start hermes
+#
+# Check status:
+#   sudo systemctl status hermes
+#   journalctl -u hermes -f
+
+[Unit]
+Description=DOTM Hermes Risk Advisor
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/dotm-sniper
+ExecStart=/usr/bin/python3 src/hermes_advisor.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/root/dotm-sniper/logs/hermes_stdout.log
+StandardError=append:/root/dotm-sniper/logs/hermes_stderr.log
+EnvironmentFile=/root/dotm-sniper/.env
+
+[Install]
+WantedBy=multi-user.target

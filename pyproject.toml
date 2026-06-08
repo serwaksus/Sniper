@@ -14,11 +14,7 @@ extend-immutable-calls = ["datetime.timedelta"]
 "src/news_scanner.py" = ["RUF001"]
 "src/dotm_report.py" = ["RUF001"]
 "tests/test_contracts.py" = ["F403", "F405"]
-"src/calibration_tracker.py" = ["F403", "F405"]
-"src/dotm_sniper.py" = ["F403", "F405"]
-"src/equity_tracker.py" = ["F403", "F405"]
-"src/health_monitor.py" = ["F403", "F405"]
-"src/hermes_advisor.py" = ["F403", "F405"]
-"src/order_manager.py" = ["F403", "F405"]
-"src/sell_executor.py" = ["F403", "F405"]
-"src/signal_pipeline.py" = ["F403", "F405"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

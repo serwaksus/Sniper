@@ -11,12 +11,16 @@ import subprocess
 import logging
 import shutil
 from datetime import datetime, timedelta
-from schema import *
+from schema import (
+    EQUITY_CASH, EQUITY_NUM_POSITIONS, EQUITY_POSITIONS_VALUE,
+    EQUITY_SNAPSHOTS, EQUITY_TIMESTAMP, EQUITY_TOTAL, EQUITY_UNREALIZED_PNL,
+    HEALTH_LAST_ALERTS, HEALTH_LAST_CYCLE_START, HEALTH_LAST_EQUITY,
+)
 
 logger = logging.getLogger(__name__)
 
 HEALTH_STATE_FILE = "/root/dotm-sniper/health_state.json"
-SNIPER_LOG = "/root/dotm-sniper/sniper.log"
+SNIPER_LOG = "/root/dotm-sniper/logs/sniper.log"
 PRICE_TRACKING_FILE = "/root/dotm-sniper/price_tracking.json"
 POSITIONS_FILE = "/root/dotm-sniper/positions.json"
 CALIBRATION_MODEL_FILE = "/root/dotm-sniper/calibration_model.json"
@@ -395,9 +399,7 @@ def _check_telegram(state):
 # ── Check 14: Process crash frequency ──────────────────────────
 def _check_crash_frequency(state):
     count = 0
-    for logf in ["/tmp/sniper_v556.log", "/tmp/sniper_v555.log",
-                 "/tmp/sniper_v554.log", "/tmp/sniper_v553.log",
-                 "/tmp/sniper_v552.log"]:
+    for logf in ["/root/dotm-sniper/logs/sniper_screen.log", "/root/dotm-sniper/logs/hermes_screen.log"]:
         try:
             with open(logf) as f:
                 count += sum(1 for line in f if "Traceback" in line)
@@ -441,7 +443,7 @@ def _check_json_integrity(state):
 def _check_cron_health(state):
     stale = []
     cron_logs = {
-        "report": "/root/sniper_report.log",
+        "report": "/root/dotm-sniper/logs/report.log",
         "equity_tracker": "/root/dotm-sniper/logs/equity_tracker.log",
         "advisor_cron": "/root/dotm-sniper/logs/advisor_cron.log",
     }
@@ -653,13 +655,12 @@ def _check_log_size(state):
     MAX_LOG_MB = 50
     large = []
     log_paths = [
-        "/root/dotm-sniper/sniper.log",
-        "/root/dotm-sniper/report.log",
-        "/root/dotm-sniper/equity_tracker.log",
-        "/root/sniper_report.log",
+        "/root/dotm-sniper/logs/sniper.log",
+        "/root/dotm-sniper/logs/report.log",
         "/root/dotm-sniper/logs/equity_tracker.log",
         "/root/dotm-sniper/logs/advisor_cron.log",
         "/root/dotm-sniper/logs/hermes.log",
+        "/root/dotm-sniper/logs/health_hourly.log",
     ]
     for path in log_paths:
         try:

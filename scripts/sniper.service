@@ -1,0 +1,26 @@
+# Install:
+#   sudo cp sniper.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable sniper
+#   sudo systemctl start sniper
+#
+# Check status:
+#   sudo systemctl status sniper
+#   journalctl -u sniper -f
+
+[Unit]
+Description=DOTM Sniper Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/dotm-sniper
+ExecStart=/usr/bin/python3 src/dotm_sniper.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/root/dotm-sniper/logs/sniper_stdout.log
+StandardError=append:/root/dotm-sniper/logs/sniper_stderr.log
+EnvironmentFile=/root/dotm-sniper/.env
+
+[Install]
+WantedBy=multi-user.target

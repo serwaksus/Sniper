@@ -9,7 +9,7 @@ import os
 import sys
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, UTC
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -52,7 +52,7 @@ def _save_memory(data):
     if len(data.get("resolved", [])) > _MAX_RESOLVED:
         data["resolved"] = data["resolved"][-_MAX_RESOLVED:]
 
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     positions = load_json("/root/dotm-sniper/positions.json", {})
     active_slugs = set(positions.keys())
     predictions = data.get("predictions", {})
@@ -64,7 +64,9 @@ def _save_memory(data):
         if slug_key in active_slugs:
             continue
         try:
-            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00")).replace(tzinfo=None)
+            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=UTC)
             if (now - created_dt).days > 7:
                 stale_keys.append(slug_key)
         except (ValueError, AttributeError):

@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import logging
+from logging.handlers import RotatingFileHandler
 import argparse
 import random
 import subprocess
@@ -48,7 +49,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3),
         logging.StreamHandler()
     ],
     force=True

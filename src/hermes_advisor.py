@@ -13,9 +13,11 @@ import os
 import sys
 import logging
 import re
+import signal
 import threading
 import html
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from bayesian_updater import update_posterior, should_exit as bayesian_should_exit, classify_news_with_llm
 from hermes_memory import log_prediction, resolve_prediction, generate_skills, load_skills_for_prompt
 
@@ -23,7 +25,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 from news_scanner import fetch_recent_news
 from utils import load_json, save_json, sanitize_for_prompt, load_env_file, check_and_write_pid, cleanup_pid_file, validate_env_vars
-from schema import *
+from schema import (
+    ALERT_HOLD_COUNTS, ALERT_LAST_NOTIFIED, ALERT_POSITION_STATUS, ALERT_UPDATED_AT,
+    CACHE_LAST_UPDATE, CACHE_METACULUS, CACHE_NEWS, CACHE_TIMESTAMP,
+    POS_CLUSTERS, POS_EMERGENCY_EXIT_FAILED, POS_ENTRY_PRICE, POS_HIGH_PRICE,
+    POS_IN_EMERGENCY_EXIT, POS_LAST_EMERGENCY_ATTEMPT, POS_MARKET_QUESTION,
+    POS_METACULUS_PROB, POS_OUTCOME, POS_PARTIAL_FILLS, POS_PARTIAL_PROCEEDS,
+    POS_SELLING_IN_PROGRESS, POS_SHARES, POS_SHARES_AT_TP_OPEN,
+)
 
 load_env_file()
 validate_env_vars(["DEEPSEEK_API_KEY", "TG_BOT_TOKEN", "TG_CHAT_ID"])
@@ -31,7 +40,7 @@ validate_env_vars(["DEEPSEEK_API_KEY", "TG_BOT_TOKEN", "TG_CHAT_ID"])
 HERMES_LOG = "/root/dotm-sniper/logs/hermes.log"
 os.makedirs(os.path.dirname(HERMES_LOG), exist_ok=True)
 
-class UnbufferedFileHandler(logging.FileHandler):
+class UnbufferedRotatingFileHandler(RotatingFileHandler):
     def emit(self, record):
         super().emit(record)
         self.flush()
@@ -40,11 +49,21 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
     handlers=[
-        UnbufferedFileHandler(HERMES_LOG),
+        UnbufferedRotatingFileHandler(HERMES_LOG, maxBytes=10*1024*1024, backupCount=3),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+
+_shutdown_requested = False
+
+def _handle_shutdown(signum, frame):
+    global _shutdown_requested
+    _shutdown_requested = True
+    logger.info("[HERMES] Shutdown signal received, finishing current cycle...")
+
+signal.signal(signal.SIGTERM, _handle_shutdown)
+signal.signal(signal.SIGINT, _handle_shutdown)
 
 POSITIONS_FILE = "/root/dotm-sniper/positions.json"
 SETTINGS_FILE = "/root/dotm-sniper/bot_settings.json"
@@ -886,7 +905,7 @@ def main():
     _restart_timestamps = []
 
     try:
-        while True:
+        while not _shutdown_requested:
             time.sleep(60)
 
             restarted_any = False
@@ -920,6 +939,7 @@ def main():
 
             logger.debug(f"[HERMES] Heartbeat: {active_count} active positions")
 
+        logger.info("[HERMES] Graceful shutdown complete")
     except KeyboardInterrupt:
         logger.info("[HERMES] Shutting down...")
     except Exception as e:

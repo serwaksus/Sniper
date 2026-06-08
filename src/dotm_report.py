@@ -4,17 +4,19 @@ import json
 import os
 import sys
 import logging
+from logging.handlers import RotatingFileHandler
 import html
 import requests
 from datetime import datetime
 from typing import Any
 
-LOG_FILE = "/root/dotm-sniper/report.log"
+LOG_FILE = "/root/dotm-sniper/logs/report.log"
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3),
         logging.StreamHandler()
     ]
 )

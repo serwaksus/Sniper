@@ -7,7 +7,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
-from schema import *
+from schema import HYP_TP_LIMIT_PLACED
 
 logger = logging.getLogger(__name__)
 

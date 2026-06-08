@@ -14,7 +14,10 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
-from schema import *
+from schema import (
+    HYP_DB_HYPOTHESES, HYP_MARKET_PRICE, HYP_OUTCOME, HYP_P_MODEL,
+    HYP_RESOLVED, HYP_SLUG,
+)
 
 CALIBRATION_LOG = "/root/dotm-sniper/calibration_log.json"
 HYPOTHESIS_DB = "/root/dotm-sniper/hypothesis_db.json"
