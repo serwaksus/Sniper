@@ -229,13 +229,13 @@ def _check_cycle_timing(state):
     if not last_start:
         state["last_cycle_start"] = now_iso
         return None
+    state["last_cycle_start"] = now_iso
     try:
         elapsed = (datetime.now() - datetime.fromisoformat(last_start)).total_seconds() / 60
         if elapsed > CYCLE_MAX_MINUTES:
             return ("CYCLE_SLOW",
                     f"⏱️ <b>Slow cycle: {elapsed:.0f} min</b>\n"
                     f"• Expected <{CYCLE_MAX_MINUTES}min. Bot may be hanging on LLM/Telegram timeout")
-        state["last_cycle_start"] = now_iso
     except Exception:
         pass
     return None
@@ -339,9 +339,10 @@ def _check_calibration_overfit(state):
         x_thresh = data.get("X_thresholds_", [])
         if y_thresh and x_thresh:
             max_y = max(y_thresh)
-            min_x_for_max = x_thresh[-1]
-            if max_y >= 0.90 and min_x_for_max < 0.30:
-                issues.append(f"'{cluster}': p>{min_x_for_max:.1%} → {max_y:.0%} ({len(y_thresh)} pts)")
+            max_y_idx = y_thresh.index(max_y)
+            x_at_max = x_thresh[max_y_idx]
+            if max_y >= 0.90 and x_at_max < 0.30:
+                issues.append(f"'{cluster}': p>{x_at_max:.1%} → {max_y:.0%} ({len(y_thresh)} pts)")
     if not issues:
         return None
     return "CALIB_OVERFIT", "⚠️ <b>Calibration overfit</b>\n" + "\n".join(f"• {i}" for i in issues)
@@ -465,8 +466,8 @@ def _check_llm_error_rate(state):
     lines = _read_recent_log(hours=6)
     total = sum(1 for l in lines if "model=" in l and "messages" in l)
     errors = sum(1 for l in lines if "[ADVISOR] Empty response" in l
-                 or "advisor_parse_error" in l or "ADVISOR.*Timeout" in l
-                 or "ADVISOR] Error" in l or "429" in l)
+                 or "advisor_parse_error" in l or ("ADVISOR" in l and "Timeout" in l)
+                 or "[ADVISOR] Error" in l or " 429 " in l)
     if total > 5:
         rate = errors / total
         if rate > 0.30:
@@ -661,6 +662,9 @@ def _check_log_size(state):
                 f"📝 <b>Log files >{MAX_LOG_MB}MB (auto-rotated)</b>\n" +
                 "\n".join(f"• {l}" for l in large))
     return None
+
+
+def _summarize_trading_activity(lines):
     signals = sum(1 for l in lines if "=> BUY" in l)
     blocked = sum(1 for l in lines if "TRADE-BLOCKED" in l)
     executed = sum(1 for l in lines if "Bought:" in l and "Bought: 0" not in l)
@@ -681,7 +685,7 @@ def _summarize_equity(state):
             cash = snaps[-1].get("cash", 0)
             pos = snaps[-1].get("positions_value", 0)
             pnl = snaps[-1].get("unrealized_pnl", 0)
-            n_pos = snaps[-1].get("positions_count", 0)
+            n_pos = snaps[-1].get("num_positions", 0)
             return f"equity=${eq:.2f} cash=${cash:.2f} pos=${pos:.2f} pnl={pnl:+.2f} positions={n_pos}"
     except Exception:
         pass
@@ -949,6 +953,7 @@ def run_hourly_report():
 
     _send_telegram(msg)
     logger.info(f"[HOURLY] Sent {len(issues)} issues to Telegram")
+    _save_state(state)
     return issues
 
 

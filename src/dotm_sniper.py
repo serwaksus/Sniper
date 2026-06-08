@@ -573,7 +573,7 @@ def resolve_hypotheses():
 
     if new_resolved > 0:
         settings = get_settings()
-        settings["total_resolved"] = len([h for h in all_hypotheses if h.get("resolved")])
+        settings["total_resolved"] = len(db.get("resolved", []))
         save_settings(settings)
 
         if len(db.get("resolved", [])) >= BURN_IN_TRADES:
@@ -697,6 +697,9 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
 
     shares = round(float(fill_data.get("shares", 0))) if fill_data and fill_data.get("shares", 0) > 0 else round(estimated_size / market["price"]) if market["price"] > 0 else 0
 
+    if shares <= 0:
+        return False
+
     positions = load_json(POSITIONS_FILE, {})
     if market["slug"] not in positions:
         positions[market["slug"]] = {
@@ -740,6 +743,7 @@ def execute_trade(market, estimated_size, factors, analysis, balance):
         "resolved": False,
         "tp_limit_placed": True,
         "tp_limit_price": SMART_EXIT_PRICE,
+        "source_signal": analysis.get("source_signal", "default"),
     })
     save_hypothesis_db(db)
 
@@ -869,7 +873,7 @@ def _main_inner():
     print(f"📈 Candidates: {len(markets)} (pm-trader + {len(gamma_candidates)} gamma)")
 
     candidates_bought = 0
-    available_balance = total_balance
+    available_balance = balance
 
     current_positions_for_clusters = [
         {"clusters": h.get("clusters", []), "size_pct": h.get("size_pct", 0)}

@@ -136,7 +136,7 @@ def check_and_write_pid(pid_file):
         logger.warning(f"[PID] Cannot open {pid_file}: {e}")
         return True
     try:
-        _lock_file(fd, exclusive=False)
+        _lock_file(fd, exclusive=True)
         try:
             content = os.read(fd, 32).strip()
             if content:
@@ -146,8 +146,6 @@ def check_and_write_pid(pid_file):
                 return False
         except (OSError, ValueError, ProcessLookupError):
             pass
-        _unlock_file(fd)
-        _lock_file(fd, exclusive=True)
         os.ftruncate(fd, 0)
         os.lseek(fd, 0, os.SEEK_SET)
         os.write(fd, str(os.getpid()).encode())

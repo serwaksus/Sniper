@@ -19,6 +19,8 @@ from utils import load_env_file
 
 load_env_file()
 
+HYPOTHESIS_DB_FILE = "/root/dotm-sniper/hypothesis_db.json"
+
 LOG_FILE = "/root/dotm-sniper/sniper.log"
 logging.basicConfig(
     level=logging.INFO,
@@ -520,7 +522,7 @@ def fetch_markets():
             ttl_hours = 999
             if end_date:
                 try:
-                    end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00")).replace(tzinfo=None)
                     ttl_hours = max(0, (end - now).total_seconds() / 3600)
                 except Exception:
                     pass
@@ -626,7 +628,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
             ttl_hours = 999
             if end_date:
                 try:
-                    end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00")).replace(tzinfo=None)
                     ttl_hours = max(0, (end - now).total_seconds() / 3600)
                 except Exception:
                     pass
@@ -1358,7 +1360,7 @@ MARKET: {sanitize_for_prompt(question)}
 SLUG: {slug}
 MARKET PRICE: ${price:.3f} ({price*100:.1f}%)
 BOT P_MODEL (estimated true probability): {p_model:.1%}
-PROBABILITY RATIO: {p_model/price:.2f}x vs market
+PROBABILITY RATIO: {f"{p_model/price:.2f}" if price > 0 else "N/A"}x vs market
 COMPOSITE SIGNAL SCORE: {score:.0f}/100
 BOT REASONING: {sanitize_for_prompt(reasoning)}
 

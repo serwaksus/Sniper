@@ -165,12 +165,11 @@ def get_adaptive_likelihoods(min_samples=5):
     al = m.get("adaptive_likelihood", {})
     adapted = {}
     for cat, bucket in al.items():
-        if bucket.get("count", 0) < min_samples:
+        count = bucket.get("count", 0)
+        if count < min_samples:
             continue
-        avg_yes = bucket.get("avg_p_hermes_when_yes", 0.5)
-        avg_no = bucket.get("avg_p_hermes_when_no", 0.5)
-        p_yes = max(0.01, min(0.99, avg_yes if avg_yes > 0 else 0.5))
-        adapted[cat] = {"p_yes_given_news": p_yes, "samples": bucket["count"]}
+        p_yes = max(0.01, min(0.99, bucket["yes_count"] / count))
+        adapted[cat] = {"p_yes_given_news": p_yes, "samples": count}
     return adapted
 
 

@@ -62,7 +62,7 @@ _last_notified_at = {}
 _status_hold_counts = {}
 
 _alert_state_lock = threading.RLock()
-_positions_file_lock = threading.Lock()
+_positions_file_lock = threading.RLock()
 
 NOTIFY_SEVERITIES = {"DIVERGENCE", "RED"}
 STATUS_HOLD_SECONDS = 1800
@@ -258,22 +258,23 @@ def _merge_save_positions(deleted_slugs=None, updated_positions=None):
 def reconcile_positions():
     logger.info("[HERMES] Starting position reconciliation...")
 
+    portfolio = get_portfolio()
+    if portfolio is None:
+        logger.error("[HERMES] Portfolio API failed, skipping reconciliation to avoid data loss")
+        return
+    open_orders = get_open_orders()
+
     with _positions_file_lock:
         positions = load_json(POSITIONS_FILE, {})
         if not positions:
             logger.info("[HERMES] No positions to reconcile")
             return
 
-        portfolio = get_portfolio()
-        if portfolio is None:
-            logger.error("[HERMES] Portfolio API failed, skipping reconciliation to avoid data loss")
-            return
         if len(portfolio) == 0 and len(positions) > 0:
             logger.warning(f"[HERMES] Empty portfolio but {len(positions)} tracked positions — API may be down, skipping reconciliation")
             return
 
         portfolio_slugs = {p["market_slug"] for p in portfolio}
-        open_orders = get_open_orders()
 
         deleted_slugs = set()
         updated_positions = {}
@@ -352,12 +353,20 @@ def reconcile_positions():
 
 def _notify_position_closed(slug, pos_data):
     try:
+        entry = pos_data.get("entry_price", 0)
+        high = pos_data.get("high_price", entry)
+        if entry > 0 and high > 0:
+            computed_pnl_pct = (high - entry) / entry * 100
+            computed_pnl_abs = (high - entry) * pos_data.get("shares", 0)
+        else:
+            computed_pnl_pct = 0
+            computed_pnl_abs = 0
         if TELEGRAM_REPORTER:
             TELEGRAM_REPORTER.alert_convergence(
                 slug=slug,
-                question=pos_data.get("question", "Unknown"),
-                pnl_pct=pos_data.get("pnl_pct", 0) * 100,
-                pnl_abs=pos_data.get("pnl_abs", 0),
+                question=pos_data.get("market_question", "Unknown"),
+                pnl_pct=computed_pnl_pct,
+                pnl_abs=computed_pnl_abs,
                 convergence_ratio=0
             )
     except Exception as e:
@@ -437,8 +446,8 @@ def evaluate_emergency_exit():
                         elapsed = (datetime.now() - datetime.fromisoformat(last_attempt)).total_seconds()
                         if elapsed > 600:
                             logger.info(f"[HERMES] Retrying failed emergency exit for {slug[:40]}...")
-                            pos_data.pop("emergency_exit_failed", None)
-                            pos_data.pop("in_emergency_exit", None)
+                            pos_data["emergency_exit_failed"] = False
+                            pos_data["in_emergency_exit"] = False
                             with _positions_file_lock:
                                 _merge_save_positions(updated_positions={slug: pos_data})
                     except (ValueError, TypeError):
@@ -538,6 +547,8 @@ Return ONLY JSON:
                     else:
                         raise
 
+            trigger = False
+            p_hermes_val = bot_prob
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             if json_match:
                 decision = json.loads(json_match.group(0))

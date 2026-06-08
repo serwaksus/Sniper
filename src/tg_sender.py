@@ -58,7 +58,8 @@ def _send_once(token, chat_id, message, timeout=SEND_TIMEOUT):
     orig_getaddrinfo = socket.getaddrinfo
     def _patched_getaddrinfo(host, port, *args, **kwargs):
         if host == TG_API_HOST:
-            return [orig_getaddrinfo(TG_WORKING_IP, port, *args, **kwargs)[0]]
+            results = orig_getaddrinfo(TG_WORKING_IP, port, *args, **kwargs)
+            return [results[0]] if results else orig_getaddrinfo(host, port, *args, **kwargs)
         return orig_getaddrinfo(host, port, *args, **kwargs)
     
     socket.getaddrinfo = _patched_getaddrinfo

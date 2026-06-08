@@ -75,13 +75,13 @@ class TestPositionSizeKelly(unittest.TestCase):
         size = ds.position_size(0.05, 0.10, 1000)
         self.assertEqual(size, 0)
 
-    def test_zero_price_returns_5(self):
+    def test_zero_price_returns_0(self):
         size = ds.position_size(0.30, 0.0, 1000)
-        self.assertEqual(size, 5)
+        self.assertEqual(size, 0)
 
-    def test_tiny_price_returns_5(self):
+    def test_tiny_price_returns_0(self):
         size = ds.position_size(0.30, 0.0001, 1000, best_ask=0.0001)
-        self.assertEqual(size, 5)
+        self.assertEqual(size, 0)
 
     def test_low_balance_min_5_filter(self):
         size = ds.position_size(0.15, 0.10, 50)

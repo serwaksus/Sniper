@@ -190,7 +190,7 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
     """
     if market_price <= 0:
         logger.warning("[KELLY] market_price <= 0, using minimum $5")
-        return 5
+        return 0
 
     # Prefer best_ask for Kelly calculation (actual executable price)
     # vs market_price which might be midpoint with poor liquidity
@@ -198,7 +198,9 @@ def position_size(p_model, market_price, balance, confidence=1.0, best_ask=None,
 
     if effective_price <= 0.001:
         logger.warning(f"[KELLY] effective_price={effective_price:.6f} too small, minimum $5")
-        return 5
+        return 0
+    if effective_price >= 0.999:
+        return 0
     b = (1 - effective_price) / effective_price
 
     p = p_model; q = 1 - p

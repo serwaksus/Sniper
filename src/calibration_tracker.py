@@ -191,7 +191,9 @@ def sync_from_hypothesis_db():
     existing_slugs = {e["slug"] for e in log["entries"]}
 
     added = 0
-    for h in db.get("resolved", []):
+    for h in db.get("hypotheses", []):
+        if not h.get("resolved"):
+            continue
         if h.get("slug") in existing_slugs:
             continue
         if h.get("outcome") not in ("YES", "NO"):
@@ -278,10 +280,12 @@ def train_platt_models() -> dict:
         log = {"entries": []}
     entries = [e for e in log.get("entries", []) if e.get("actual_outcome") in ("YES", "NO")]
 
-    db = load_json(HYPOTHESIS_DB, {"resolved": []})
+    db = load_json(HYPOTHESIS_DB, {"hypotheses": [], "resolved": []})
     if isinstance(db, dict):
         seen = {e["slug"] for e in log.get("entries", [])}
-        for h in db.get("resolved", []):
+        for h in db.get("hypotheses", []):
+            if not h.get("resolved"):
+                continue
             if h.get("outcome") in ("YES", "NO") and h.get("slug") not in seen and h.get("p_model") is not None:
                 entries.append({
                     "p_model": h["p_model"],

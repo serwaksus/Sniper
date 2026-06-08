@@ -124,7 +124,7 @@ def _execute_sell(slug, outcome, shares, current_price, entry_price, force_marke
 
     logger.info(f"[MARKET-SELL] {slug[:40]}... bid={best_bid:.4f} spread=${spread:.4f}")
     try:
-        res = subprocess.run(["pm-trader", "sell", slug, outcome, str(shares)],
+        res = subprocess.run(["pm-trader", "sell", slug, outcome, str(int(shares))],
                              capture_output=True, text=True, timeout=20, start_new_session=True)
         result = json.loads(res.stdout) if res.stdout else {}
         if result.get("ok"):
@@ -334,7 +334,7 @@ def trailing_stop_check():
         save_json(POSITIONS_FILE, positions)
 
         convergence = None
-        if metaculus_prob and metaculus_prob > 0:
+        if metaculus_prob and metaculus_prob > 0.05:
             convergence = current_price / metaculus_prob
             logger.info(f"[CONVERGENCE] {slug[:40]}... mid={current_price:.3f}, meta={metaculus_prob:.0%}, ratio={convergence:.2f}")
             if convergence >= CONVERGENCE_TAKE_PROFIT and not om._get_open_tp_orders(slug):
@@ -396,6 +396,8 @@ def trailing_stop_check():
                 p["trailing_confirmed"] = True
                 p["trailing_confirm_time"] = now.isoformat()
                 logger.info(f"[TRAILING-STOP] Confirming for {slug[:40]}... (1/2)")
+                positions[slug] = p
+                save_json(POSITIONS_FILE, positions)
                 continue
             else:
                 confirm_time = p.get("trailing_confirm_time")
@@ -446,17 +448,18 @@ def trailing_stop_check():
             om._cancel_all_tp_orders(slug)
             sniper.resolve_hypothesis_immediately(slug, current_price, entry_price)
             try:
-                actual_pnl_val = (current_price - entry_price) / entry_price if entry_price > 0 else 0
+                eff_price_val = eff_price if eff_price else current_price
+                actual_pnl_val = (eff_price_val - entry_price) / entry_price if entry_price > 0 else 0
                 _get_et().log_trade(
                     event_type="SELL",
                     slug=slug,
                     question=pos.get("market_question", ""),
                     entry_price=entry_price,
-                    exit_price=current_price,
+                    exit_price=eff_price_val,
                     shares=shares,
                     invested=shares * entry_price,
                     pnl_pct=actual_pnl_val * 100,
-                    pnl_abs=shares * (current_price - entry_price),
+                    pnl_abs=shares * (eff_price_val - entry_price),
                     reason=sold_reason,
                 )
             except Exception:
