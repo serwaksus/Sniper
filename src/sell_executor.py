@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import logging
+import contextlib
 from datetime import datetime, timedelta, UTC
 from typing import Any
 
@@ -257,6 +258,13 @@ def trailing_stop_check() -> None:
 
     current_slugs = {p["market_slug"] for p in portfolio}
     now = datetime.now()
+
+    all_pos = positions_db.load_all()
+    orphan_tp_slugs = [s for s in all_pos if s not in current_slugs]
+    for s in orphan_tp_slugs:
+        with contextlib.suppress(Exception):
+            om._cancel_all_tp_orders(s)
+            logger.info(f"[CLEANUP-TP] Cancelled orphan TP orders for {s[:40]}...")
 
     db = sniper.load_hypothesis_db()
     resolved_slugs = {h[HYP_SLUG] for h in db.get(HYP_DB_RESOLVED, [])}
@@ -572,6 +580,8 @@ def trailing_stop_check() -> None:
     all_pos = positions_db.load_all()
     stale = [s for s in list(all_pos.keys()) if s not in current_slugs or s in resolved_slugs]
     for s in stale:
+        with contextlib.suppress(Exception):
+            om._cancel_all_tp_orders(s)
         positions_db.delete(s)
         try:
             from bayesian_updater import cleanup_slug

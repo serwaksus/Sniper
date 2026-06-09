@@ -287,12 +287,34 @@ def _update_status_file() -> None:
 def main() -> None:
     _main_inner()
 
+def cleanup_stale_orders() -> None:
+    try:
+        res = subprocess.run(["pm-trader", "orders", "list"], capture_output=True, text=True, timeout=20, start_new_session=True)
+        orders = json.loads(res.stdout).get("data", []) if res.stdout else []
+        if not orders:
+            return
+        all_pos = positions_db.load_all()
+        active_slugs = set(all_pos.keys())
+        to_cancel = [o for o in orders if o.get("slug") not in active_slugs and o.get("market_slug") not in active_slugs]
+        for o in to_cancel:
+            order_id = o.get("id") or o.get("order_id")
+            slug = o.get("slug") or o.get("market_slug", "?")
+            if order_id:
+                subprocess.run(["pm-trader", "orders", "cancel", str(order_id)], capture_output=True, text=True, timeout=10, start_new_session=True)
+                logger.info(f"[STARTUP-CLEANUP] Cancelled stale order {order_id} for {slug[:40]}...")
+        if to_cancel:
+            logger.info(f"[STARTUP-CLEANUP] Cancelled {len(to_cancel)} stale orders")
+    except Exception as e:
+        logger.warning(f"[STARTUP-CLEANUP] {type(e).__name__}: {e}")
+
+
 def _main_inner() -> None:
     print("="*60)
     print("  DOTM SNIPER v5.3.0 - Batch Processing + Delta Scan + Advisor")
     print("="*60)
 
     repair_positions_file()
+    cleanup_stale_orders()
 
     settings = get_settings()
     validate_settings(settings)

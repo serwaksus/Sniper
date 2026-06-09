@@ -28,6 +28,9 @@ class IsotonicCalibrator:
     def fit(self, hypotheses: list[dict]) -> None:
         self.models = {}
         self.is_fitted = False
+        if len(hypotheses) < 50:
+            logger.info(f"[CALIBRATION] Only {len(hypotheses)} total samples (need 50), skipping isotonic fit")
+            return
         cluster_data: dict[str, list[dict[str, Any]]] = {}
         for h in hypotheses:
             if h.get("outcome") not in ("YES", "NO"):

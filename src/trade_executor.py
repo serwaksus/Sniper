@@ -53,12 +53,20 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
 
     if not isinstance(estimated_size, (int, float)) or estimated_size <= 0:
         return False
-    approved, _verdict, _adv_conf, adv_reason = advisor_pre_check(market, analysis, estimated_size, balance)
-    if not approved:
-        logger.info(f"[TRADE-BLOCKED] {slug}: {adv_reason}")
-        return False
+    signal_score = analysis.get("signal_score", 0)
+    min_signal = analysis.get("min_signal", 50)
+    if signal_score >= min_signal * 1.5:
+        logger.info(f"[TRADE] High conviction ({signal_score:.0f} >= {min_signal * 1.5:.0f}), skipping advisor")
+    else:
+        approved, _verdict, _adv_conf, adv_reason = advisor_pre_check(market, analysis, estimated_size, balance)
+        if not approved:
+            logger.info(f"[TRADE-BLOCKED] {slug}: {adv_reason}")
+            return False
 
-    max_slippage = max(0.30, market["price"] * 2)
+    if market["price"] < 0.10:
+        max_slippage = max(0.50, market["price"] * 10)
+    else:
+        max_slippage = max(0.30, market["price"] * 2)
     current_ask = get_best_ask(slug)
     if current_ask is not None and current_ask > market["price"] * (1 + max_slippage):
         logger.warning(f"[SNIPER] Slippage guard: ask={current_ask:.4f} > {max_slippage:.0%} above price={market['price']:.4f}, aborting")

@@ -81,8 +81,12 @@ def calibrate_prediction(p_model: float, market_price: float, metaculus_prob: fl
                 method = "raw_overfit_guard"
 
     if method == "raw":
-        p_calibrated = min(p_model * 1.1, 0.50)
-        method = "soft_extremize"
+        if resolved_count < 50:
+            p_calibrated = min(p_model * 1.05, 0.35)
+            method = "soft_extremize"
+        else:
+            p_calibrated = p_model
+            method = "raw"
 
     if market_price < 0.40:
         p_ext = min(p_calibrated, 0.85)
