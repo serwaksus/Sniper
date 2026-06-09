@@ -60,7 +60,7 @@ def normalize_probability(p: float | None) -> float:
 def metaculus_search(query: str, limit: int = 10) -> list[dict]:
     try:
         resp = requests.get(METACULUS_URL, headers=METACULUS_HEADERS,
-                          params={"search": query, "limit": limit, "status": "open"},
+                          params={"search": query, "limit": limit, "status": "open"},  # type: ignore[arg-type]
                           timeout=15)
         if resp.status_code == 200:
             return resp.json().get("results", [])
@@ -137,7 +137,7 @@ def _calculate_metaculus_match(pm_question: str, result: dict) -> float:
     base_score = overlap / max(len(pm_clean), 1) if pm_clean else 0
 
     key_phrases = ["ai safety", "artificial intelligence", "anthropic", "ukraine", "nato", "nuclear", "china", "taiwan", "trump", "fed", "powell", "bitcoin"]
-    substring_bonus = 0
+    substring_bonus = 0.0
     for phrase in key_phrases:
         if phrase in pm_lower and phrase in meta_title:
             substring_bonus += 0.15
@@ -170,7 +170,7 @@ def get_metaculus_forecast(pm_question: str, pm_resolve_date: str | None = None)
     search_queries = [pm_question, *_generate_search_queries(pm_question)]
 
     best_match = None
-    raw_best_score = 0
+    raw_best_score = 0.0
     for query in search_queries:
         results = metaculus_search(query, limit=10)
         if not results:
@@ -199,7 +199,8 @@ def get_metaculus_forecast(pm_question: str, pm_resolve_date: str | None = None)
                     "meta_date": meta_resolve, "pm_date": pm_resolve_date}
 
     qid = q_data.get("id") or best_match.get("id")
-
+    if qid is None:
+        return {"found": False, "probability": None, "reason": "no_question_id"}
     cp_reveal = q_data.get("cp_reveal_time")
     if cp_reveal:
         try:

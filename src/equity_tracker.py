@@ -42,6 +42,8 @@ def log_equity_snapshot() -> dict | None:
         return None
 
     portfolio = get_portfolio()
+    if portfolio is None:
+        portfolio = []
 
     cash = float(balance.get("cash", 0))
     positions_value = sum(float(p.get("current_value", 0)) for p in portfolio)
@@ -160,7 +162,7 @@ def get_daily_summary() -> dict[str, Any]:
     journal = load_json(TRADES_JOURNAL_FILE, {"trades": []})
     if not isinstance(journal, dict):
         journal = {"trades": []}
-    today_trades = []
+    today_trades: list[dict[str, Any]] = []
     for t in journal.get("trades", []):
         try:
             ts = datetime.fromisoformat(t["timestamp"])

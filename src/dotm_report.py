@@ -164,10 +164,16 @@ class TelegramReporter:
                 vol = float(m.get("volume", 0))
                 msg += f"   ${vol:,.0f} - {html.escape(str(m.get('question', '')[:35]))}...\n"
 
-        return self._send(msg)
+        cluster_text = format_cluster_report()
+        msg += f"\n\n<pre>{html.escape(cluster_text)}</pre>"
+
+        self._send(msg)
+
+        return
 
 
 from order_manager import get_balance, get_portfolio
+from cluster_report import format_cluster_report
 
 
 def get_markets() -> list[dict]:
@@ -226,8 +232,8 @@ def main() -> None:
         logger.info("Telegram report skipped (--no-telegram flag set)")
     else:
         reporter = TelegramReporter()
-        sent = reporter.send_daily_report(balance, portfolio, history.get("summary", {}), top_markets)
-        logger.info(f"Report Telegram send result: {sent}")
+        reporter.send_daily_report(balance, portfolio or [], history.get("summary", {}), top_markets)
+        logger.info("Report Telegram send attempted")
 
     status_file = CURRENT_STATUS_FILE
     try:

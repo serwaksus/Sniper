@@ -2,7 +2,7 @@ from __future__ import annotations
 import time
 import logging
 import contextlib
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 import positions_db
@@ -71,7 +71,7 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
         POS_OUTCOME: market.get("outcome", "yes"),
         POS_CLUSTERS: market.get("clusters", ["other"]),
         POS_MARKET_QUESTION: market.get("question", ""),
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     })
     logger.info(f"[TRADE] {slug[:60]} pending position recorded before buy")
 

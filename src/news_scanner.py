@@ -87,7 +87,7 @@ def _fetch_ddg_news_fallback(keywords: list[str], max_results: int, max_age_days
     when Tavily API is not available.
     Applies freshness filter: only results within max_age_days.
     """
-    query = "+".join([requests.utils.quote(k) for k in keywords[:3]])
+    query = "+".join([__import__('urllib.parse', fromlist=['quote']).quote(k) for k in keywords[:3]])
     if max_age_days <= 1:
         df = "d"
     elif max_age_days <= 7:

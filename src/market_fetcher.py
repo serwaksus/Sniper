@@ -53,7 +53,7 @@ def fetch_markets():
                 continue
 
             end_date = m.get("end_date", "")
-            ttl_hours = 999
+            ttl_hours: float = 999
             if end_date:
                 try:
                     end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00")).replace(tzinfo=None)
@@ -120,7 +120,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
                 "order": "volume",
                 "ascending": "false",
             }
-            resp = requests.get(url, params=params, timeout=20)
+            resp = requests.get(url, params=params, timeout=20)  # type: ignore[arg-type]
             if resp.status_code != 200:
                 logger.warning(f"[GAMMA] status={resp.status_code} at offset={offset}")
                 break
@@ -160,7 +160,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
             if vol < MIN_VOLUME:
                 continue
             end_date = m.get("endDate", m.get("end_date", ""))
-            ttl_hours = 999
+            ttl_hours: float = 999
             if end_date:
                 try:
                     end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00")).replace(tzinfo=None)
@@ -211,7 +211,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
         return []
 
 
-def pre_filter_before_batching(markets: list[dict]) -> list[dict]:
+def pre_filter_before_batching(markets: list[dict]) -> tuple[list[dict], list[dict]]:
     kept = []
     skipped = []
     for m in markets:

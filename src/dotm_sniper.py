@@ -71,7 +71,7 @@ os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 _handler_file = RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3)
 _handler_stream = logging.StreamHandler()
 if os.environ.get("LOG_FORMAT") == "json":
-    _formatter = StructuredFormatter(json_mode=True)
+    _formatter: logging.Formatter = StructuredFormatter(json_mode=True)
 else:
     _formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 _handler_file.setFormatter(_formatter)
@@ -330,6 +330,8 @@ def _main_inner() -> None:
     print(f"💰 Balance: ${balance:.2f} (total: ${total_balance:.2f})")
 
     portfolio = get_portfolio()
+    if portfolio is None:
+        portfolio = []
     print(f"📊 Open positions: {len(portfolio)}")
 
     _update_status_file()
@@ -344,7 +346,7 @@ def _main_inner() -> None:
     position_slugs = {p.get("market_slug", "") for p in portfolio}
     already_active = existing_slugs | position_slugs
     gamma_candidates = fetch_gamma_dotm_candidates(existing_slugs | position_slugs)
-    seen = {m["slug"] for m in markets}
+    seen: set[str] = {m["slug"] for m in markets}
     for gc in gamma_candidates:
         if gc["slug"] not in seen:
             markets.append(gc)

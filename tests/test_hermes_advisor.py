@@ -128,11 +128,11 @@ class TestAlertState:
 
 
 class TestExecuteEmergencyExit:
-    @patch("hermes_advisor.positions_db")
+    @patch("hermes_risk.positions_db")
     @patch("hermes_advisor.market_sell", return_value=True)
     @patch("hermes_advisor.cancel_order", return_value=True)
     @patch("hermes_advisor.get_portfolio", return_value=[])
-    @patch("hermes_advisor._log_emergency_exit")
+    @patch("hermes_risk._log_emergency_exit")
     @patch("hermes_advisor.TELEGRAM_REPORTER", None)
     def test_successful_exit_deletes_position(self, mock_log, mock_portfolio, mock_cancel, mock_sell, mock_pdb):
         mock_pdb.load.return_value = {"shares": 100, "outcome": "yes", "entry_price": 0.10, "market_question": "Q?"}
@@ -140,10 +140,10 @@ class TestExecuteEmergencyExit:
         ha._execute_emergency_exit("s1", {"shares": 100, "outcome": "yes", "entry_price": 0.10}, "test reason")
         mock_pdb.delete.assert_called_with("s1")
 
-    @patch("hermes_advisor.positions_db")
+    @patch("hermes_risk.positions_db")
     @patch("hermes_advisor.market_sell", return_value=False)
     @patch("hermes_advisor.cancel_order", return_value=True)
-    @patch("hermes_advisor._log_emergency_exit")
+    @patch("hermes_risk._log_emergency_exit")
     def test_failed_sell_marks_failed(self, mock_log, mock_cancel, mock_sell, mock_pdb):
         mock_pdb.load.return_value = {"shares": 100, "outcome": "yes", "entry_price": 0.10}
         import hermes_advisor as ha
@@ -169,8 +169,8 @@ class TestNotificationKwargs:
 
 
 class TestLogEmergencyExit:
-    @patch("hermes_advisor.save_json")
-    @patch("hermes_advisor.load_json", return_value=[])
+    @patch("hermes_risk.save_json")
+    @patch("hermes_risk.load_json", return_value=[])
     def test_logs_entry(self, mock_load, mock_save):
         import hermes_advisor as ha
         ha._log_emergency_exit("s1", {"market_question": "Q?", "entry_price": 0.10}, "test")
@@ -181,15 +181,15 @@ class TestLogEmergencyExit:
 
 
 class TestCheckResolvedMarkets:
-    @patch("hermes_advisor.positions_db")
-    @patch("hermes_advisor.subprocess.run")
+    @patch("hermes_resolution.positions_db")
+    @patch("hermes_resolution.subprocess.run")
     @patch("hermes_memory._load_memory", return_value={"predictions": {}})
     def test_resolves_closed_market(self, mock_load_mem, mock_run, mock_pdb):
         mock_run.return_value = _subprocess_result(json.dumps({"data": []}))
         import hermes_advisor as ha
         ha._check_resolved_markets()
 
-    @patch("hermes_advisor.subprocess.run", side_effect=Exception("err"))
+    @patch("hermes_resolution.subprocess.run", side_effect=Exception("err"))
     @patch("hermes_memory._load_memory", return_value={"predictions": {}})
     def test_subprocess_failure_returns(self, mock_load_mem, mock_run):
         import hermes_advisor as ha

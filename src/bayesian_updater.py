@@ -12,6 +12,7 @@ import time
 import logging
 import threading
 from datetime import datetime
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -32,7 +33,7 @@ NEWS_LIKELIHOOD = {
     "confirms_inevitable": {"p_yes_given_news": 0.95, "label": "News confirms outcome"},
 }
 
-_ADAPTIVE_CACHE = {"data": None, "loaded_at": 0}
+_ADAPTIVE_CACHE: dict[str, Any] = {"data": None, "loaded_at": 0}
 
 
 def _get_effective_likelihoods() -> dict:

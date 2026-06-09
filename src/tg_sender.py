@@ -39,7 +39,7 @@ def _patched_getaddrinfo(host: str, port: int, *args, **kwargs) -> list:
         results = _orig_getaddrinfo(TG_WORKING_IP, port, *args, **kwargs)
         return [results[0]] if results else _orig_getaddrinfo(host, port, *args, **kwargs)
     return _orig_getaddrinfo(host, port, *args, **kwargs)
-socket.getaddrinfo = _patched_getaddrinfo
+socket.getaddrinfo = _patched_getaddrinfo  # type: ignore[assignment]
 
 
 def _get_credentials() -> tuple[str, str]:

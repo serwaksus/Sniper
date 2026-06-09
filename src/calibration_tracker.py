@@ -297,7 +297,7 @@ def train_platt_models() -> dict:
                     "cluster": h.get("clusters", ["other"])[0] if h.get("clusters") else "other",
                 })
 
-    by_cluster = defaultdict(lambda: {"p": [], "y": []})
+    by_cluster: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"p": [], "y": []})
     for e in entries:
         cluster = e.get("cluster", "other")
         by_cluster[cluster]["p"].append(e[HYP_P_MODEL])

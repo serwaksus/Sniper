@@ -13,7 +13,7 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-import hermes_advisor as ha
+import hermes_risk as hr
 
 
 class TestProbabilityParsing(unittest.TestCase):
@@ -91,52 +91,52 @@ class TestSpamSuppression(unittest.TestCase):
     """Fix #2: Case-normalized status dedup prevents spam loop."""
 
     def setUp(self):
-        ha._last_alert_status = {}
+        hr._last_alert_status.clear()
 
     def test_same_status_case_insensitive_no_send(self):
-        ha._last_alert_status["slug-a"] = "YELLOW"
-        self.assertFalse(ha._should_send_telegram("slug-a", False, "yellow"))
+        hr._last_alert_status["slug-a"] = "YELLOW"
+        self.assertFalse(hr._should_send_telegram("slug-a", False, "yellow"))
 
     def test_same_status_exact_match_no_send(self):
-        ha._last_alert_status["slug-a"] = "DIVERGENCE"
-        self.assertFalse(ha._should_send_telegram("slug-a", False, "DIVERGENCE"))
+        hr._last_alert_status["slug-a"] = "DIVERGENCE"
+        self.assertFalse(hr._should_send_telegram("slug-a", False, "DIVERGENCE"))
 
     def test_different_status_sends(self):
-        ha._last_alert_status["slug-a"] = "GREEN"
-        self.assertTrue(ha._should_send_telegram("slug-a", False, "DIVERGENCE"))
+        hr._last_alert_status["slug-a"] = "GREEN"
+        self.assertTrue(hr._should_send_telegram("slug-a", False, "DIVERGENCE"))
 
     def test_different_status_non_notify_no_send(self):
-        ha._last_alert_status["slug-a"] = "GREEN"
-        self.assertFalse(ha._should_send_telegram("slug-a", False, "YELLOW"))
+        hr._last_alert_status["slug-a"] = "GREEN"
+        self.assertFalse(hr._should_send_telegram("slug-a", False, "YELLOW"))
 
     def test_trigger_exit_always_sends(self):
-        ha._last_alert_status["slug-a"] = "DIVERGENCE"
-        self.assertTrue(ha._should_send_telegram("slug-a", True, "DIVERGENCE"))
+        hr._last_alert_status["slug-a"] = "DIVERGENCE"
+        self.assertTrue(hr._should_send_telegram("slug-a", True, "DIVERGENCE"))
 
     def test_no_previous_status_sends_for_divergence(self):
-        self.assertTrue(ha._should_send_telegram("slug-new", False, "DIVERGENCE"))
+        self.assertTrue(hr._should_send_telegram("slug-new", False, "DIVERGENCE"))
 
     def test_no_previous_status_no_send_for_green(self):
-        self.assertFalse(ha._should_send_telegram("slug-new", False, "GREEN"))
+        self.assertFalse(hr._should_send_telegram("slug-new", False, "GREEN"))
 
     def test_whitespace_normalized(self):
-        ha._last_alert_status["slug-a"] = "YELLOW"
-        self.assertFalse(ha._should_send_telegram("slug-a", False, "  YELLOW  "))
+        hr._last_alert_status["slug-a"] = "YELLOW"
+        self.assertFalse(hr._should_send_telegram("slug-a", False, "  YELLOW  "))
 
     def test_mixed_case_normalized(self):
-        ha._last_alert_status["slug-a"] = "Divergence"
-        self.assertFalse(ha._should_send_telegram("slug-a", False, "DIVERGENCE"))
+        hr._last_alert_status["slug-a"] = "Divergence"
+        self.assertFalse(hr._should_send_telegram("slug-a", False, "DIVERGENCE"))
 
     def test_update_normalizes_before_save(self):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             tmp = f.name
         try:
-            orig = ha.ALERT_STATE_FILE
-            ha.ALERT_STATE_FILE = tmp
-            ha._last_alert_status = {}
-            ha._update_and_check_status("slug-x", False, "  yellow ")
-            self.assertEqual(ha._last_alert_status["slug-x"], "YELLOW")
-            ha.ALERT_STATE_FILE = orig
+            orig = hr.ALERT_STATE_FILE
+            hr.ALERT_STATE_FILE = tmp
+            hr._last_alert_status.clear()
+            hr._update_and_check_status("slug-x", False, "  yellow ")
+            self.assertEqual(hr._last_alert_status["slug-x"], "YELLOW")
+            hr.ALERT_STATE_FILE = orig
         finally:
             os.unlink(tmp)
 
@@ -172,7 +172,7 @@ class TestEmptyNewsFallback(unittest.TestCase):
             headlines = news_data
         self.assertFalse(headlines)
 
-    @patch('hermes_advisor.fetch_news_for_market')
+    @patch('hermes_risk.fetch_news_for_market')
     @patch('positions_db.load_all')
     def test_empty_news_skips_llm_call(self, mock_load, mock_news):
         mock_load.return_value = {
@@ -186,10 +186,10 @@ class TestEmptyNewsFallback(unittest.TestCase):
 
         import requests
         with patch.object(requests, 'post') as mock_post:
-            ha.evaluate_emergency_exit()
+            hr.evaluate_emergency_exit()
             mock_post.assert_not_called()
 
-    @patch('hermes_advisor.fetch_news_for_market')
+    @patch('hermes_risk.fetch_news_for_market')
     @patch('positions_db.load_all')
     def test_empty_list_news_skips_llm_call(self, mock_load, mock_news):
         mock_load.return_value = {
@@ -203,10 +203,10 @@ class TestEmptyNewsFallback(unittest.TestCase):
 
         import requests
         with patch.object(requests, 'post') as mock_post:
-            ha.evaluate_emergency_exit()
+            hr.evaluate_emergency_exit()
             mock_post.assert_not_called()
 
-    @patch('hermes_advisor.fetch_news_for_market')
+    @patch('hermes_risk.fetch_news_for_market')
     @patch('positions_db.load_all')
     @patch('requests.post')
     def test_nonempty_news_does_call_llm(self, mock_post, mock_load, mock_news):
@@ -224,8 +224,8 @@ class TestEmptyNewsFallback(unittest.TestCase):
         mock_resp.ok = True
         mock_post.return_value = mock_resp
 
-        ha._last_alert_status = {}
-        ha.evaluate_emergency_exit()
+        hr._last_alert_status.clear()
+        hr.evaluate_emergency_exit()
 
         deepseek_calls = [c for c in mock_post.call_args_list if 'deepseek' in str(c)]
         self.assertGreaterEqual(len(deepseek_calls), 1)
@@ -234,8 +234,8 @@ class TestEmptyNewsFallback(unittest.TestCase):
 class TestDivergenceLockInEvaluation(unittest.TestCase):
     """Integration: divergence_locked flag prevents YELLOW override in evaluate_emergency_exit."""
 
-    @patch('hermes_advisor._update_and_check_status', return_value=True)
-    @patch('hermes_advisor.fetch_news_for_market')
+    @patch('hermes_risk._update_and_check_status', return_value=True)
+    @patch('hermes_risk.fetch_news_for_market')
     @patch('positions_db.load_all')
     @patch('requests.post')
     def test_llm_says_yellow_but_python_says_divergence(self, mock_post, mock_load, mock_news, mock_update):
@@ -252,16 +252,16 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
         mock_resp.json.return_value = {"choices": [{"message": {"content": llm_content}}]}
         mock_post.return_value = mock_resp
 
-        ha._last_alert_status = {}
-        ha.evaluate_emergency_exit()
+        hr._last_alert_status.clear()
+        hr.evaluate_emergency_exit()
 
         mock_update.assert_called_once()
         args, _kwargs = mock_update.call_args
         normalized_status = args[2]
         self.assertEqual(normalized_status, "DIVERGENCE")
 
-    @patch('hermes_advisor._update_and_check_status', return_value=True)
-    @patch('hermes_advisor.fetch_news_for_market')
+    @patch('hermes_risk._update_and_check_status', return_value=True)
+    @patch('hermes_risk.fetch_news_for_market')
     @patch('positions_db.load_all')
     @patch('requests.post')
     def test_llm_says_green_no_divergence(self, mock_post, mock_load, mock_news, mock_update):
@@ -278,16 +278,16 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
         mock_resp.json.return_value = {"choices": [{"message": {"content": llm_content}}]}
         mock_post.return_value = mock_resp
 
-        ha._last_alert_status = {}
-        ha.evaluate_emergency_exit()
+        hr._last_alert_status.clear()
+        hr.evaluate_emergency_exit()
 
         mock_update.assert_called_once()
         args, _kwargs = mock_update.call_args
         normalized_status = args[2]
         self.assertEqual(normalized_status, "GREEN")
 
-    @patch('hermes_advisor._update_and_check_status', return_value=True)
-    @patch('hermes_advisor.fetch_news_for_market')
+    @patch('hermes_risk._update_and_check_status', return_value=True)
+    @patch('hermes_risk.fetch_news_for_market')
     @patch('positions_db.load_all')
     @patch('requests.post')
     def test_llm_returns_percent_format_p_hermes(self, mock_post, mock_load, mock_news, mock_update):
@@ -304,8 +304,8 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
         mock_resp.json.return_value = {"choices": [{"message": {"content": llm_content}}]}
         mock_post.return_value = mock_resp
 
-        ha._last_alert_status = {}
-        ha.evaluate_emergency_exit()
+        hr._last_alert_status.clear()
+        hr.evaluate_emergency_exit()
 
         mock_update.assert_called_once()
         args, _kwargs = mock_update.call_args
@@ -316,7 +316,7 @@ class TestDivergenceLockInEvaluation(unittest.TestCase):
 class TestDuplicateStatusReturn(unittest.TestCase):
     """Fix #2: evaluate_emergency_exit returns early on duplicate status."""
 
-    @patch('hermes_advisor.fetch_news_for_market')
+    @patch('hermes_risk.fetch_news_for_market')
     @patch('positions_db.load_all')
     @patch('requests.post')
     def test_duplicate_status_skips_update(self, mock_post, mock_load, mock_news):
@@ -333,11 +333,12 @@ class TestDuplicateStatusReturn(unittest.TestCase):
         mock_resp.json.return_value = {"choices": [{"message": {"content": llm_content}}]}
         mock_post.return_value = mock_resp
 
-        ha._last_alert_status = {"test-slug": "YELLOW"}
+        hr._last_alert_status.clear()
+        hr._last_alert_status["test-slug"] = "YELLOW"
 
-        ha.evaluate_emergency_exit()
+        hr.evaluate_emergency_exit()
 
-        self.assertEqual(ha._last_alert_status.get("test-slug"), "YELLOW")
+        self.assertEqual(hr._last_alert_status.get("test-slug"), "YELLOW")
 
 
 if __name__ == '__main__':

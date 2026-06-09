@@ -11,6 +11,7 @@ import re
 import requests
 import sys
 import time
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -48,7 +49,7 @@ BATCH_SIZE = 6
 ADVISOR_MODEL = "deepseek-reasoner"
 ADVISOR_MIN_CONFIDENCE = 0.70
 
-_llm_call_times = []
+_llm_call_times: list[float] = []
 
 
 def get_settings():
@@ -381,7 +382,7 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
 def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
     slug_to_item = {it[HYP_SLUG]: it for it in batch_items}
 
-    results_map = {}
+    results_map: dict[str, dict[str, Any]] = {}
     for item in parsed_array:
         if not isinstance(item, dict):
             continue

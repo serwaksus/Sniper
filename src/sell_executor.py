@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -316,7 +316,7 @@ def trailing_stop_check() -> None:
             sell_since = p.get(POS_LIMIT_SELL_SINCE)
             if sell_since:
                 try:
-                    elapsed = (datetime.utcnow() - datetime.fromisoformat(str(sell_since))).total_seconds()
+                    elapsed = (datetime.now(UTC) - datetime.fromisoformat(str(sell_since))).total_seconds()
                     if elapsed > 3600:
                         logger.warning(f"[STUCK-SELL] {slug[:60]} selling_in_progress for {int(elapsed)}s, clearing")
                         p[POS_SELLING_IN_PROGRESS] = False

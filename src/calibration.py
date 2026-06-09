@@ -7,6 +7,7 @@ import os
 import sys
 import logging
 import threading
+from typing import Any
 import numpy as np
 from sklearn.isotonic import IsotonicRegression
 
@@ -20,14 +21,14 @@ MIN_SAMPLES_PER_CLUSTER = 20
 
 
 class IsotonicCalibrator:
-    def __init__(self):
-        self.models = {}
+    def __init__(self) -> None:
+        self.models: dict[str, Any] = {}
         self.is_fitted = False
 
     def fit(self, hypotheses: list[dict]) -> None:
         self.models = {}
         self.is_fitted = False
-        cluster_data = {}
+        cluster_data: dict[str, list[dict[str, Any]]] = {}
         for h in hypotheses:
             if h.get("outcome") not in ("YES", "NO"):
                 continue

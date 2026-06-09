@@ -3,7 +3,7 @@ import sys
 import os
 import pytest
 from unittest.mock import patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -202,7 +202,7 @@ class TestTrailingStopCheck:
     def test_selling_in_progress_skips_position(self, mock_pos_db, mock_sniper, mock_om):
         from sell_executor import trailing_stop_check
 
-        recent_sell_since = datetime.utcnow().isoformat()
+        recent_sell_since = datetime.now(UTC).isoformat()
 
         mock_om.return_value.get_portfolio.return_value = [
             {"market_slug": "selling-slug", "shares": 100, "outcome": "yes",

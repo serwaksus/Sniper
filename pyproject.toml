@@ -36,3 +36,7 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = "stress_test"
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "dotm_backtester"
+ignore_errors = true

@@ -19,5 +19,9 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Lint
         run: ruff check src/ tests/
+      - name: Type check
+        run: |
+          pip install mypy
+          mypy src/ --config-file pyproject.toml
       - name: Tests
         run: pytest tests/ -q --tb=short

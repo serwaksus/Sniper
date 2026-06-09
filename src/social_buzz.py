@@ -153,7 +153,7 @@ def fetch_gdelt(keywords: list[str]) -> dict:
 
     query = " ".join(keywords[:3])
     try:
-        resp = requests.get(GDELT_URL, params={
+        resp = requests.get(GDELT_URL, params={  # type: ignore[arg-type]
             "query": query,
             "mode": "artlist",
             "maxrecords": 250,
@@ -226,7 +226,7 @@ def fetch_google_news(keywords: list[str]) -> dict:
             try:
                 pub = entry.get("published_parsed")
                 if pub:
-                    pub_dt = datetime(*pub[:6], tzinfo=UTC)
+                    pub_dt = datetime(*pub[:6], tzinfo=UTC)  # type: ignore[misc]
                     if pub_dt >= cutoff:
                         count += 1
                 else:
@@ -244,7 +244,7 @@ def fetch_google_news(keywords: list[str]) -> dict:
 def fetch_reddit(keywords: list[str]) -> dict:
     query = " ".join(keywords[:3])
     try:
-        resp = requests.get(REDDIT_URL, params={
+        resp = requests.get(REDDIT_URL, params={  # type: ignore[arg-type]
             "q": query,
             "sort": "new",
             "t": "day",
@@ -284,7 +284,7 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
     google_norm = min(google.get("count", 0) / 30, 1.0)
     reddit_norm = min(reddit.get("count", 0) / 20, 1.0)
 
-    total_buzz = 0
+    total_buzz = 0.0
 
     if gdelt.get("status") == "ok":
         total_buzz += 0.50 * gdelt_norm

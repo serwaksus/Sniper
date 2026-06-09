@@ -193,9 +193,9 @@ def generate_skills() -> list[dict]:
 
         skills = []
 
-        cluster_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
-        verdict_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
-        category_stats = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
+        cluster_stats: dict[str, dict[str, float]] = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
+        verdict_stats: dict[str, dict[str, float]] = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
+        category_stats: dict[str, dict[str, float]] = defaultdict(lambda: {"count": 0, "correct": 0, "total_error": 0.0})
         overconfident_yes = 0
         underconfident_yes = 0
         overconfident_no = 0
@@ -342,7 +342,7 @@ def get_calibration_summary() -> str:
     correct = sum(1 for r in resolved if r.get("correct"))
     avg_error = sum(r.get("abs_error", 0) for r in resolved) / total
 
-    by_cluster = {}
+    by_cluster: dict[str, dict[str, int]] = {}
     for r in resolved:
         c = r.get("cluster", "unknown")
         by_cluster.setdefault(c, {"count": 0, "correct": 0})

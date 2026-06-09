@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from typing import Any
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +19,7 @@ from utils import load_json
 import positions_db
 from db import load_settings
 from config import EQUITY_CURVE_FILE, HEALTH_STATE_FILE
+from dashboard import build_dashboard_html
 
 
 class MetricsHandler(BaseHTTPRequestHandler):
@@ -28,12 +30,14 @@ class MetricsHandler(BaseHTTPRequestHandler):
             self._serve_prometheus()
         elif self.path == "/health":
             self._serve_health()
+        elif self.path == "/dashboard":
+            self._serve_dashboard()
         else:
             self.send_response(404)
             self.end_headers()
 
     def _serve_metrics(self) -> None:
-        data = {}
+        data: dict[str, Any] = {}
         positions = positions_db.load_all()
         settings = load_settings()
         equity = load_json(EQUITY_CURVE_FILE, {})
@@ -110,6 +114,13 @@ class MetricsHandler(BaseHTTPRequestHandler):
             "alerts": health.get("alerts", []),
             "positions": len(positions),
         })
+
+    def _serve_dashboard(self) -> None:
+        html_content = build_dashboard_html()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(html_content.encode("utf-8"))
 
     def _json_response(self, data: dict) -> None:
         self.send_response(200)

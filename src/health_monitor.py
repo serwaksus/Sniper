@@ -12,6 +12,7 @@ import subprocess
 import logging
 import shutil
 from datetime import datetime, timedelta
+from typing import Any
 import positions_db
 import hypotheses_db
 from config import (
@@ -178,7 +179,7 @@ def _check_order_health(state: dict) -> tuple[str, str] | None:
         return "ORDERS_API", "⚠️ <b>pm-trader orders list failed</b>\n• Cannot check order health"
 
     issues = []
-    slug_prices = {}
+    slug_prices: dict[tuple[str, Any], int] = {}
     for o in orders:
         if o.get("status") != "pending":
             continue
@@ -588,7 +589,7 @@ def _check_pm_trader_health(state: dict) -> tuple[str, str] | None:
 
 
 # ── Check 21: API key validity ─────────────────────────────────
-_API_KEY_CACHE = {"ts": None, "issues": None}
+_API_KEY_CACHE: dict[str, Any] = {"ts": None, "issues": None}
 
 
 def _check_api_keys(state: dict) -> tuple[str, str] | None:
@@ -973,7 +974,7 @@ def run_health_check() -> list[tuple[str, str]] | None:
 
     if issue_count == 0:
         logger.info("[HEALTH] All 25 checks passed")
-        return
+        return None
 
     for alert_key, message in alerts:
         logger.info(f"[HEALTH] ALERT [{alert_key}]: {message[:100]}")
@@ -1065,8 +1066,8 @@ if __name__ == "__main__":
     load_env_file()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if "--hourly" in sys.argv:
-        results = run_hourly_report()
-        print(f"{len(results)} issues" if results else "All healthy")
+        results_h = run_hourly_report()
+        print(f"{len(results_h)} issues" if results_h else "All healthy")
     else:
-        results = run_health_check()
-        print(f"{len(results) or 0} issues" if results else "All healthy")
+        results_c = run_health_check()
+        print(f"{len(results_c) or 0} issues" if results_c else "All healthy")

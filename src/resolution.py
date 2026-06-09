@@ -96,9 +96,9 @@ def learn_from_results(db: dict) -> dict:
         return {}
 
     settings = get_settings()
-    factor_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
-    cluster_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
-    source_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
+    factor_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"wins": 0, "losses": 0})
+    cluster_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"wins": 0, "losses": 0})
+    source_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"wins": 0, "losses": 0})
 
     for h in resolved[-50:]:
         outcome = h.get(HYP_OUTCOME)
@@ -251,7 +251,7 @@ def backtest_recent(n: int = 20) -> dict:
             "suggestion": "Reduce position sizes or increase threshold"
         })
 
-    cluster_wins = defaultdict(lambda: {"wins": 0, "total": 0})
+    cluster_wins: dict[str, dict[str, int]] = defaultdict(lambda: {"wins": 0, "total": 0})
     for h in recent:
         for c in h.get(HYP_CLUSTERS, []):
             cluster_wins[c]["total"] += 1
@@ -319,7 +319,9 @@ def resolve_hypotheses() -> None:
 
     db = load_hypothesis_db()
     portfolio = get_portfolio()
-    portfolio_slugs = {p["market_slug"] for p in portfolio}
+    portfolio_slugs: set[str] = set()
+    if portfolio is not None:
+        portfolio_slugs = {p["market_slug"] for p in portfolio}
 
     all_hypotheses = db.get(HYP_DB_HYPOTHESES, [])
     unresolved = [h for h in all_hypotheses if not h.get(HYP_RESOLVED) and h[HYP_SLUG] not in portfolio_slugs]

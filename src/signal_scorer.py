@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import time
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -107,7 +108,7 @@ def _cluster_score_adjustment(cluster: str, settings: dict | None = None) -> flo
     return adj
 
 
-def _compute_signal_score(p_model: float, market_price: float, factors: list[dict], volume: float, ttl_hours: float, cluster: str, slug: str = "", question: str = "", metaculus_prob_val: float | None = None, settings: dict | None = None) -> float:
+def _compute_signal_score(p_model: float, market_price: float, factors: list[dict], volume: float, ttl_hours: float, cluster: str, slug: str = "", question: str = "", metaculus_prob_val: float | None = None, settings: dict | None = None) -> tuple[float, float, list[dict], list[dict], float, float, float, float, float, float, float]:
     if settings is None:
         settings = get_settings()
 
@@ -223,7 +224,7 @@ Rules:
     resp = None
     if not _check_llm_circuit_breaker():
         p_model_llm = market["price"] * 2
-        factors = []
+        factors: list[dict[str, Any]] = []
         resp = None
     else:
         for _attempt in range(3):

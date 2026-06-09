@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from typing import Any
 import numpy as np
 from collections import defaultdict
 from sklearn.isotonic import IsotonicRegression
@@ -25,9 +26,9 @@ MIN_GLOBAL_SAMPLES = 100
 
 class ProbabilityCalibrator:
     def __init__(self) -> None:
-        self.global_model = None
-        self.cluster_models = {}
-        self.metadata = {}
+        self.global_model: dict[str, Any] | None = None
+        self.cluster_models: dict[str, dict[str, Any]] = {}
+        self.metadata: dict[str, Any] = {}
 
     def fit(self, results: list[dict]) -> None:
         all_pairs = []
@@ -55,7 +56,7 @@ class ProbabilityCalibrator:
             "n_clusters": len(self.cluster_models),
             "clusters": list(self.cluster_models.keys()),
         }
-        return self
+
 
     @staticmethod
     def _fit_isotonic(pairs: list[tuple[float, float]]) -> dict:
@@ -135,11 +136,11 @@ def evaluate_improvement(baseline_path: str = BACKTEST_BASELINE_PATH, model_path
     cal = load_calibrator(model_path)
     if cal is None:
         print("No calibrator model found. Run `train` first.")
-        return
+        return None
 
     brier_before = []
     brier_after = []
-    brier_per_cluster = defaultdict(lambda: {"before": [], "after": []})
+    brier_per_cluster: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"before": [], "after": []})
 
     wins_before = 0
     losses_before = 0
