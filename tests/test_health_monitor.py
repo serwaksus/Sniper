@@ -8,16 +8,17 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import health_monitor as hm
+import health_checks as hc
 
 
 class TestLoadSaveState:
     def test_load_missing_returns_defaults(self, tmp_path):
-        hm.HEALTH_STATE_FILE = str(tmp_path / "missing.json")
+        hc.HEALTH_STATE_FILE = str(tmp_path / "missing.json")
         state = hm._load_state()
         assert "last_alerts" in state
 
     def test_save_and_load_roundtrip(self, tmp_path):
-        hm.HEALTH_STATE_FILE = str(tmp_path / "state.json")
+        hc.HEALTH_STATE_FILE = str(tmp_path / "state.json")
         state = {"last_alerts": {"key1": datetime.now().isoformat()}, "last_cycle_start": None, "last_equity": None}
         hm._save_state(state)
         loaded = hm._load_state()
@@ -90,7 +91,7 @@ class TestCheckEquityDrawdown:
         }
         with open(eq_file, "w") as f:
             json.dump(data, f)
-        hm.EQUITY_FILE = eq_file
+        hc.EQUITY_FILE = eq_file
         state = {}
         result = hm._check_equity_drawdown(state)
         assert result is not None
@@ -110,20 +111,20 @@ class TestCheckEquityDrawdown:
         }
         with open(eq_file, "w") as f:
             json.dump(data, f)
-        hm.EQUITY_FILE = eq_file
+        hc.EQUITY_FILE = eq_file
         state = {}
         result = hm._check_equity_drawdown(state)
         assert result is None
 
     def test_missing_file(self, tmp_path):
-        hm.EQUITY_FILE = str(tmp_path / "missing.json")
+        hc.EQUITY_FILE = str(tmp_path / "missing.json")
         state = {}
         result = hm._check_equity_drawdown(state)
         assert result is None
 
 
 class TestCheckOrderHealth:
-    @patch("health_monitor.subprocess.run")
+    @patch("health_checks.subprocess.run")
     def test_duplicate_orders(self, mock_run):
         mock_run.return_value = MagicMock(
             stdout=json.dumps({"data": [
@@ -132,13 +133,13 @@ class TestCheckOrderHealth:
             ]}),
             returncode=0,
         )
-        with patch("health_monitor.positions_db") as mock_pdb:
+        with patch("health_checks.positions_db") as mock_pdb:
             mock_pdb.load_all.return_value = {"s1": {}}
             result = hm._check_order_health({})
             assert result is not None
             assert "ORDERS" in result[0]
 
-    @patch("health_monitor.subprocess.run", side_effect=Exception("err"))
+    @patch("health_checks.subprocess.run", side_effect=Exception("err"))
     def test_api_failure(self, mock_run):
         result = hm._check_order_health({})
         assert result is not None
@@ -158,28 +159,28 @@ class TestCheckCycleTiming:
 
 
 class TestCheckErrorSpike:
-    @patch("health_monitor._read_last_hour_log")
+    @patch("health_checks._read_last_hour_log")
     def test_error_spike_detected(self, mock_read):
         mock_read.return_value = ["2025-01-01 00:00:00 ERROR something"] * 6
         result = hm._check_error_spike({})
         assert result is not None
         assert "ERROR_SPIKE" in result[0]
 
-    @patch("health_monitor._read_last_hour_log", return_value=[])
+    @patch("health_checks._read_last_hour_log", return_value=[])
     def test_no_errors(self, mock_read):
         result = hm._check_error_spike({})
         assert result is None
 
 
 class TestCheckDiskSpace:
-    @patch("health_monitor.shutil.disk_usage")
+    @patch("health_checks.shutil.disk_usage")
     def test_disk_almost_full(self, mock_usage):
         mock_usage.return_value = MagicMock(used=950, total=1000, free=50)
         result = hm._check_disk_space({})
         assert result is not None
         assert "DISK" in result[0]
 
-    @patch("health_monitor.shutil.disk_usage")
+    @patch("health_checks.shutil.disk_usage")
     def test_disk_ok(self, mock_usage):
         mock_usage.return_value = MagicMock(used=500, total=1000, free=500)
         result = hm._check_disk_space({})
@@ -187,7 +188,7 @@ class TestCheckDiskSpace:
 
 
 class TestCheckHypothesisDB:
-    @patch("health_monitor.hypotheses_db")
+    @patch("health_checks.hypotheses_db")
     def test_too_many_unresolved(self, mock_hdb):
         mock_hdb.load_all.return_value = {
             "hypotheses": [{"resolved": False}] * 51,
@@ -196,7 +197,7 @@ class TestCheckHypothesisDB:
         assert result is not None
         assert "HYP_DB" in result[0]
 
-    @patch("health_monitor.hypotheses_db")
+    @patch("health_checks.hypotheses_db")
     def test_reasonable_count_ok(self, mock_hdb):
         mock_hdb.load_all.return_value = {
             "hypotheses": [{"resolved": False}] * 10,
@@ -207,11 +208,11 @@ class TestCheckHypothesisDB:
 
 class TestCheckJSONIntegrity:
     def test_missing_file_detected(self, tmp_path):
-        hm.EQUITY_FILE = str(tmp_path / "missing_equity.json")
-        hm.PRICE_TRACKING_FILE = str(tmp_path / "missing_tracking.json")
-        with patch("health_monitor.positions_db") as mock_pdb:
+        hc.EQUITY_FILE = str(tmp_path / "missing_equity.json")
+        hc.PRICE_TRACKING_FILE = str(tmp_path / "missing_tracking.json")
+        with patch("health_checks.positions_db") as mock_pdb:
             mock_pdb.load_all.return_value = {}
-            hm.POSITIONS_FILE = str(tmp_path / "missing_positions.json")
+            hc.POSITIONS_FILE = str(tmp_path / "missing_positions.json")
             result = hm._check_json_integrity({})
             assert result is not None
             assert "JSON_INTEGRITY" in result[0]
@@ -222,29 +223,29 @@ class TestCheckJSONIntegrity:
         for f in [eq_file, pt_file]:
             with open(f, "w") as fh:
                 json.dump({"ok": True}, fh)
-        hm.EQUITY_FILE = eq_file
-        hm.PRICE_TRACKING_FILE = pt_file
-        with patch("health_monitor.positions_db") as mock_pdb:
+        hc.EQUITY_FILE = eq_file
+        hc.PRICE_TRACKING_FILE = pt_file
+        with patch("health_checks.positions_db") as mock_pdb:
             mock_pdb.load_all.return_value = {"s1": {}}
             result = hm._check_json_integrity({})
             assert result is None
 
 
 class TestCheckPMTraderHealth:
-    @patch("health_monitor.subprocess.run")
+    @patch("health_checks.subprocess.run")
     def test_failure_detected(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stderr="error")
         result = hm._check_pm_trader_health({})
         assert result is not None
         assert "PM_TRADER" in result[0]
 
-    @patch("health_monitor.subprocess.run", side_effect=FileNotFoundError("not found"))
+    @patch("health_checks.subprocess.run", side_effect=FileNotFoundError("not found"))
     def test_missing_binary(self, mock_run):
         result = hm._check_pm_trader_health({})
         assert result is not None
         assert "PM_TRADER_MISSING" in result[0]
 
-    @patch("health_monitor.subprocess.run")
+    @patch("health_checks.subprocess.run")
     def test_success_returns_none(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
         result = hm._check_pm_trader_health({})

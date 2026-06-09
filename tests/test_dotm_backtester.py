@@ -35,6 +35,10 @@ def _setup_dotm_sniper_mock():
 
     if "dotm_backtester" in sys.modules:
         del sys.modules["dotm_backtester"]
+    if "backtest_simulator" in sys.modules:
+        del sys.modules["backtest_simulator"]
+    if "backtest_stats" in sys.modules:
+        del sys.modules["backtest_stats"]
 
     import dotm_backtester as bt
     yield bt
@@ -44,6 +48,8 @@ def _setup_dotm_sniper_mock():
     else:
         sys.modules.pop("dotm_sniper", None)
     sys.modules.pop("dotm_backtester", None)
+    sys.modules.pop("backtest_simulator", None)
+    sys.modules.pop("backtest_stats", None)
 
 
 @pytest.fixture
@@ -115,8 +121,8 @@ class TestNormalizeKeys:
 
 
 class TestBacktestAnalyzeSingleSkip:
-    @patch("dotm_backtester.check_metaculus_gap", return_value=None)
-    @patch("dotm_backtester.get_settings", return_value={"min_p_model": 999})
+    @patch("backtest_simulator.check_metaculus_gap", return_value=None)
+    @patch("backtest_simulator.get_settings", return_value={"min_p_model": 999})
     def test_low_p_model_returns_skip(self, mock_settings, mock_metaculus, bt):
         market = {
             "slug": "test-slug", "question": "Will X happen?",
@@ -126,9 +132,9 @@ class TestBacktestAnalyzeSingleSkip:
         result = bt.backtest_analyze_single(market)
         assert result["action"] == "SKIP"
 
-    @patch("dotm_backtester.requests.post")
-    @patch("dotm_backtester.check_metaculus_gap", return_value=None)
-    @patch("dotm_backtester.get_settings", return_value={})
+    @patch("backtest_simulator.requests.post")
+    @patch("backtest_simulator.check_metaculus_gap", return_value=None)
+    @patch("backtest_simulator.get_settings", return_value={})
     def test_llm_failure_uses_fallback_p_model(self, mock_settings, mock_metaculus, mock_post, bt):
         mock_post.side_effect = Exception("network error")
         market = {
@@ -141,7 +147,7 @@ class TestBacktestAnalyzeSingleSkip:
 
 
 class TestParallelAnalyze:
-    @patch("dotm_backtester.backtest_analyze_single", return_value={"action": "SKIP", "slug": "s1"})
+    @patch("backtest_simulator.backtest_analyze_single", return_value={"action": "SKIP", "slug": "s1"})
     def test_returns_results_in_order(self, mock_analyze, bt):
         markets = [
             {"slug": f"slug-{i}", "question": f"Q{i}?", "yes_price": 0.05,
@@ -153,21 +159,21 @@ class TestParallelAnalyze:
         for r in results:
             assert r is not None
 
-    @patch("dotm_backtester.backtest_analyze_single", side_effect=Exception("boom"))
+    @patch("backtest_simulator.backtest_analyze_single", side_effect=Exception("boom"))
     def test_thread_error_returns_none(self, mock_analyze, bt):
         markets = [{"slug": "s1", "question": "Q?", "yes_price": 0.05,
                      "volume": 1000, "clusters": ["other"]}]
         results = bt._parallel_analyze_markets(markets, label="TEST")
         assert results == [None]
 
-    @patch("dotm_backtester.backtest_analyze_single", return_value=None)
+    @patch("backtest_simulator.backtest_analyze_single", return_value=None)
     def test_empty_markets_list(self, mock_analyze, bt):
         results = bt._parallel_analyze_markets([], label="TEST")
         assert results == []
 
 
 class TestFetchActiveMarketsPmTrader:
-    @patch("dotm_backtester.subprocess.run")
+    @patch("backtest_simulator.subprocess.run")
     def test_filters_by_price_range(self, mock_run, bt):
         data = {
             "data": [
@@ -185,7 +191,7 @@ class TestFetchActiveMarketsPmTrader:
         assert "s1" in slugs
         assert "s2" not in slugs
 
-    @patch("dotm_backtester.subprocess.run", side_effect=Exception("err"))
+    @patch("backtest_simulator.subprocess.run", side_effect=Exception("err"))
     def test_exception_returns_empty(self, mock_run, bt):
         assert bt._fetch_active_dotm_markets_pm_trader() == []
 

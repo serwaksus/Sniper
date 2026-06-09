@@ -176,6 +176,25 @@ def full_market_analysis(market: dict) -> dict:
         best_ask = get_best_ask(market[HYP_SLUG])
         polymarket_prob = best_ask if best_ask is not None else market["price"]
 
+    if best_ask is not None and market["price"] < 0.10:
+        ask_ratio = best_ask / market["price"] if market["price"] > 0 else 0
+        if ask_ratio > 10:
+            logger.info(f"[LIQUIDITY-SKIP] {market.get(HYP_SLUG, '')[:40]}... ask={best_ask:.4f} is {ask_ratio:.1f}x price={market['price']:.4f}, no real liquidity")
+            return {
+                "question": market["question"],
+                HYP_SLUG: market[HYP_SLUG],
+                "market_price": market["price"],
+                HYP_P_MODEL: 0,
+                "prob_ratio": 0,
+                HYP_CONFIDENCE: 0,
+                "action": "SKIP",
+                HYP_FACTORS: [],
+                "source_signal": "default",
+                "min_signal": 999,
+                "reasoning": f"no_liquidity: ask={best_ask:.4f} is {ask_ratio:.1f}x price",
+                "best_ask": best_ask,
+            }
+
     metaculus_gap = None
     if market["price"] < 0.35:
         metaculus_gap = check_metaculus_gap(market, polymarket_prob)

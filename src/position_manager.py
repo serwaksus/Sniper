@@ -43,7 +43,7 @@ def detect_clusters(question: str) -> list[str]:
 
 def get_tier_params(balance: float) -> dict:
     if balance < 2000:
-        return {"kelly_mult": 0.28, "base_pct": 0.05, "other_pct": 0.05,
+        return {"kelly_mult": 0.40, "base_pct": 0.05, "other_pct": 0.05,
                 "max_pct": 0.10, "max_positions": 15, "max_price": 0.40,
                 "max_cluster": 0.35, "tier": "micro"}
     elif balance < 10000:
@@ -237,6 +237,7 @@ def position_size(p_model: float, market_price: float, balance: float, confidenc
 
     p = p_model
     q = 1 - p
+    prob_ratio = p / market_price if market_price > 0 else 0
     kelly_full = (b * p - q) / b
 
     logger.info(f"[KELLY] p={p:.3f}, b={b:.2f}, q={q:.3f}, kelly_full={kelly_full:.4f}")
@@ -271,6 +272,15 @@ def position_size(p_model: float, market_price: float, balance: float, confidenc
     if kelly_dollars < 5:
         logger.info(f"[KELLY] kelly_dollars=${kelly_dollars} < $5 minimum, skipping trade")
         return 0
+
+    MIN_TRADE_USD = 20
+    if kelly_dollars < MIN_TRADE_USD:
+        if prob_ratio >= 2.0 and kelly_dollars >= 5:
+            kelly_dollars = MIN_TRADE_USD
+            logger.info(f"[KELLY] Rounded up to ${kelly_dollars} minimum for DOTM trade (ratio={prob_ratio:.1f}x)")
+        else:
+            logger.info(f"[KELLY] kelly_dollars=${kelly_dollars} < ${MIN_TRADE_USD} minimum, skipping trade")
+            return 0
     kelly_dollars = min(kelly_dollars, round(balance * tier["max_pct"]))
 
     if bid_liquidity is not None and bid_liquidity > 0:

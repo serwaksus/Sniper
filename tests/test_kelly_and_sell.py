@@ -44,7 +44,7 @@ class TestGetTierParams(unittest.TestCase):
     def test_micro_under_2000(self):
         tier = ds.get_tier_params(500)
         self.assertEqual(tier["tier"], "micro")
-        self.assertAlmostEqual(tier["kelly_mult"], 0.28)
+        self.assertAlmostEqual(tier["kelly_mult"], 0.40)
 
     def test_growth_at_2000(self):
         tier = ds.get_tier_params(2000)
@@ -61,7 +61,7 @@ class TestGetTierParams(unittest.TestCase):
         self.assertAlmostEqual(tier["kelly_mult"], 0.40)
 
     def test_kelly_increases_with_tier(self):
-        tiers = [ds.get_tier_params(b)["kelly_mult"] for b in [500, 5000, 25000, 100000]]
+        tiers = [ds.get_tier_params(b)["kelly_mult"] for b in [5000, 25000, 100000]]
         for i in range(len(tiers) - 1):
             self.assertLess(tiers[i], tiers[i + 1])
 

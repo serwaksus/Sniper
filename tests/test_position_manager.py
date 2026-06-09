@@ -54,7 +54,7 @@ class TestGetTierParams:
     def test_micro_tier(self):
         params = pm.get_tier_params(1000)
         assert params["tier"] == "micro"
-        assert params["kelly_mult"] == 0.28
+        assert params["kelly_mult"] == 0.40
 
     def test_growth_tier(self):
         params = pm.get_tier_params(5000)
