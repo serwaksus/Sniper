@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 import os
 import sys
 import logging
@@ -34,7 +35,7 @@ load_env_file()
 from order_manager import get_balance, get_portfolio
 
 
-def log_equity_snapshot():
+def log_equity_snapshot() -> dict | None:
     balance = get_balance()
     if not balance:
         logger.error("[EQUITY] Failed to fetch balance")
@@ -89,7 +90,7 @@ def log_trade(event_type: str, slug: str, question: str,
               entry_price: float = 0, exit_price: float = 0,
               shares: float = 0, invested: float = 0,
               pnl_pct: float = 0, pnl_abs: float = 0,
-              reason: str = "", extra: dict | None = None):
+              reason: str = "", extra: dict | None = None) -> None:
     journal = load_json(TRADES_JOURNAL_FILE, {"trades": []})
     if not isinstance(journal, dict):
         journal = {"trades": []}
@@ -194,7 +195,7 @@ def get_daily_summary() -> dict[str, Any]:
     }
 
 
-def main():
+def main() -> None:
     import html
 
     snapshot = log_equity_snapshot()

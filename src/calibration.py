@@ -2,6 +2,7 @@
 Isotonic Regression Calibrator for DOTM Sniper
 Learns optimal p_model -> p_calibrated mapping from historical data
 """
+from __future__ import annotations
 import os
 import sys
 import logging
@@ -23,7 +24,7 @@ class IsotonicCalibrator:
         self.models = {}
         self.is_fitted = False
 
-    def fit(self, hypotheses):
+    def fit(self, hypotheses: list[dict]) -> None:
         self.models = {}
         self.is_fitted = False
         cluster_data = {}
@@ -55,7 +56,7 @@ class IsotonicCalibrator:
         if self.is_fitted:
             logger.info(f"[CALIBRATION] Total models fitted: {len(self.models)} clusters")
 
-    def predict(self, p_model, cluster="other"):
+    def predict(self, p_model: float, cluster: str = "other") -> float:
         if not self.is_fitted:
             return p_model
         if cluster in self.models:
@@ -73,7 +74,7 @@ class IsotonicCalibrator:
         p_calibrated = max(0.0, min(1.0, p_calibrated))
         return p_calibrated
 
-    def save(self, path=CALIBRATION_MODEL_FILE):
+    def save(self, path: str = CALIBRATION_MODEL_FILE) -> None:
         if not self.is_fitted:
             logger.warning("[CALIBRATION] No models to save")
             return
@@ -89,7 +90,7 @@ class IsotonicCalibrator:
         save_json(path, model_data)
         logger.info(f"[CALIBRATION] Saved {len(model_data)} models to {path}")
 
-    def load(self, path=CALIBRATION_MODEL_FILE):
+    def load(self, path: str = CALIBRATION_MODEL_FILE) -> bool:
         if not os.path.exists(path):
             logger.info(f"[CALIBRATION] No calibration model found at {path}")
             return False
@@ -116,7 +117,7 @@ _calibrator_lock = threading.RLock()
 _calibrator_instance = None
 
 
-def get_calibrator():
+def get_calibrator() -> IsotonicCalibrator:
     global _calibrator_instance
     if _calibrator_instance is None:
         with _calibrator_lock:

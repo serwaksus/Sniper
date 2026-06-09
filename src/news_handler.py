@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 from datetime import datetime
 
@@ -10,7 +11,7 @@ from config import CACHE_FILE
 logger = logging.getLogger(__name__)
 
 
-def _check_news_cache_freshness(cluster_key, slug=None):
+def _check_news_cache_freshness(cluster_key: str, slug: str | None = None) -> bool:
     news_ttl = 2 * 3600
     cache = load_json(CACHE_FILE, {CACHE_METACULUS: {}, CACHE_NEWS: {}, CACHE_LAST_UPDATE: None})
     news_section = cache.get(CACHE_NEWS, {})

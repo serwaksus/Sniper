@@ -9,6 +9,8 @@ v5.3.0 Changelog:
 - Added [SIGNAL-BATCH] logging for batch analysis visibility
 - Fixed Renan Santos missing from hypothesis_db
 """
+from __future__ import annotations
+from typing import Any
 import subprocess
 import json
 import time
@@ -57,7 +59,7 @@ validate_env_vars(["DEEPSEEK_API_KEY", "TG_BOT_TOKEN", "TG_CHAT_ID"])
 
 _tr_instance = None
 
-def _tr():
+def _tr() -> Any:
     global _tr_instance
     if _tr_instance is None:
         with contextlib.suppress(Exception):
@@ -83,7 +85,7 @@ logger = logging.getLogger(__name__)
 
 _shutdown_requested = False
 
-def _handle_shutdown(signum, frame):
+def _handle_shutdown(signum: int, frame: Any) -> None:
     global _shutdown_requested
     _shutdown_requested = True
     logger.info("[MAIN] Shutdown signal received, finishing current cycle...")
@@ -99,7 +101,7 @@ MIN_TRADES_FOR_WEIGHT_ADJUSTMENT = 20
 BACKTEST_COOLDOWN_SECONDS = 24 * 3600
 
 
-def update_daily_stats(balance, portfolio, trades_this_cycle):
+def update_daily_stats(balance: dict, portfolio: list[dict], trades_this_cycle: int) -> None:
     today = datetime.now().strftime("%Y-%m-%d")
     stats = load_json(DAILY_STATS_FILE, {"date": today, "trades": 0, "pnl": 0, "started": False})
     if stats.get("date") != today:
@@ -110,7 +112,7 @@ def update_daily_stats(balance, portfolio, trades_this_cycle):
     stats["pnl"] = balance.get("total_value", 0) - starting
     save_json(DAILY_STATS_FILE, stats)
 
-def parse_llm_json(response_text):
+def parse_llm_json(response_text: str) -> dict | None:
     from utils import parse_llm_json as _parse
     return _parse(response_text)
 
@@ -118,7 +120,7 @@ def parse_llm_json(response_text):
 
 
 
-def validate_settings(s):
+def validate_settings(s: dict) -> dict:
     errors = []
     if s.get("min_p_model", 0) <= 0:
         errors.append("min_p_model must be > 0")
@@ -136,7 +138,7 @@ def validate_settings(s):
     return s
 
 
-def _default_settings():
+def _default_settings() -> dict:
     return {
         SETTINGS_MIN_CONFIDENCE: MIN_CONFIDENCE,
         SETTINGS_POSITION_SIZE_PCT: MAX_POS_PCT,
@@ -146,44 +148,44 @@ def _default_settings():
         SETTINGS_MIN_P_MODEL: MIN_P_MODEL,
     }
 
-def get_settings():
+def get_settings() -> dict:
     s = _db_load_settings()
     if not s:
         s = _default_settings()
         _db_save_settings(s)
     return s
 
-def save_settings(s):
+def save_settings(s: dict) -> None:
     s[SETTINGS_VERSION] = s.get(SETTINGS_VERSION, 0) + 1
     _db_save_settings(s)
 
-def load_hypothesis_db():
+def load_hypothesis_db() -> dict:
     return hypotheses_db.load_all()
 
-def save_hypothesis_db(db):
+def save_hypothesis_db(db: dict) -> None:
     hypotheses_db.save_all(db)
 
-def detect_clusters(question):
+def detect_clusters(question: str) -> list[str]:
     from position_manager import detect_clusters as _detect
     return _detect(question)
 
-def calculate_brier_score(db):
+def calculate_brier_score(db: dict) -> float | None:
     from resolution import calculate_brier_score as _impl
     return _impl(db)
 
-def learn_from_results(db):
+def learn_from_results(db: dict) -> dict:
     from resolution import learn_from_results as _impl
     return _impl(db)
 
-def backtest_recent(n=20):
+def backtest_recent(n: int = 20) -> dict:
     from resolution import backtest_recent as _impl
     return _impl(n)
 
-def resolve_hypothesis_immediately(slug, current_price, entry_price):
+def resolve_hypothesis_immediately(slug: str, current_price: float, entry_price: float) -> None:
     from resolution import resolve_hypothesis_immediately as _impl
     return _impl(slug, current_price, entry_price)
 
-def repair_positions_file():
+def repair_positions_file() -> None:
     """Fix inconsistent data in positions.json (e.g. high_price < entry_price)."""
     positions = positions_db.load_all()
     dirty = False
@@ -197,12 +199,12 @@ def repair_positions_file():
     if dirty:
         positions_db.save_all(positions)
 
-def resolve_hypotheses():
+def resolve_hypotheses() -> None:
     from resolution import resolve_hypotheses as _impl
     return _impl()
 
 
-def _load_price_tracking():
+def _load_price_tracking() -> dict:
     tracking = load_json(PRICE_TRACKING_FILE, {})
     now = datetime.now()
     stale = [k for k, v in tracking.items()
@@ -215,11 +217,11 @@ def _load_price_tracking():
     return tracking
 
 
-def _save_price_tracking(tracking):
+def _save_price_tracking(tracking: dict) -> None:
     save_json(PRICE_TRACKING_FILE, tracking)
 
 
-def _check_price_delta(slug, current_price):
+def _check_price_delta(slug: str, current_price: float) -> tuple[bool, float | None]:
     """
     TAZ-3: Delta-scanning. Returns (should_analyze: bool, cached_p_model).
     If price changed < $0.005 since last check, reuse cached p_model.
@@ -241,7 +243,7 @@ def _check_price_delta(slug, current_price):
     return True, None
 
 
-def _update_price_tracking(slug, current_price, p_model):
+def _update_price_tracking(slug: str, current_price: float, p_model: float) -> None:
     tracking = _load_price_tracking()
     tracking[slug] = {
         TRACKING_LAST_PRICE: current_price,
@@ -251,17 +253,17 @@ def _update_price_tracking(slug, current_price, p_model):
     _save_price_tracking(tracking)
 
 
-def _check_news_cache_freshness(cluster_key, slug=None):
+def _check_news_cache_freshness(cluster_key: str, slug: str | None = None) -> bool:
     from news_handler import _check_news_cache_freshness as _impl
     return _impl(cluster_key, slug)
 
 
-def execute_trade(market, estimated_size, factors, analysis, balance):
+def execute_trade(market: dict, estimated_size: float, factors: list, analysis: dict, balance: float) -> bool:
     from trade_executor import execute_trade as _impl
     return _impl(market, estimated_size, factors, analysis, balance)
 
 
-def _update_status_file():
+def _update_status_file() -> None:
     try:
         import shutil
         res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15, start_new_session=True)
@@ -282,10 +284,10 @@ def _update_status_file():
         logger.warning(f"[status_save] {type(e).__name__}: {e}")
 
 
-def main():
+def main() -> None:
     _main_inner()
 
-def _main_inner():
+def _main_inner() -> None:
     print("="*60)
     print("  DOTM SNIPER v5.3.0 - Batch Processing + Delta Scan + Advisor")
     print("="*60)
@@ -446,6 +448,12 @@ def _main_inner():
             print("   ⏭️ Kelly edge negative, skipping")
             continue
 
+        estimated_size = conviction_adjusted_size(
+            estimated_size,
+            analysis.get("signal_score", 0),
+            analysis.get("min_signal", 55),
+        )
+
         corr_ok, corr_reason = check_correlation_limit(
             m["clusters"][0] if m["clusters"] else "other",
             positions_db.load_all(),
@@ -521,7 +529,7 @@ def _main_inner():
 # Re-export from extracted modules (at bottom to avoid circular imports)
 from order_manager import (get_balance, get_portfolio)
 from position_manager import (get_tier_params, position_size, check_cluster_limits,
-                                check_category_limits,
+                                check_category_limits, conviction_adjusted_size,
                                 CLUSTER_KEYWORDS)  # noqa: F401
 from sell_executor import (trailing_stop_check, TRAILING_STOP,  # noqa: F401
                            ATR_STOP_MULTIPLIER, ATR_TRAILING_MULTIPLIER,

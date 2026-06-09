@@ -23,18 +23,17 @@ class TestFileLock:
         lock_path = str(tmp_path / "concurrent.lock")
         script = (
             "import sys, time\n"
-            "sys.path.insert(0, %r)\n"
+            f"sys.path.insert(0, {SRC_PATH!r})\n"
             "from utils import file_lock\n"
-            "with file_lock(%r, timeout=30):\n"
+            f"with file_lock({lock_path!r}, timeout=30):\n"
             "    time.sleep(2)\n"
-            % (SRC_PATH, lock_path)
         )
         proc = subprocess.Popen([sys.executable, "-c", script])
         time.sleep(0.5)
 
         try:
             with file_lock(lock_path, timeout=1):
-                assert False, "Should not have acquired lock"
+                raise AssertionError("Should not have acquired lock")
         except TimeoutError:
             pass
 
@@ -49,13 +48,12 @@ class TestFileLock:
 
         script = (
             "import sys\n"
-            "sys.path.insert(0, %r)\n"
+            f"sys.path.insert(0, {SRC_PATH!r})\n"
             "from utils import locked_update_json\n"
-            "json_path = %r\n"
-            "lock_dir = %r\n"
+            f"json_path = {json_path!r}\n"
+            f"lock_dir = {lock_dir!r}\n"
             "for i in range(10):\n"
             "    locked_update_json(json_path, lambda d: {**d, 'counter': d.get('counter', 0) + 1}, lock_dir=lock_dir)\n"
-            % (SRC_PATH, json_path, lock_dir)
         )
         proc = subprocess.Popen([sys.executable, "-c", script])
 
@@ -83,28 +81,26 @@ class TestPositionsIntegrity:
 
         script_add = (
             "import sys\n"
-            "sys.path.insert(0, %r)\n"
+            f"sys.path.insert(0, {SRC_PATH!r})\n"
             "from utils import locked_update_json\n"
             "for i in range(10):\n"
             "    locked_update_json(\n"
-            "        %r,\n"
+            f"        {positions_path!r},\n"
             "        lambda d, i=i: {**d, 'slug_' + str(i): {'shares': 100, 'entry_price': 0.1}},\n"
-            "        lock_dir=%r,\n"
+            f"        lock_dir={lock_dir!r},\n"
             "    )\n"
-            % (SRC_PATH, positions_path, lock_dir)
         )
 
         script_add2 = (
             "import sys\n"
-            "sys.path.insert(0, %r)\n"
+            f"sys.path.insert(0, {SRC_PATH!r})\n"
             "from utils import locked_update_json\n"
             "for i in range(10):\n"
             "    locked_update_json(\n"
-            "        %r,\n"
+            f"        {positions_path!r},\n"
             "        lambda d, i=i: {**d, 'other_' + str(i): {'shares': 50, 'entry_price': 0.2}},\n"
-            "        lock_dir=%r,\n"
+            f"        lock_dir={lock_dir!r},\n"
             "    )\n"
-            % (SRC_PATH, positions_path, lock_dir)
         )
 
         proc1 = subprocess.Popen([sys.executable, "-c", script_add])

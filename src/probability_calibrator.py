@@ -10,6 +10,7 @@ Usage:
     python3 src/probability_calibrator.py train
     python3 src/probability_calibrator.py evaluate
 """
+from __future__ import annotations
 import json
 import os
 import sys
@@ -23,12 +24,12 @@ MIN_GLOBAL_SAMPLES = 100
 
 
 class ProbabilityCalibrator:
-    def __init__(self):
+    def __init__(self) -> None:
         self.global_model = None
         self.cluster_models = {}
         self.metadata = {}
 
-    def fit(self, results):
+    def fit(self, results: list[dict]) -> None:
         all_pairs = []
         by_cluster = defaultdict(list)
 
@@ -57,7 +58,7 @@ class ProbabilityCalibrator:
         return self
 
     @staticmethod
-    def _fit_isotonic(pairs):
+    def _fit_isotonic(pairs: list[tuple[float, float]]) -> dict:
         X = np.array([p[0] for p in pairs], dtype=np.float64)
         y = np.array([p[1] for p in pairs], dtype=np.float64)
         iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
@@ -68,7 +69,7 @@ class ProbabilityCalibrator:
             "n_samples": len(pairs),
         }
 
-    def calibrate(self, p_model, cluster="other"):
+    def calibrate(self, p_model: float, cluster: str = "other") -> float:
         model = self.cluster_models.get(cluster) or self.global_model
         if model is None:
             return p_model
@@ -76,7 +77,7 @@ class ProbabilityCalibrator:
         y = model["y_thresholds"]
         return float(np.interp(p_model, X, y))
 
-    def save(self, path=CALIBRATOR_MODEL_PATH):
+    def save(self, path: str = CALIBRATOR_MODEL_PATH) -> None:
         data = {
             "global_model": self.global_model,
             "cluster_models": self.cluster_models,
@@ -85,7 +86,7 @@ class ProbabilityCalibrator:
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
-    def load(self, path=CALIBRATOR_MODEL_PATH):
+    def load(self, path: str = CALIBRATOR_MODEL_PATH) -> bool:
         if not os.path.exists(path):
             return False
         with open(path) as f:
@@ -95,19 +96,18 @@ class ProbabilityCalibrator:
         self.metadata = data.get("metadata", {})
         return True
 
-    def is_loaded(self):
+    def is_loaded(self) -> bool:
         return self.global_model is not None or bool(self.cluster_models)
 
 
-def load_calibrator(path=CALIBRATOR_MODEL_PATH):
+def load_calibrator(path: str = CALIBRATOR_MODEL_PATH) -> ProbabilityCalibrator | None:
     cal = ProbabilityCalibrator()
     if cal.load(path):
         return cal
     return None
 
 
-def train_from_baseline(baseline_path=BACKTEST_BASELINE_PATH,
-                        output_path=CALIBRATOR_MODEL_PATH):
+def train_from_baseline(baseline_path: str = BACKTEST_BASELINE_PATH, output_path: str = CALIBRATOR_MODEL_PATH) -> ProbabilityCalibrator:
     with open(baseline_path) as f:
         stats = json.load(f)
     results = stats.get("results", [])
@@ -127,8 +127,7 @@ def train_from_baseline(baseline_path=BACKTEST_BASELINE_PATH,
     return cal
 
 
-def evaluate_improvement(baseline_path=BACKTEST_BASELINE_PATH,
-                         model_path=CALIBRATOR_MODEL_PATH):
+def evaluate_improvement(baseline_path: str = BACKTEST_BASELINE_PATH, model_path: str = CALIBRATOR_MODEL_PATH) -> dict | None:
     with open(baseline_path) as f:
         stats = json.load(f)
     results = [r for r in stats.get("results", []) if r.get("status") == "resolved"]

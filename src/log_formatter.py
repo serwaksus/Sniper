@@ -12,6 +12,8 @@ Usage:
 Enable JSON globally via environment:
     LOG_FORMAT=json python3 src/dotm_sniper.py
 """
+from __future__ import annotations
+from typing import Any
 import json
 import logging
 import os
@@ -19,11 +21,11 @@ from config import sanitize
 
 
 class StructuredFormatter(logging.Formatter):
-    def __init__(self, json_mode=False):
+    def __init__(self, json_mode: bool = False) -> None:
         super().__init__()
         self.json_mode = json_mode or os.environ.get("LOG_FORMAT") == "json"
 
-    def format(self, record):
+    def format(self, record: Any) -> str:
         record.msg = sanitize(str(record.msg))
         if not self.json_mode:
             result = super().format(record)

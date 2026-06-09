@@ -4,6 +4,7 @@ Calibration Feedback Module for DOTM Sniper.
 Tracks p_model vs actual outcomes, computes calibration metrics,
 detects over/underestimation, and alerts on model drift.
 """
+from __future__ import annotations
 import os
 import sys
 import logging
@@ -30,7 +31,7 @@ def log_calibration_entry(slug: str, question: str, p_model: float,
                           p_calibrated: float, market_price: float,
                           actual_outcome: str, cluster: str,
                           entry_price: float = 0, exit_price: float = 0,
-                          pnl_pct: float = 0):
+                           pnl_pct: float = 0) -> None:
     log = load_json(CALIBRATION_LOG, {"entries": []})
     if not isinstance(log, dict):
         log = {"entries": []}
@@ -183,7 +184,7 @@ def detect_model_drift(window_days: int = 90, min_trades: int = 10) -> str | Non
     return None
 
 
-def sync_from_hypothesis_db():
+def sync_from_hypothesis_db() -> int:
     db = hypotheses_db.load_all()
     if not isinstance(db, dict):
         return 0
@@ -249,7 +250,7 @@ def get_edge_report() -> dict:
     }
 
 
-def _sigmoid(x):
+def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
@@ -349,7 +350,7 @@ def get_platt_calibrated(p_model: float, cluster: str = "other") -> float | None
     return calibrated
 
 
-def main():
+def main() -> None:
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--sync", action="store_true", help="Sync from hypothesis_db")

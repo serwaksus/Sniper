@@ -3,6 +3,8 @@
 Shared utilities for DOTM Sniper ecosystem.
 Consolidates load_json/save_json, file locking, key normalization.
 """
+from __future__ import annotations
+from typing import Any
 import json
 import os
 import fcntl
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def file_lock(lock_path, timeout=30):
+def file_lock(lock_path: str, timeout: int = 30) -> Any:
     """Acquire an exclusive cross-process file lock via fcntl.flock."""
     import time as _time
     with open(lock_path, 'w') as lock_fd:
@@ -36,7 +38,7 @@ def file_lock(lock_path, timeout=30):
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
 
-def locked_update_json(json_path, update_fn, default=None, lock_dir="/tmp"):
+def locked_update_json(json_path: str, update_fn: Any, default: Any = None, lock_dir: str = "/tmp") -> Any:
     """Atomically read-modify-write a JSON file with cross-process locking."""
     lock_path = os.path.join(lock_dir, os.path.basename(json_path) + ".lock")
     with file_lock(lock_path):
@@ -47,7 +49,7 @@ def locked_update_json(json_path, update_fn, default=None, lock_dir="/tmp"):
         return data
 
 
-def _lock_file(fd, exclusive=True):
+def _lock_file(fd: int, exclusive: bool = True) -> None:
     try:
         op = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
         fcntl.flock(fd, op)
@@ -55,12 +57,12 @@ def _lock_file(fd, exclusive=True):
         pass
 
 
-def _unlock_file(fd):
+def _unlock_file(fd: int) -> None:
     with contextlib.suppress(OSError, AttributeError):
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-def _normalize_keys(obj):
+def _normalize_keys(obj: Any) -> Any:
     if isinstance(obj, dict):
         return {k.strip(): _normalize_keys(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -68,7 +70,7 @@ def _normalize_keys(obj):
     return obj
 
 
-def _strip_dict_keys_recursive(obj):
+def _strip_dict_keys_recursive(obj: Any) -> Any:
     if isinstance(obj, dict):
         return {k.strip() if isinstance(k, str) else k: _strip_dict_keys_recursive(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -78,7 +80,7 @@ def _strip_dict_keys_recursive(obj):
     return obj
 
 
-def load_json(path, default):
+def load_json(path: str, default: Any) -> Any:
     if not os.path.exists(path):
         return default
     try:
@@ -107,7 +109,7 @@ def load_json(path, default):
                 _unlock_file(fd)
 
 
-def save_json(path, data):
+def save_json(path: str, data: Any) -> None:
     dir_name = os.path.dirname(path) or '.'
     fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
     try:
@@ -130,7 +132,7 @@ def save_json(path, data):
         raise
 
 
-def load_json_versioned(path, default):
+def load_json_versioned(path: str, default: Any) -> tuple[Any, int]:
     data = load_json(path, default)
     version = 0
     if isinstance(data, dict):
@@ -138,7 +140,7 @@ def load_json_versioned(path, default):
     return data, version
 
 
-def save_json_versioned(path, data, expected_version=None):
+def save_json_versioned(path: str, data: Any, expected_version: int | None = None) -> bool:
     try:
         dir_name = os.path.dirname(path) or '.'
         lock_fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
@@ -182,7 +184,7 @@ def save_json_versioned(path, data, expected_version=None):
 
 
 
-def check_and_write_pid(pid_file):
+def check_and_write_pid(pid_file: str) -> bool:
     try:
         fd = os.open(pid_file, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as e:
@@ -212,12 +214,12 @@ def check_and_write_pid(pid_file):
             os.close(fd)
 
 
-def cleanup_pid_file(pid_file):
+def cleanup_pid_file(pid_file: str) -> None:
     with contextlib.suppress(OSError):
         os.unlink(pid_file)
 
 
-def sanitize_for_prompt(text):
+def sanitize_for_prompt(text: str | None) -> str:
     if not text:
         return ""
     cleaned = text.replace("{", "").replace("}", "").replace("\\", "")
@@ -225,7 +227,7 @@ def sanitize_for_prompt(text):
     return cleaned[:500]
 
 
-def load_env_file(path=None):
+def load_env_file(path: str | None = None) -> None:
     if path is None:
         from config import ENV_FILE
         path = ENV_FILE
@@ -244,7 +246,7 @@ def load_env_file(path=None):
 
 MAX_LOG_BYTES = 50 * 1024 * 1024
 
-def rotate_log_if_needed(log_path, max_bytes=MAX_LOG_BYTES, keep_bytes=5*1024*1024):
+def rotate_log_if_needed(log_path: str, max_bytes: int = MAX_LOG_BYTES, keep_bytes: int = 5*1024*1024) -> bool:
     try:
         size = os.path.getsize(log_path)
         if size < max_bytes:
@@ -273,14 +275,14 @@ def rotate_log_if_needed(log_path, max_bytes=MAX_LOG_BYTES, keep_bytes=5*1024*10
         return False
 
 
-def validate_env_vars(required_vars):
+def validate_env_vars(required_vars: list[str]) -> None:
     missing = [v for v in required_vars if not os.environ.get(v)]
     if missing:
         print(f"FATAL: Missing required environment variables: {', '.join(missing)}")
         sys.exit(1)
 
 
-def parse_llm_json(response_text):
+def parse_llm_json(response_text: str) -> dict | None:
     start = response_text.find('{')
     if start == -1:
         return None

@@ -3,6 +3,7 @@
 Correlation matrix for DOTM Sniper positions.
 Tracks pairwise price correlations and limits exposure to correlated clusters.
 """
+from __future__ import annotations
 import os
 import sys
 import math
@@ -85,7 +86,7 @@ def compute_pairwise_correlation(slug_a: str, slug_b: str) -> float | None:
     return max(-1.0, min(1.0, corr))
 
 
-def _get_cluster(pos):
+def _get_cluster(pos: dict) -> str:
     clusters_raw = pos.get("clusters", [])
     if isinstance(clusters_raw, list) and len(clusters_raw) > 0:
         return clusters_raw[0]
@@ -158,7 +159,7 @@ def check_correlation_limit(new_cluster: str, positions: dict, balance: float,
     return True, "ok"
 
 
-def update_correlation_matrix():
+def update_correlation_matrix() -> None:
     positions = load_json(POSITIONS_FILE, {})
     if not isinstance(positions, dict) or len(positions) < 2:
         return

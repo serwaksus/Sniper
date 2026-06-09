@@ -1,3 +1,4 @@
+from __future__ import annotations
 import subprocess
 import json
 import os
@@ -154,7 +155,7 @@ def _execute_sell(slug: str, outcome: str, shares: float, current_price: float, 
     return False, best_bid, "market_failed"
 
 
-def _log_price_for_atr(slug: str, price: float):
+def _log_price_for_atr(slug: str, price: float) -> None:
     try:
         history = load_json(PRICE_HISTORY_FILE, {})
         if not isinstance(history, dict):

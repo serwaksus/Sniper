@@ -3,6 +3,7 @@
 News Scanner - Fresh news reality check before trading.
 Uses Tavily API for real-time news search.
 """
+from __future__ import annotations
 import os
 import re
 import sys
@@ -19,7 +20,7 @@ TAVILY_API_URL = "https://api.tavily.com/search"
 NEWS_TIME_WINDOW_HOURS = 48
 MAX_NEWS_AGE_DAYS_DEFAULT = 30
 
-def load_env():
+def load_env() -> None:
     from config import ENV_FILE
     env_path = ENV_FILE
     if os.path.exists(env_path):

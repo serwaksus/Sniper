@@ -3,6 +3,7 @@
 Monte Carlo stress test and competitive edge monitor for DOTM Sniper.
 Simulates worst-case scenarios, estimates risk of ruin, and tracks edge degradation.
 """
+from __future__ import annotations
 import os
 import sys
 import random
@@ -225,7 +226,7 @@ def check_edge_degradation(quarterly_min_trades: int = 10) -> dict:
     }
 
 
-def main():
+def main() -> None:
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--monte-carlo", action="store_true")

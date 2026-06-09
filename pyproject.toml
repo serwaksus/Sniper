@@ -14,6 +14,7 @@ extend-immutable-calls = ["datetime.timedelta"]
 "src/news_scanner.py" = ["RUF001"]
 "src/dotm_report.py" = ["RUF001"]
 "tests/test_contracts.py" = ["F403", "F405"]
+"tests/*.py" = ["SIM117"]
 "src/*.py" = ["E402"]
 
 [tool.ruff.format]

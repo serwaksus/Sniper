@@ -6,6 +6,8 @@ Alert throttling: Telegram only on trigger_exit or status change.
 Anti-Fossil Filter: news limited to last 30 days, max 5 results.
 Self-improvement: tracks predictions, generates skills, adapts to outcomes.
 """
+from __future__ import annotations
+from typing import Any
 import subprocess
 import json
 import time
@@ -46,7 +48,7 @@ validate_env_vars(["DEEPSEEK_API_KEY", "TG_BOT_TOKEN", "TG_CHAT_ID"])
 os.makedirs(os.path.dirname(HERMES_LOG), exist_ok=True)
 
 class UnbufferedRotatingFileHandler(RotatingFileHandler):
-    def emit(self, record):
+    def emit(self, record: Any) -> None:
         super().emit(record)
         self.flush()
 
@@ -66,7 +68,7 @@ logger = logging.getLogger(__name__)
 
 _shutdown_requested = False
 
-def _handle_shutdown(signum, frame):
+def _handle_shutdown(signum: int, frame: Any) -> None:
     global _shutdown_requested
     _shutdown_requested = True
     logger.info("[HERMES] Shutdown signal received, finishing current cycle...")
@@ -93,14 +95,14 @@ NOTIFY_SEVERITIES = {"DIVERGENCE", "RED"}
 STATUS_HOLD_SECONDS = 1800
 STATUS_HOLD_COUNT = 2
 
-def _load_alert_state():
+def _load_alert_state() -> None:
     global _last_alert_status, _last_notified_at, _status_hold_counts
     state = load_json(ALERT_STATE_FILE, {})
     _last_alert_status = state.get(ALERT_POSITION_STATUS, {})
     _last_notified_at = state.get(ALERT_LAST_NOTIFIED, {})
     _status_hold_counts = state.get(ALERT_HOLD_COUNTS, {})
 
-def _save_alert_state():
+def _save_alert_state() -> None:
     with _alert_state_lock:
         save_json(ALERT_STATE_FILE, {
             ALERT_POSITION_STATUS: _last_alert_status,
@@ -109,7 +111,7 @@ def _save_alert_state():
             ALERT_UPDATED_AT: datetime.now().isoformat()
         })
 
-def _should_send_telegram(slug, trigger_exit, current_status):
+def _should_send_telegram(slug: str, trigger_exit: bool, current_status: str) -> bool:
     with _alert_state_lock:
         if trigger_exit:
             return True
@@ -128,7 +130,7 @@ def _should_send_telegram(slug, trigger_exit, current_status):
         last_normalized = str(last_status).upper().strip() if last_status else None
         return normalized != last_normalized
 
-def _update_and_check_status(slug, trigger_exit, current_status):
+def _update_and_check_status(slug: str, trigger_exit: bool, current_status: str) -> bool:
     global _last_alert_status, _last_notified_at, _status_hold_counts
     with _alert_state_lock:
         normalized = str(current_status).upper().strip()
@@ -167,13 +169,13 @@ HEADERS = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "appli
 
 _load_alert_state()
 
-def get_settings():
+def get_settings() -> dict:
     from db import load_settings
     return load_settings() or {}
 
 from order_manager import get_portfolio
 
-def get_open_orders():
+def get_open_orders() -> list[dict]:
     try:
         res = subprocess.run(["pm-trader", "orders", "list"],
                            capture_output=True, text=True, timeout=30, start_new_session=True)
@@ -196,7 +198,7 @@ def get_open_orders():
         logger.error(f"[HERMES] Failed to get open orders: {e}")
         return []
 
-def cancel_order(slug, outcome="yes"):
+def cancel_order(slug: str, outcome: str = "yes") -> bool:
     try:
         orders = get_open_orders()
         matching = [o for o in orders if o.get("slug") == slug and o.get("side") == "sell"]
@@ -217,7 +219,7 @@ def cancel_order(slug, outcome="yes"):
         logger.error(f"[HERMES] Cancel exception for {slug}: {e}")
         return False
 
-def market_sell(slug, outcome="yes", shares=None):
+def market_sell(slug: str, outcome: str = "yes", shares: float | None = None) -> bool:
     try:
         if shares is None:
             portfolio = get_portfolio()
@@ -247,13 +249,13 @@ def market_sell(slug, outcome="yes", shares=None):
         logger.error(f"[HERMES] Market sell exception for {slug}: {e}")
         return False
 
-def _merge_save_positions(deleted_slugs=None, updated_positions=None):
+def _merge_save_positions(deleted_slugs: set[str] | None = None, updated_positions: dict | None = None) -> None:
     for s in (deleted_slugs or set()):
         positions_db.delete(s)
     if updated_positions:
         positions_db.merge(updated_positions)
 
-def reconcile_positions():
+def reconcile_positions() -> None:
     logger.info("[HERMES] Starting position reconciliation...")
 
     portfolio = get_portfolio()
@@ -348,7 +350,7 @@ def reconcile_positions():
         _merge_save_positions(deleted_slugs=deleted_slugs, updated_positions=updated_positions)
         logger.info(f"[HERMES] Positions updated: {len(deleted_slugs)} deleted, {len(updated_positions)} updated")
 
-def _notify_position_closed(slug, pos_data):
+def _notify_position_closed(slug: str, pos_data: dict) -> None:
     try:
         entry = pos_data.get(POS_ENTRY_PRICE, 0)
         high = pos_data.get(POS_HIGH_PRICE, entry)
@@ -369,7 +371,7 @@ def _notify_position_closed(slug, pos_data):
     except Exception as e:
         logger.warning(f"[HERMES] Position closed notification failed: {e}")
 
-def _notify_partial_fill(slug, pos_data, filled, fill_price=None):
+def _notify_partial_fill(slug: str, pos_data: dict, filled: float, fill_price: float | None = None) -> None:
     try:
         if TELEGRAM_REPORTER:
             fp = fill_price or TP_LIMIT_PRICE
@@ -382,7 +384,7 @@ def _notify_partial_fill(slug, pos_data, filled, fill_price=None):
     except Exception as e:
         logger.warning(f"[HERMES] Partial fill notification failed: {e}")
 
-def fetch_news_for_market(slug, question):
+def fetch_news_for_market(slug: str, question: str) -> list | dict:
     try:
         words = re.findall(r'\b[a-zA-Z]{4,}\b', question.lower())
         stop = {"will", "the", "a", "an", "be", "by", "of", "in", "on", "at", "to", "for", "this", "that", "is", "are", "was", "were"}
@@ -399,7 +401,7 @@ def fetch_news_for_market(slug, question):
         logger.error(f"[HERMES] News fetch failed for {slug}: {e}")
         return []
 
-def _prune_stale_cache():
+def _prune_stale_cache() -> None:
     try:
         cache = load_json(CACHE_FILE, {CACHE_METACULUS: {}, CACHE_NEWS: {}, CACHE_LAST_UPDATE: None})
         now = datetime.now()
@@ -417,7 +419,7 @@ def _prune_stale_cache():
     except Exception as e:
         logger.warning(f"[HERMES] Cache prune error: {e}")
 
-def evaluate_emergency_exit():
+def evaluate_emergency_exit() -> None:
     logger.info("[HERMES] Starting emergency exit evaluation...")
 
     os.makedirs("logs", exist_ok=True)
@@ -663,7 +665,7 @@ Return ONLY JSON:
         except Exception as e:
             logger.error(f"[HERMES] LLM evaluation failed for {slug}: {e}")
 
-def _execute_emergency_exit(slug, pos_data, reason):
+def _execute_emergency_exit(slug: str, pos_data: dict, reason: str) -> None:
     logger.info(f"[HERMES] Executing emergency exit for {slug[:40]}...")
 
     outcome = pos_data.get(POS_OUTCOME, "yes")
@@ -744,7 +746,7 @@ def _execute_emergency_exit(slug, pos_data, reason):
             pos[POS_IN_EMERGENCY_EXIT] = False
             positions_db.update(slug, pos)
 
-def _log_emergency_exit(slug, pos_data, reason):
+def _log_emergency_exit(slug: str, pos_data: dict, reason: str) -> None:
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "slug": slug,
@@ -760,7 +762,7 @@ def _log_emergency_exit(slug, pos_data, reason):
     logs = logs[-1000:]
     save_json(log_file, logs)
 
-def run_reconciliation_loop():
+def run_reconciliation_loop() -> None:
     while True:
         try:
             reconcile_positions()
@@ -769,7 +771,7 @@ def run_reconciliation_loop():
 
         time.sleep(RECONCILE_INTERVAL_SECONDS)
 
-def run_emergency_evaluation_loop():
+def run_emergency_evaluation_loop() -> None:
     while True:
         try:
             evaluate_emergency_exit()
@@ -778,7 +780,7 @@ def run_emergency_evaluation_loop():
 
         time.sleep(NEWS_CHECK_INTERVAL_SECONDS)
 
-def _resolve_predictions_loop():
+def _resolve_predictions_loop() -> None:
     while True:
         try:
             time.sleep(3600)
@@ -802,7 +804,7 @@ def _resolve_predictions_loop():
             logger.error(f"[HERMES] Resolution loop error: {e}")
 
 
-def _check_resolved_markets():
+def _check_resolved_markets() -> None:
     from hermes_memory import _load_memory
     m = _load_memory()
     predictions = m.get("predictions", {})
@@ -850,7 +852,7 @@ def _check_resolved_markets():
         logger.warning(f"[HERMES] Resolution check failed: {e}")
 
 
-def main():
+def main() -> None:
     logger.info("="*60)
     logger.info("  HERMES ADVISOR v5.4.0 - Starting (with self-improvement)")
     logger.info("="*60)

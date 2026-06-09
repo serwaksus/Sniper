@@ -1,3 +1,4 @@
+from __future__ import annotations
 import re
 import logging
 import sys
@@ -24,7 +25,7 @@ CLUSTER_KEYWORDS = {
 }
 
 
-def detect_clusters(question):
+def detect_clusters(question: str) -> list[str]:
     question_lower = question.lower()
     found = set()
     for cluster, keywords in CLUSTER_KEYWORDS.items():

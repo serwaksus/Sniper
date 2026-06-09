@@ -21,6 +21,7 @@ Data source: backtest_stats.json (local, no external API calls).
 Usage:
     python3 src/dotm_optimizer.py
 """
+from __future__ import annotations
 import os
 import sys
 import random
@@ -63,7 +64,7 @@ _grid_lock = threading.RLock()
 _progress_counter = {"done": 0, "total": 0}
 
 
-def load_markets():
+def load_markets() -> list[dict]:
     data = load_json(BACKTEST_FILE, {})
     results = data.get("results", [])
     if not results:
@@ -73,7 +74,7 @@ def load_markets():
     return results
 
 
-def walk_forward_split(markets):
+def walk_forward_split(markets: list[dict]) -> tuple[list[dict], list[dict]]:
     n = len(markets)
     split = n // 2
     is_markets = markets[:split]
@@ -85,7 +86,7 @@ def walk_forward_split(markets):
     return is_markets, oos_markets
 
 
-def _evaluate_single(markets, composite_thresh, volume_thresh):
+def _evaluate_single(markets: list[dict], composite_thresh: int, volume_thresh: int) -> tuple[dict, list[float]]:
     min_confidence = VOLUME_TO_CONFIDENCE.get(volume_thresh, 0.60)
 
     wins = 0
@@ -172,7 +173,7 @@ def _evaluate_single(markets, composite_thresh, volume_thresh):
     }, trade_outcomes
 
 
-def _grid_worker(markets, composite_thresh, volume_thresh):
+def _grid_worker(markets: list[dict], composite_thresh: int, volume_thresh: int) -> tuple[dict, list[float]]:
     result, outcomes = _evaluate_single(markets, composite_thresh, volume_thresh)
     with _grid_lock:
         _progress_counter["done"] += 1
@@ -186,7 +187,7 @@ def _grid_worker(markets, composite_thresh, volume_thresh):
     return result, outcomes
 
 
-def grid_search(markets):
+def grid_search(markets: list[dict]) -> tuple[list[dict], dict, list[float]]:
     combos = [
         (ct, vt)
         for ct in COMPOSITE_THRESHOLDS
@@ -217,7 +218,7 @@ def grid_search(markets):
     return results, best, best_outcomes
 
 
-def validate_oos(oos_markets, best_params):
+def validate_oos(oos_markets: list[dict], best_params: dict) -> tuple[dict, list[float]]:
     result, outcomes = _evaluate_single(
         oos_markets,
         best_params["composite_threshold"],
@@ -230,7 +231,7 @@ def validate_oos(oos_markets, best_params):
     return result, outcomes
 
 
-def monte_carlo_simulation(outcomes, n_sim=N_MONTE_CARLO, n_trades=N_MC_TRADES, pos_pct=POSITION_PCT):
+def monte_carlo_simulation(outcomes: list[float], n_sim: int = N_MONTE_CARLO, n_trades: int = N_MC_TRADES, pos_pct: float = POSITION_PCT) -> dict:
     if not outcomes:
         return {
             "ruin_probability": 0.0,
@@ -282,7 +283,7 @@ def monte_carlo_simulation(outcomes, n_sim=N_MONTE_CARLO, n_trades=N_MC_TRADES, 
     }
 
 
-def print_report(best_is, is_grid, oos_result, mc_result, n_is, n_oos):
+def print_report(best_is: dict, is_grid: list[dict], oos_result: dict, mc_result: dict, n_is: int, n_oos: int) -> None:
     W = 72
 
     print("\n" + "=" * W)
@@ -375,7 +376,7 @@ def print_report(best_is, is_grid, oos_result, mc_result, n_is, n_oos):
     print(f"{'═' * W}\n")
 
 
-def main():
+def main() -> None:
     print("=" * 72)
     print("  DOTM OPTIMIZER v5.1.0")
     print("  Walk-Forward Grid Search + Monte Carlo Validation")

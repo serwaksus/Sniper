@@ -2,7 +2,6 @@
 import json
 import os
 import sys
-import tempfile
 import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -193,7 +192,6 @@ class TestAutoMigrate:
         json_path = str(tmp_path / "positions.json")
         with open(json_path, "w") as f:
             json.dump({"s1": {"shares": 100}, "s2": {"shares": 50}}, f)
-        original_db_path = db_module.DB_PATH
         count = db_module.migrate_json_to_sqlite(json_path, "positions")
         assert count == 2
         assert db_module.count_positions() == 2

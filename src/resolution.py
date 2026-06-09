@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Any
 import subprocess
 import json
 import logging
@@ -24,12 +26,12 @@ from schema import (
 logger = logging.getLogger(__name__)
 
 
-def _get_sniper_deps():
+def _get_sniper_deps() -> tuple[Any, Any, Any, Any]:
     from dotm_sniper import get_settings, save_settings, load_hypothesis_db, save_hypothesis_db
     return get_settings, save_settings, load_hypothesis_db, save_hypothesis_db
 
 
-def calculate_brier_score(db):
+def calculate_brier_score(db: dict) -> float | None:
     get_settings, save_settings, _, _ = _get_sniper_deps()
 
     resolved = [h for h in db.get(HYP_DB_RESOLVED, []) if h.get(HYP_OUTCOME) in ("YES", "NO")]
@@ -87,7 +89,7 @@ def calculate_brier_score(db):
     return brier
 
 
-def learn_from_results(db):
+def learn_from_results(db: dict) -> dict:
     get_settings, save_settings, _, _ = _get_sniper_deps()
     resolved = db.get(HYP_DB_RESOLVED, [])
     if len(resolved) < 10:
@@ -183,7 +185,7 @@ def learn_from_results(db):
     }
 
 
-def backtest_recent(n=20):
+def backtest_recent(n: int = 20) -> dict:
     _, _, load_hypothesis_db, _ = _get_sniper_deps()
     db = load_hypothesis_db()
     resolved = db.get(HYP_DB_RESOLVED, [])
@@ -278,7 +280,7 @@ def backtest_recent(n=20):
     return result
 
 
-def resolve_hypothesis_immediately(slug, current_price, entry_price):
+def resolve_hypothesis_immediately(slug: str, current_price: float, entry_price: float) -> None:
     get_settings, save_settings, load_hypothesis_db, save_hypothesis_db = _get_sniper_deps()
     from order_manager import _cancel_all_tp_orders
 
@@ -311,7 +313,7 @@ def resolve_hypothesis_immediately(slug, current_price, entry_price):
             break
 
 
-def resolve_hypotheses():
+def resolve_hypotheses() -> None:
     get_settings, save_settings, load_hypothesis_db, save_hypothesis_db = _get_sniper_deps()
     from order_manager import get_portfolio
 

@@ -176,7 +176,7 @@ class TestLLMFailures:
             ),
         )
         from signal_pipeline import advisor_pre_check
-        approved, verdict, conf, reason = advisor_pre_check(
+        approved, verdict, _conf, _reason = advisor_pre_check(
             {"slug": "test", "question": "Will X?", "price": 0.10},
             {
                 "p_model": 0.20,
@@ -197,7 +197,7 @@ class TestLLMFailures:
         import requests
         mock_post.side_effect = requests.Timeout("Connection timed out")
         from signal_pipeline import advisor_pre_check
-        approved, verdict, conf, reason = advisor_pre_check(
+        approved, _verdict, _conf, reason = advisor_pre_check(
             {"slug": "test", "question": "Will X?", "price": 0.10},
             {
                 "p_model": 0.20,
@@ -220,7 +220,7 @@ class TestLLMFailures:
             json=lambda: {},
         )
         from signal_pipeline import advisor_pre_check
-        approved, verdict, conf, reason = advisor_pre_check(
+        approved, _verdict, _conf, reason = advisor_pre_check(
             {"slug": "test", "question": "Will X?", "price": 0.10},
             {
                 "p_model": 0.20,
@@ -238,7 +238,7 @@ class TestLLMFailures:
     def test_circuit_breaker_blocks_large_trade(self, mock_cb):
         """Verify circuit breaker blocks non-micro trades."""
         from signal_pipeline import advisor_pre_check
-        approved, verdict, conf, reason = advisor_pre_check(
+        approved, _verdict, _conf, reason = advisor_pre_check(
             {"slug": "test", "question": "Will X?", "price": 0.10},
             {
                 "p_model": 0.20,
@@ -256,7 +256,7 @@ class TestLLMFailures:
     def test_circuit_breaker_allows_micro_position(self, mock_cb):
         """Verify circuit breaker allows micro trades (<=2% of balance)."""
         from signal_pipeline import advisor_pre_check
-        approved, verdict, conf, reason = advisor_pre_check(
+        approved, _verdict, _conf, reason = advisor_pre_check(
             {"slug": "test", "question": "Will X?", "price": 0.10},
             {
                 "p_model": 0.20,
@@ -277,7 +277,7 @@ class TestLLMFailures:
         import requests
         mock_post.side_effect = requests.ConnectionError("Connection refused")
         from signal_pipeline import advisor_pre_check
-        approved, verdict, conf, reason = advisor_pre_check(
+        approved, _verdict, _conf, _reason = advisor_pre_check(
             {"slug": "test", "question": "Will X?", "price": 0.10},
             {
                 "p_model": 0.20,

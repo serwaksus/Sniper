@@ -15,7 +15,7 @@ class TestCheckSellSafety:
         from sell_executor import _check_sell_safety
         with patch("sell_executor._get_om") as mock_om:
             mock_om.return_value.get_order_book.return_value = {"best_bid": None, "best_ask": 0.12}
-            safe, reason, price = _check_sell_safety("test-slug", 0.10, 100)
+            safe, reason, _price = _check_sell_safety("test-slug", 0.10, 100)
             assert safe is False
             assert "no_bids" in reason
 
@@ -23,17 +23,17 @@ class TestCheckSellSafety:
         from sell_executor import _check_sell_safety
         with patch("sell_executor._get_om") as mock_om:
             mock_om.return_value.get_order_book.return_value = {"best_bid": 0, "best_ask": 0.12}
-            safe, reason, price = _check_sell_safety("test-slug", 0.10, 100)
+            safe, reason, _price = _check_sell_safety("test-slug", 0.10, 100)
             assert safe is False
             assert "no_bids" in reason
 
     def test_wide_spread_returns_unsafe(self):
-        from sell_executor import _check_sell_safety, MAX_SPREAD_PCT
+        from sell_executor import _check_sell_safety
         with patch("sell_executor._get_om") as mock_om:
             mock_om.return_value.get_order_book.return_value = {
                 "best_bid": 0.03, "best_ask": 0.20,
             }
-            safe, reason, price = _check_sell_safety("test-slug", 0.10, 100)
+            safe, reason, _price = _check_sell_safety("test-slug", 0.10, 100)
             assert safe is False
             assert "spread" in reason.lower()
 
@@ -43,7 +43,7 @@ class TestCheckSellSafety:
             mock_om.return_value.get_order_book.return_value = {
                 "best_bid": 0.098, "best_ask": 0.102,
             }
-            safe, reason, price = _check_sell_safety("test-slug", 0.10, 100)
+            safe, _reason, price = _check_sell_safety("test-slug", 0.10, 100)
             assert safe is True
             assert price == pytest.approx(0.098)
 
@@ -53,7 +53,7 @@ class TestCheckSellSafety:
             mock_om.return_value.get_order_book.return_value = {
                 "best_bid": 0.01, "best_ask": 0.015,
             }
-            safe, reason, price = _check_sell_safety("test-slug", 0.10, 100)
+            safe, _reason, _price = _check_sell_safety("test-slug", 0.10, 100)
             assert safe is False
 
 
@@ -64,7 +64,7 @@ class TestExecuteSell:
         from sell_executor import _execute_sell
         with patch("sell_executor._get_om") as mock_om:
             mock_om.return_value.get_order_book.return_value = {"best_bid": None, "best_ask": None}
-            sold, price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10)
+            sold, _price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10)
             assert sold is False
             assert method == "no_bids"
 
@@ -78,7 +78,7 @@ class TestExecuteSell:
             mock_pos_db.load_all.return_value = {"slug": {}}
             mock_pos_db.update.return_value = None
 
-            sold, price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10)
+            sold, _price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10)
             assert sold is False
             assert method == "limit_pending"
 
@@ -93,7 +93,7 @@ class TestExecuteSell:
             mock_result.stdout = '{"ok": true}'
             mock_result.returncode = 0
             with patch("subprocess.run", return_value=mock_result):
-                sold, price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10, force_market=True)
+                sold, _price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10, force_market=True)
                 assert sold is True
                 assert method == "market"
 
@@ -102,7 +102,7 @@ class TestExecuteSell:
         with patch("sell_executor._get_om") as mock_om:
             mock_om.return_value.get_order_book.return_value = {"best_bid": 0.09, "best_ask": 0.11}
             mock_om.return_value.get_portfolio.return_value = []
-            sold, price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10, force_market=True)
+            sold, _price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10, force_market=True)
             assert sold is False
             assert method == "already_sold"
 
@@ -114,7 +114,7 @@ class TestExecuteSell:
                 {"market_slug": "slug", "shares": 100}
             ]
             with patch("subprocess.run", side_effect=Exception("fail")):
-                sold, price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10, force_market=True)
+                sold, _price, method = _execute_sell("slug", "YES", 100, 0.10, 0.10, force_market=True)
                 assert sold is False
                 assert method == "market_failed"
 

@@ -2,7 +2,6 @@
 import json
 import os
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -157,3 +156,54 @@ class TestMigration:
         db_module.update_hypothesis("h3", {"resolved": True})
 
         assert hypotheses_db.count_resolved() == 2
+
+
+class TestSchemaMigration:
+    def test_migration_idempotency(self, tmp_path):
+        _setup_db(tmp_path)
+        original_migrations = db_module.MIGRATIONS
+        db_module.MIGRATIONS = [
+            (1, "add_foo_column", "ALTER TABLE positions ADD COLUMN foo TEXT DEFAULT NULL"),
+        ]
+        try:
+            db_module.run_migrations()
+            conn = db_module._get_conn()
+            rows = conn.execute("SELECT id, name FROM _migrations ORDER BY id").fetchall()
+            assert len(rows) == 1
+            assert rows[0]["id"] == 1
+            assert rows[0]["name"] == "add_foo_column"
+
+            db_module.run_migrations()
+            rows = conn.execute("SELECT id, name FROM _migrations ORDER BY id").fetchall()
+            assert len(rows) == 1
+        finally:
+            db_module.MIGRATIONS = original_migrations
+
+    def test_multiple_migrations_applied_in_order(self, tmp_path):
+        _setup_db(tmp_path)
+        original_migrations = db_module.MIGRATIONS
+        db_module.MIGRATIONS = [
+            (2, "add_bar_column", "ALTER TABLE positions ADD COLUMN bar TEXT DEFAULT NULL"),
+            (1, "add_baz_column", "ALTER TABLE positions ADD COLUMN baz TEXT DEFAULT NULL"),
+        ]
+        try:
+            db_module.run_migrations()
+            conn = db_module._get_conn()
+            rows = conn.execute("SELECT id, name FROM _migrations ORDER BY id").fetchall()
+            assert len(rows) == 2
+            assert rows[0]["name"] == "add_baz_column"
+            assert rows[1]["name"] == "add_bar_column"
+
+            db_module.run_migrations()
+            rows = conn.execute("SELECT id, name FROM _migrations ORDER BY id").fetchall()
+            assert len(rows) == 2
+        finally:
+            db_module.MIGRATIONS = original_migrations
+
+    def test_migrations_table_created(self, tmp_path):
+        _setup_db(tmp_path)
+        conn = db_module._get_conn()
+        tables = [row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='_migrations'"
+        ).fetchall()]
+        assert "_migrations" in tables

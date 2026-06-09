@@ -210,8 +210,7 @@ class TestCalculateMetaculusMatch(unittest.TestCase):
         mock_fuzz = MagicMock()
         mock_fuzz.partial_ratio.return_value = 80
         with patch.dict("sys.modules", {"fuzzywuzzy": MagicMock(fuzz=mock_fuzz)}):
-            from fuzzywuzzy import fuzz as _fuzz
-            with patch("signal_pipeline._calculate_metaculus_match.__code__", sp._calculate_metaculus_match.__code__):
+            with patch("metaculus._calculate_metaculus_match.__code__", sp._calculate_metaculus_match.__code__):
                 pass
         with patch("fuzzywuzzy.fuzz.partial_ratio", return_value=80):
             return sp._calculate_metaculus_match(pm_q, result)
@@ -320,14 +319,14 @@ class TestCheckMetaculusGap(unittest.TestCase):
             "end_date": end_date or (datetime.now(UTC) + timedelta(days=30)).isoformat(),
         }
 
-    @patch("signal_pipeline.get_time_decay_threshold", return_value=0.08)
-    @patch("signal_pipeline.get_metaculus_forecast")
+    @patch("metaculus.get_time_decay_threshold", return_value=0.08)
+    @patch("metaculus.get_metaculus_forecast")
     def test_no_metaculus_data_returns_none(self, mock_meta, mock_threshold):
         mock_meta.return_value = {"found": False}
         self.assertIsNone(sp.check_metaculus_gap(self._make_market()))
 
-    @patch("signal_pipeline.get_time_decay_threshold", return_value=0.08)
-    @patch("signal_pipeline.get_metaculus_forecast")
+    @patch("metaculus.get_time_decay_threshold", return_value=0.08)
+    @patch("metaculus.get_metaculus_forecast")
     def test_large_gap_returns_signal(self, mock_meta, mock_threshold):
         mock_meta.return_value = {
             "found": True,
@@ -339,8 +338,8 @@ class TestCheckMetaculusGap(unittest.TestCase):
         self.assertEqual(result["source"], "metaculus")
         self.assertGreater(result["gap"], 0)
 
-    @patch("signal_pipeline.get_time_decay_threshold", return_value=0.08)
-    @patch("signal_pipeline.get_metaculus_forecast")
+    @patch("metaculus.get_time_decay_threshold", return_value=0.08)
+    @patch("metaculus.get_metaculus_forecast")
     def test_small_gap_returns_none(self, mock_meta, mock_threshold):
         mock_meta.return_value = {
             "found": True,
@@ -350,8 +349,8 @@ class TestCheckMetaculusGap(unittest.TestCase):
         result = sp.check_metaculus_gap(self._make_market(price=0.10))
         self.assertIsNone(result)
 
-    @patch("signal_pipeline.get_time_decay_threshold", return_value=0.08)
-    @patch("signal_pipeline.get_metaculus_forecast")
+    @patch("metaculus.get_time_decay_threshold", return_value=0.08)
+    @patch("metaculus.get_metaculus_forecast")
     def test_uses_polymarket_prob_kwarg(self, mock_meta, mock_threshold):
         mock_meta.return_value = {
             "found": True,
@@ -362,8 +361,8 @@ class TestCheckMetaculusGap(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertAlmostEqual(result["polymarket_prob"], 0.05)
 
-    @patch("signal_pipeline.get_time_decay_threshold", return_value=0.08)
-    @patch("signal_pipeline.get_metaculus_forecast")
+    @patch("metaculus.get_time_decay_threshold", return_value=0.08)
+    @patch("metaculus.get_metaculus_forecast")
     def test_dispersion_penalty_reduces_strength(self, mock_meta, mock_threshold):
         mock_meta.return_value = {
             "found": True,
@@ -374,8 +373,8 @@ class TestCheckMetaculusGap(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertLess(result["signal_strength"], 1.0)
 
-    @patch("signal_pipeline.get_time_decay_threshold", return_value=0.08)
-    @patch("signal_pipeline.get_metaculus_forecast")
+    @patch("metaculus.get_time_decay_threshold", return_value=0.08)
+    @patch("metaculus.get_metaculus_forecast")
     def test_signal_strength_capped_at_1(self, mock_meta, mock_threshold):
         mock_meta.return_value = {
             "found": True,
@@ -391,7 +390,7 @@ class TestCheckMetaculusGap(unittest.TestCase):
 # calibrate_prediction
 # ═══════════════════════════════════════════════════════════════════
 class TestCalibratePrediction(unittest.TestCase):
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_soft_extremize_low_p(self, mock_count):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -400,7 +399,7 @@ class TestCalibratePrediction(unittest.TestCase):
         self.assertAlmostEqual(p, 0.11)
         self.assertTrue(calibrated)
 
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_soft_extremize_capped_at_50(self, mock_count):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -409,7 +408,7 @@ class TestCalibratePrediction(unittest.TestCase):
         self.assertAlmostEqual(p, 0.50)
         self.assertTrue(calibrated)
 
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_low_market_price_caps_at_85(self, mock_count):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -442,17 +441,17 @@ class TestCalibratePrediction(unittest.TestCase):
         self.assertAlmostEqual(p, 0.10)
         self.assertFalse(calibrated)
 
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=25)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=25)
     def test_isotonic_calibration_used_when_fitted(self, mock_count):
         mock_cal = MagicMock()
         mock_cal.is_fitted = True
         mock_cal.predict.return_value = 0.15
         with patch("calibration.get_calibrator", return_value=mock_cal):
             with patch("calibration_tracker.get_platt_calibrated", return_value=None):
-                p, calibrated = sp.calibrate_prediction(0.10, 0.05)
+                _p, calibrated = sp.calibrate_prediction(0.10, 0.05)
         self.assertTrue(calibrated)
 
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_high_market_price_no_85_cap(self, mock_count):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -511,7 +510,7 @@ class TestPreFilterBeforeBatching(unittest.TestCase):
 
     def test_allowed_cluster_kept(self):
         markets = [{HYP_CLUSTERS: ["ai_tech"], HYP_SLUG: "ai-test", "volume": 50000}]
-        kept, skipped = sp.pre_filter_before_batching(markets)
+        kept, _skipped = sp.pre_filter_before_batching(markets)
         self.assertEqual(len(kept), 1)
 
     def test_mixed_markets(self):
@@ -532,7 +531,7 @@ class TestPreFilterBeforeBatching(unittest.TestCase):
 
     def test_no_clusters_defaults_to_other(self):
         markets = [{HYP_SLUG: "no-clusters", "volume": 50000}]
-        kept, skipped = sp.pre_filter_before_batching(markets)
+        _kept, skipped = sp.pre_filter_before_batching(markets)
         self.assertEqual(len(skipped), 1)
 
 
@@ -540,8 +539,8 @@ class TestPreFilterBeforeBatching(unittest.TestCase):
 # load_cache / save_cache
 # ═══════════════════════════════════════════════════════════════════
 class TestCacheHelpers(unittest.TestCase):
-    @patch("signal_pipeline.save_json")
-    @patch("signal_pipeline.load_json")
+    @patch("metaculus.save_json")
+    @patch("metaculus.load_json")
     def test_load_cache_removes_stale_entries(self, mock_load, mock_save):
         old_ts = (datetime.now() - timedelta(hours=25)).isoformat()
         recent_ts = (datetime.now() - timedelta(hours=1)).isoformat()
@@ -557,7 +556,7 @@ class TestCacheHelpers(unittest.TestCase):
         self.assertNotIn("old_key", cache["metaculus"])
         self.assertIn("new_key", cache["metaculus"])
 
-    @patch("signal_pipeline.load_json")
+    @patch("metaculus.load_json")
     def test_load_cache_no_timestamp_kept(self, mock_load):
         mock_load.return_value = {
             "metaculus": {"no_ts": {"data": "value"}},
@@ -567,7 +566,7 @@ class TestCacheHelpers(unittest.TestCase):
         cache = sp.load_cache()
         self.assertIn("no_ts", cache["metaculus"])
 
-    @patch("signal_pipeline.save_json")
+    @patch("metaculus.save_json")
     def test_save_cache_sets_timestamp(self, mock_save):
         sp.save_cache({"metaculus": {}, "news": {}})
         mock_save.assert_called_once()
@@ -661,7 +660,7 @@ class TestBuildBatchResults(unittest.TestCase):
 
     @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_buy_when_signals_align(self, mock_count, mock_get_cal, mock_cluster_adj):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -684,7 +683,7 @@ class TestBuildBatchResults(unittest.TestCase):
 
     @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_skip_when_signals_weak(self, mock_count, mock_get_cal, mock_cluster_adj):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -703,7 +702,7 @@ class TestBuildBatchResults(unittest.TestCase):
 
     @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_p_model_below_min_skipped(self, mock_count, mock_get_cal, mock_cluster_adj):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -722,7 +721,7 @@ class TestBuildBatchResults(unittest.TestCase):
 
     @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_missing_slug_uses_order_fallback(self, mock_count, mock_get_cal, mock_cluster_adj):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -740,7 +739,7 @@ class TestBuildBatchResults(unittest.TestCase):
 
     @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_max_p_model_ratio_enforced(self, mock_count, mock_get_cal, mock_cluster_adj):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -764,25 +763,25 @@ class TestBuildBatchResults(unittest.TestCase):
 # metaculus_search / metaculus_get_question
 # ═══════════════════════════════════════════════════════════════════
 class TestMetaculusSearch(unittest.TestCase):
-    @patch("signal_pipeline.requests.get")
+    @patch("metaculus.requests.get")
     def test_success_returns_results(self, mock_get):
         mock_get.return_value = MagicMock(status_code=200)
         mock_get.return_value.json.return_value = {"results": [{"id": 1}]}
         result = sp.metaculus_search("AI safety")
         self.assertEqual(len(result), 1)
 
-    @patch("signal_pipeline.requests.get")
+    @patch("metaculus.requests.get")
     def test_non_200_returns_empty(self, mock_get):
         mock_get.return_value = MagicMock(status_code=404)
         self.assertEqual(sp.metaculus_search("test"), [])
 
-    @patch("signal_pipeline.requests.get", side_effect=Exception("timeout"))
+    @patch("metaculus.requests.get", side_effect=Exception("timeout"))
     def test_exception_returns_empty(self, mock_get):
         self.assertEqual(sp.metaculus_search("test"), [])
 
 
 class TestMetaculusGetQuestion(unittest.TestCase):
-    @patch("signal_pipeline.requests.get")
+    @patch("metaculus.requests.get")
     def test_success_returns_data(self, mock_get):
         mock_get.return_value = MagicMock(status_code=200)
         mock_get.return_value.json.return_value = {"id": 123, "title": "Test?"}
@@ -790,12 +789,12 @@ class TestMetaculusGetQuestion(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["id"], 123)
 
-    @patch("signal_pipeline.requests.get")
+    @patch("metaculus.requests.get")
     def test_non_200_returns_none(self, mock_get):
         mock_get.return_value = MagicMock(status_code=403)
         self.assertIsNone(sp.metaculus_get_question(999))
 
-    @patch("signal_pipeline.requests.get", side_effect=Exception("err"))
+    @patch("metaculus.requests.get", side_effect=Exception("err"))
     def test_exception_returns_none(self, mock_get):
         self.assertIsNone(sp.metaculus_get_question(999))
 
@@ -821,7 +820,7 @@ class TestBatchAnalyzeMarkets(unittest.TestCase):
     def test_high_price_skips_metaculus(self, mock_meta, mock_cb, mock_full):
         mock_full.return_value = {"action": "SKIP", HYP_SLUG: "high-price"}
         markets = [{"question": "Q?", "price": 0.50, HYP_SLUG: "high-price", HYP_CLUSTERS: ["other"], "volume": 100000, "ttl_hours": 720, "end_date": ""}]
-        results = sp.batch_analyze_markets(markets)
+        sp.batch_analyze_markets(markets)
         mock_meta.assert_not_called()
 
 
@@ -851,12 +850,12 @@ class TestFullMarketAnalysis(unittest.TestCase):
             HYP_FACTORS: factors,
         }
 
-    @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
-    @patch("signal_pipeline.check_metaculus_gap", return_value=None)
+    @patch("signal_scorer._cluster_score_adjustment", return_value=0)
+    @patch("signal_scorer.check_metaculus_gap", return_value=None)
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
-    @patch("signal_pipeline.requests.post")
+    @patch("signal_scorer.requests.post")
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_buy_signal(self, mock_count, mock_get_cal, mock_post, mock_cb, mock_gap, mock_cluster):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -872,37 +871,35 @@ class TestFullMarketAnalysis(unittest.TestCase):
             "reasoning": "test",
         })}}]}
         mock_post.return_value = mock_resp
-        with _mock_settings():
-            with patch("signal_pipeline.parse_llm_json") as mock_parse:
-                mock_parse.return_value = self._mock_llm_response(0.30, 0.80, [
-                    {"factor": "strong", "direction": "supports", "weight": "high", "source": "news"},
-                    {"factor": "momentum", "direction": "supports", "weight": "medium", "source": "data"},
-                ])
-                with patch("order_manager.get_best_ask", return_value=None):
-                    result = sp.full_market_analysis(self._market())
+        with _mock_settings(), patch("signal_scorer.parse_llm_json") as mock_parse:
+            mock_parse.return_value = self._mock_llm_response(0.30, 0.80, [
+                {"factor": "strong", "direction": "supports", "weight": "high", "source": "news"},
+                {"factor": "momentum", "direction": "supports", "weight": "medium", "source": "data"},
+            ])
+            with patch("order_manager.get_best_ask", return_value=None):
+                result = sp.full_market_analysis(self._market())
         self.assertEqual(result["action"], "BUY")
         self.assertGreater(result["signal_score"], 55)
 
-    @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
-    @patch("signal_pipeline.check_metaculus_gap", return_value=None)
+    @patch("signal_scorer._cluster_score_adjustment", return_value=0)
+    @patch("signal_scorer.check_metaculus_gap", return_value=None)
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=False)
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_circuit_breaker_fallback(self, mock_count, mock_get_cal, mock_cb, mock_gap, mock_cluster):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
         mock_get_cal.return_value = mock_cal
-        with _mock_settings():
-            with patch("order_manager.get_best_ask", return_value=None):
-                result = sp.full_market_analysis(self._market())
+        with _mock_settings(), patch("order_manager.get_best_ask", return_value=None):
+            result = sp.full_market_analysis(self._market())
         self.assertEqual(result["action"], "SKIP")
 
-    @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
-    @patch("signal_pipeline.check_metaculus_gap", return_value=None)
+    @patch("signal_scorer._cluster_score_adjustment", return_value=0)
+    @patch("signal_scorer.check_metaculus_gap", return_value=None)
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
-    @patch("signal_pipeline.requests.post")
+    @patch("signal_scorer.requests.post")
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_low_p_model_skip(self, mock_count, mock_get_cal, mock_post, mock_cb, mock_gap, mock_cluster):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -910,19 +907,18 @@ class TestFullMarketAnalysis(unittest.TestCase):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
         mock_post.return_value = mock_resp
-        with _mock_settings():
-            with patch("signal_pipeline.parse_llm_json") as mock_parse:
-                mock_parse.return_value = self._mock_llm_response(0.02, 0.40, [])
-                with patch("order_manager.get_best_ask", return_value=None):
-                    result = sp.full_market_analysis(self._market())
+        with _mock_settings(), patch("signal_scorer.parse_llm_json") as mock_parse:
+            mock_parse.return_value = self._mock_llm_response(0.02, 0.40, [])
+            with patch("order_manager.get_best_ask", return_value=None):
+                result = sp.full_market_analysis(self._market())
         self.assertEqual(result["action"], "SKIP")
 
-    @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
-    @patch("signal_pipeline.check_metaculus_gap")
+    @patch("signal_scorer._cluster_score_adjustment", return_value=0)
+    @patch("signal_scorer.check_metaculus_gap")
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
-    @patch("signal_pipeline.requests.post")
+    @patch("signal_scorer.requests.post")
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def test_metaculus_override_boosts_confidence(self, mock_count, mock_get_cal, mock_post, mock_cb, mock_gap, mock_cluster):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -936,13 +932,12 @@ class TestFullMarketAnalysis(unittest.TestCase):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
         mock_post.return_value = mock_resp
-        with _mock_settings():
-            with patch("signal_pipeline.parse_llm_json") as mock_parse:
-                mock_parse.return_value = self._mock_llm_response(0.25, 0.70, [
-                    {"factor": "test", "direction": "supports", "weight": "high", "source": "test"},
-                ])
-                with patch("order_manager.get_best_ask", return_value=0.08):
-                    result = sp.full_market_analysis(self._market(price=0.08))
+        with _mock_settings(), patch("signal_scorer.parse_llm_json") as mock_parse:
+            mock_parse.return_value = self._mock_llm_response(0.25, 0.70, [
+                {"factor": "test", "direction": "supports", "weight": "high", "source": "test"},
+            ])
+            with patch("order_manager.get_best_ask", return_value=0.08):
+                result = sp.full_market_analysis(self._market(price=0.08))
         self.assertEqual(result["source_signal"], "metaculus_override")
 
 
@@ -964,7 +959,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
 
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=False)
     def test_circuit_breaker_blocks_large_position(self, mock_cb):
-        approved, verdict, conf, reason = sp.advisor_pre_check(
+        approved, _verdict, _conf, reason = sp.advisor_pre_check(
             self._market(), self._analysis(), estimated_size=50, balance=100
         )
         self.assertFalse(approved)
@@ -972,7 +967,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
 
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=False)
     def test_circuit_breaker_allows_micro(self, mock_cb):
-        approved, verdict, conf, reason = sp.advisor_pre_check(
+        approved, _verdict, _conf, reason = sp.advisor_pre_check(
             self._market(), self._analysis(), estimated_size=1, balance=100
         )
         self.assertTrue(approved)
@@ -989,7 +984,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_post.return_value = mock_resp
         mock_parser = MagicMock(return_value=({"p_estimate": 0.35, HYP_CONFIDENCE: 0.85, HYP_FACTORS: ["f1"], "verdict": "CONFIRM"}, None))
         with patch.dict("sys.modules", {"advisor_script": MagicMock(parse_llm_advisor_response=mock_parser)}):
-            approved, verdict, conf, reason = sp.advisor_pre_check(
+            approved, verdict, _conf, _reason = sp.advisor_pre_check(
                 self._market(), self._analysis(), estimated_size=5, balance=100
             )
         self.assertTrue(approved)
@@ -1006,7 +1001,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_post.return_value = mock_resp
         mock_parser = MagicMock(return_value=({"p_estimate": 0.05, HYP_CONFIDENCE: 0.70, HYP_FACTORS: ["f1"], "verdict": "DIVERGE"}, None))
         with patch.dict("sys.modules", {"advisor_script": MagicMock(parse_llm_advisor_response=mock_parser)}):
-            approved, verdict, conf, reason = sp.advisor_pre_check(
+            approved, verdict, _conf, _reason = sp.advisor_pre_check(
                 self._market(), self._analysis(), estimated_size=10, balance=100
             )
         self.assertFalse(approved)
@@ -1023,7 +1018,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_post.return_value = mock_resp
         mock_parser = MagicMock(return_value=({"p_estimate": 0.05, HYP_CONFIDENCE: 0.70, HYP_FACTORS: ["f1"], "verdict": "DIVERGE"}, None))
         with patch.dict("sys.modules", {"advisor_script": MagicMock(parse_llm_advisor_response=mock_parser)}):
-            approved, verdict, conf, reason = sp.advisor_pre_check(
+            approved, _verdict, _conf, reason = sp.advisor_pre_check(
                 self._market(), self._analysis(), estimated_size=1, balance=100
             )
         self.assertTrue(approved)
@@ -1032,7 +1027,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
     @patch("signal_pipeline.requests.post", side_effect=requests.exceptions.Timeout("timed out"))
     def test_timeout_blocks(self, mock_post, mock_cb):
-        approved, verdict, conf, reason = sp.advisor_pre_check(
+        approved, _verdict, _conf, reason = sp.advisor_pre_check(
             self._market(), self._analysis(), estimated_size=10, balance=100
         )
         self.assertFalse(approved)
@@ -1049,7 +1044,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_post.return_value = mock_resp
         mock_parser = MagicMock(return_value=({"p_estimate": 0.10, HYP_CONFIDENCE: 0.50, HYP_FACTORS: [], "verdict": "UNKNOWN"}, None))
         with patch.dict("sys.modules", {"advisor_script": MagicMock(parse_llm_advisor_response=mock_parser)}):
-            approved, verdict, conf, reason = sp.advisor_pre_check(
+            approved, _verdict, _conf, _reason = sp.advisor_pre_check(
                 self._market(), self._analysis(), estimated_size=10, balance=100
             )
         self.assertFalse(approved)
@@ -1065,7 +1060,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_post.return_value = mock_resp
         mock_parser = MagicMock(return_value=({"p_estimate": 0.15, HYP_CONFIDENCE: 0.50, HYP_FACTORS: ["risk"], "verdict": "WARNING"}, None))
         with patch.dict("sys.modules", {"advisor_script": MagicMock(parse_llm_advisor_response=mock_parser)}):
-            approved, verdict, conf, reason = sp.advisor_pre_check(
+            approved, _verdict, _conf, reason = sp.advisor_pre_check(
                 self._market(), self._analysis(), estimated_size=10, balance=100
             )
         self.assertTrue(approved)
@@ -1079,7 +1074,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_post.return_value = mock_resp
         mock_parser = MagicMock(return_value=(None, "json decode error"))
         with patch.dict("sys.modules", {"advisor_script": MagicMock(parse_llm_advisor_response=mock_parser)}):
-            approved, verdict, conf, reason = sp.advisor_pre_check(
+            approved, _verdict, _conf, _reason = sp.advisor_pre_check(
                 self._market(), self._analysis(), estimated_size=10, balance=100
             )
         self.assertFalse(approved)
@@ -1090,7 +1085,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"choices": [{"message": {"content": "", "reasoning": ""}}]}
         mock_post.return_value = mock_resp
-        approved, verdict, conf, reason = sp.advisor_pre_check(
+        approved, _verdict, _conf, reason = sp.advisor_pre_check(
             self._market(), self._analysis(), estimated_size=50, balance=100
         )
         self.assertFalse(approved)
@@ -1102,7 +1097,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"choices": [{"message": {"content": "", "reasoning": ""}}]}
         mock_post.return_value = mock_resp
-        approved, verdict, conf, reason = sp.advisor_pre_check(
+        approved, _verdict, _conf, reason = sp.advisor_pre_check(
             self._market(), self._analysis(), estimated_size=1, balance=100
         )
         self.assertTrue(approved)
@@ -1111,7 +1106,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
     @patch("signal_pipeline.requests.post", side_effect=Exception("unexpected"))
     def test_generic_exception_blocks(self, mock_post, mock_cb):
-        approved, verdict, conf, reason = sp.advisor_pre_check(
+        approved, _verdict, _conf, reason = sp.advisor_pre_check(
             self._market(), self._analysis(), estimated_size=10, balance=100
         )
         self.assertFalse(approved)
@@ -1128,7 +1123,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
         mock_post.return_value = mock_resp
         mock_parser = MagicMock(return_value=({"p_estimate": 0.15, HYP_CONFIDENCE: 0.70, HYP_FACTORS: [], "verdict": "DIVERGE"}, None))
         with patch.dict("sys.modules", {"advisor_script": MagicMock(parse_llm_advisor_response=mock_parser)}):
-            approved, verdict, conf, reason = sp.advisor_pre_check(
+            approved, _verdict, _conf, reason = sp.advisor_pre_check(
                 self._market(), self._analysis(), estimated_size=10, balance=100
             )
         self.assertTrue(approved)
@@ -1139,12 +1134,12 @@ class TestAdvisorPreCheck(unittest.TestCase):
 # Signal scoring — time_score branches
 # ═══════════════════════════════════════════════════════════════════
 class TestTimeScoreBranches(unittest.TestCase):
-    @patch("signal_pipeline._cluster_score_adjustment", return_value=0)
-    @patch("signal_pipeline.check_metaculus_gap", return_value=None)
+    @patch("signal_scorer._cluster_score_adjustment", return_value=0)
+    @patch("signal_scorer.check_metaculus_gap", return_value=None)
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
-    @patch("signal_pipeline.requests.post")
+    @patch("signal_scorer.requests.post")
     @patch("calibration.get_calibrator")
-    @patch("signal_pipeline._count_resolved_hypotheses", return_value=0)
+    @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
     def _run_with_ttl(self, ttl_hours, mock_count, mock_get_cal, mock_post, mock_cb, mock_gap, mock_cluster):
         mock_cal = MagicMock()
         mock_cal.is_fitted = False
@@ -1158,15 +1153,14 @@ class TestTimeScoreBranches(unittest.TestCase):
             "end_date": (datetime.now(UTC) + timedelta(hours=ttl_hours)).isoformat(),
             "ttl_hours": ttl_hours, HYP_CLUSTERS: ["ai_tech"], "oracle_type": "uma",
         }
-        with _mock_settings():
-            with patch("signal_pipeline.parse_llm_json") as mock_parse:
-                mock_parse.return_value = {
-                    "estimated_probability": 0.30,
-                    HYP_CONFIDENCE: 0.80,
-                    HYP_FACTORS: [{"factor": "test", "direction": "supports", "weight": "high", "source": "test"}],
-                }
-                with patch("order_manager.get_best_ask", return_value=None):
-                    return sp.full_market_analysis(market)
+        with _mock_settings(), patch("signal_scorer.parse_llm_json") as mock_parse:
+            mock_parse.return_value = {
+                "estimated_probability": 0.30,
+                HYP_CONFIDENCE: 0.80,
+                HYP_FACTORS: [{"factor": "test", "direction": "supports", "weight": "high", "source": "test"}],
+            }
+            with patch("order_manager.get_best_ask", return_value=None):
+                return sp.full_market_analysis(market)
 
     def test_ttl_over_180_days_high_time_score(self):
         result = self._run_with_ttl(181 * 24)

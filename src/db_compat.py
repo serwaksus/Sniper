@@ -4,6 +4,8 @@
 Drop-in replacement: replace 'from utils import load_json, save_json' with
 'from db_compat import load_positions_json, save_positions_json, ...' and no other changes needed.
 """
+from __future__ import annotations
+from typing import Any
 import os
 import sys
 
@@ -20,22 +22,22 @@ def ensure_init():
         init_db()
         _initialized = True
 
-def load_positions_json(path, default=None):
+def load_positions_json(path: str, default: Any = None) -> Any:
     """Drop-in for load_json(POSITIONS_FILE, {})."""
     ensure_init()
     return load_positions()
 
-def save_positions_json(path, data):
+def save_positions_json(path: str, data: Any) -> None:
     """Drop-in for save_json(POSITIONS_FILE, data)."""
     ensure_init()
     save_positions(data)
 
-def load_hypothesis_db_json(path, default=None):
+def load_hypothesis_db_json(path: str, default: Any = None) -> Any:
     """Drop-in for load_json(HYPOTHESIS_DB, ...)."""
     ensure_init()
     return load_hypotheses()
 
-def save_hypothesis_db_json(path, data):
+def save_hypothesis_db_json(path: str, data: Any) -> None:
     """Drop-in for save_json(HYPOTHESIS_DB, data)."""
     ensure_init()
     save_hypotheses(data)

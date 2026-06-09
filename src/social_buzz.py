@@ -11,6 +11,7 @@ Sources (by weight):
 
 Telegram removed: blocked on Russian IP, Telethon input() hangs process.
 """
+from __future__ import annotations
 import os
 import sys
 import json
@@ -48,7 +49,7 @@ def _get_cache() -> dict:
     return load_json(BUZZ_CACHE_FILE, {"entries": {}})
 
 
-def _save_cache(cache: dict):
+def _save_cache(cache: dict) -> None:
     save_json(BUZZ_CACHE_FILE, cache)
 
 
@@ -66,7 +67,7 @@ def _get_cached(slug: str) -> dict | None:
     return None
 
 
-def _set_cached(slug: str, result: dict):
+def _set_cached(slug: str, result: dict) -> None:
     cache = _get_cache()
     if not isinstance(cache, dict):
         cache = {"entries": {}}

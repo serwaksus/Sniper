@@ -9,6 +9,7 @@ Features:
 - Queue flush: run `python3 tg_sender.py --flush` to retry all pending
 - Thread-safe via file locking (uses utils.load_json/save_json)
 """
+from __future__ import annotations
 import os
 import sys
 import time
@@ -33,7 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _orig_getaddrinfo = socket.getaddrinfo
-def _patched_getaddrinfo(host, port, *args, **kwargs):
+def _patched_getaddrinfo(host: str, port: int, *args, **kwargs) -> list:
     if host == TG_API_HOST:
         results = _orig_getaddrinfo(TG_WORKING_IP, port, *args, **kwargs)
         return [results[0]] if results else _orig_getaddrinfo(host, port, *args, **kwargs)
@@ -41,7 +42,7 @@ def _patched_getaddrinfo(host, port, *args, **kwargs):
 socket.getaddrinfo = _patched_getaddrinfo
 
 
-def _get_credentials():
+def _get_credentials() -> tuple[str, str]:
     token = os.environ.get("TG_BOT_TOKEN", "")
     chat_id = os.environ.get("TG_CHAT_ID", "")
     if not token or not chat_id:
@@ -57,7 +58,7 @@ def _get_credentials():
     return token, chat_id
 
 
-def _send_once(token, chat_id, message, timeout=SEND_TIMEOUT):
+def _send_once(token: str, chat_id: str, message: str, timeout: int = SEND_TIMEOUT) -> bool:
     try:
         resp = requests.post(
             f"https://{TG_API_HOST}/bot{token}/sendMessage",
@@ -80,7 +81,7 @@ def _send_once(token, chat_id, message, timeout=SEND_TIMEOUT):
         return False
 
 
-def send_telegram(message, max_retries=3, queue_on_fail=True):
+def send_telegram(message: str, max_retries: int = 3, queue_on_fail: bool = True) -> bool:
     token, chat_id = _get_credentials()
     if not token or not chat_id:
         logger.warning("[TG] No credentials, skipping send")
@@ -103,7 +104,7 @@ def send_telegram(message, max_retries=3, queue_on_fail=True):
     return False
 
 
-def _enqueue(message):
+def _enqueue(message: str) -> None:
     lock_path = "/tmp/tg_queue.json.lock"
     with file_lock(lock_path):
         queue = load_json(QUEUE_FILE, [])
@@ -120,7 +121,7 @@ def _enqueue(message):
     logger.info(f"[TG-QUEUE] Queued message (queue size: {len(queue)})")
 
 
-def flush_queue(max_messages=10):
+def flush_queue(max_messages: int = 10) -> int:
     lock_path = "/tmp/tg_queue.json.lock"
     with file_lock(lock_path):
         queue = load_json(QUEUE_FILE, [])
@@ -163,7 +164,7 @@ def flush_queue(max_messages=10):
     return sent
 
 
-def get_queue_size():
+def get_queue_size() -> int:
     queue = load_json(QUEUE_FILE, [])
     return len(queue)
 

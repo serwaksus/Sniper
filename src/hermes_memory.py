@@ -5,6 +5,7 @@ Hermes Self-Improvement Memory Module.
 Tracks predictions, generates skills from outcomes, adapts likelihood ratios,
 and provides learned context for LLM prompts.
 """
+from __future__ import annotations
 import os
 import sys
 import logging
@@ -38,7 +39,7 @@ _MAX_PREDICTIONS = 500
 _MAX_RESOLVED = 200
 
 
-def _load_memory():
+def _load_memory() -> dict:
     data = load_json(MEMORY_FILE, _DEFAULT_MEMORY)
     if not isinstance(data, dict):
         data = dict(_DEFAULT_MEMORY)
@@ -47,7 +48,7 @@ def _load_memory():
     return data
 
 
-def _save_memory(data):
+def _save_memory(data: dict) -> None:
     if len(data.get("resolved", [])) > _MAX_RESOLVED:
         data["resolved"] = data["resolved"][-_MAX_RESOLVED:]
 
@@ -75,8 +76,7 @@ def _save_memory(data):
     save_json(MEMORY_FILE, data)
 
 
-def log_prediction(slug, question, p_bot, p_hermes, verdict, status,
-                   reason="", cluster="", news_category=""):
+def log_prediction(slug: str, question: str, p_bot: float, p_hermes: float, verdict: str, status: str, reason: str = "", cluster: str = "", news_category: str = "") -> None:
     with _memory_lock:
         m = _load_memory()
         m["predictions"][slug] = {
@@ -97,7 +97,7 @@ def log_prediction(slug, question, p_bot, p_hermes, verdict, status,
         _save_memory(m)
 
 
-def resolve_prediction(slug, actual_outcome):
+def resolve_prediction(slug: str, actual_outcome: str) -> None:
     with _memory_lock:
         m = _load_memory()
         pred = m["predictions"].pop(slug, None)
@@ -138,7 +138,7 @@ def resolve_prediction(slug, actual_outcome):
     )
 
 
-def _update_calibration(memory, entry):
+def _update_calibration(memory: dict, entry: dict) -> None:
     cal = memory["calibration"]
 
     for key, val in [
@@ -155,7 +155,7 @@ def _update_calibration(memory, entry):
             bucket["correct"] += 1
 
 
-def _update_adaptive_likelihood(memory, entry):
+def _update_adaptive_likelihood(memory: dict, entry: dict) -> None:
     al = memory.setdefault("adaptive_likelihood", {})
     cat = entry.get("news_category", "")
     if not cat:
@@ -170,7 +170,7 @@ def _update_adaptive_likelihood(memory, entry):
         bucket["yes_count"] += 1
 
 
-def get_adaptive_likelihoods(min_samples=5):
+def get_adaptive_likelihoods(min_samples: int = 5) -> dict[str, dict]:
     m = _load_memory()
     al = m.get("adaptive_likelihood", {})
     adapted = {}
@@ -183,7 +183,7 @@ def get_adaptive_likelihoods(min_samples=5):
     return adapted
 
 
-def generate_skills():
+def generate_skills() -> list[dict]:
     with _memory_lock:
         m = _load_memory()
         resolved = m.get("resolved", [])
@@ -317,7 +317,7 @@ def generate_skills():
     return skills
 
 
-def load_skills_for_prompt(max_skills=5):
+def load_skills_for_prompt(max_skills: int = 5) -> str:
     data = load_json(SKILLS_FILE, {"skills": []})
     skills = data.get("skills", [])
     if not skills:
@@ -332,7 +332,7 @@ def load_skills_for_prompt(max_skills=5):
     return "\n".join(lines)
 
 
-def get_calibration_summary():
+def get_calibration_summary() -> str:
     m = _load_memory()
     resolved = m.get("resolved", [])
     if not resolved:
@@ -361,7 +361,7 @@ def get_calibration_summary():
     return "\n".join(lines)
 
 
-def get_stats():
+def get_stats() -> dict:
     m = _load_memory()
     resolved = m.get("resolved", [])
     active = len(m.get("predictions", {}))

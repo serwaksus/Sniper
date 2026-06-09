@@ -1,9 +1,8 @@
 """End-to-end test: full trade lifecycle with mock exchange."""
-import json
 import os
 import sys
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 

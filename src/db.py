@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """SQLite storage layer for DOTM Sniper. Replaces JSON files for high-contention data."""
+from __future__ import annotations
 import json
 import os
 import sqlite3
@@ -7,7 +8,14 @@ import threading
 import time
 from typing import Any
 
+import logging
+
 from config import DB_PATH, POSITIONS_FILE, HYPOTHESIS_DB_FILE, SETTINGS_FILE
+
+logger = logging.getLogger(__name__)
+
+MIGRATIONS: list[tuple[int, str, str]] = [
+]
 
 _local = threading.local()
 
@@ -52,6 +60,28 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_hypotheses_resolved ON hypotheses(resolved);
     """)
     conn.commit()
+    run_migrations()
+
+
+def run_migrations() -> None:
+    """Run pending database migrations."""
+    conn = _get_conn()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS _migrations ("
+        "id INTEGER PRIMARY KEY, "
+        "name TEXT NOT NULL UNIQUE, "
+        "applied_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ")"
+    )
+    conn.commit()
+    applied = {row[0] for row in conn.execute("SELECT id FROM _migrations").fetchall()}
+    for mid, name, sql in sorted(MIGRATIONS):
+        if mid not in applied:
+            conn.executescript(sql)
+            conn.execute("INSERT INTO _migrations (id, name) VALUES (?, ?)", (mid, name))
+            conn.commit()
+            logger.info(f"[MIGRATION] Applied #{mid}: {name}")
+
 
 def load_positions() -> dict[str, dict[str, Any]]:
     """Load all positions as a dict (same format as positions.json)."""

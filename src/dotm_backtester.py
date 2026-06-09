@@ -16,6 +16,8 @@ Usage:
 
 Output: backtest_stats.json
 """
+from __future__ import annotations
+from typing import Any
 import json
 import os
 import sys
@@ -68,7 +70,7 @@ SMART_EXIT_SLIPPAGE = 0.015
 SMART_EXIT_NET = SMART_EXIT_PRICE - SMART_EXIT_SLIPPAGE  # 0.835
 
 
-def _simulate_tp_ladder(entry_price, high_price, resolution):
+def _simulate_tp_ladder(entry_price: float, high_price: float, resolution: str) -> tuple[float, list[dict]]:
     """
     Симулирует TP Ladder из v5.3.0:
     - 50% объема продается по $0.75 (если high_price >= 0.75)
@@ -132,7 +134,7 @@ _api_rate_lock = threading.RLock()
 _last_api_ts = 0.0
 
 
-def _normalize_keys(obj):
+def _normalize_keys(obj: Any) -> Any:
     """Recursively strip whitespace from dict keys and string values."""
     if isinstance(obj, dict):
         return {
@@ -146,7 +148,7 @@ def _normalize_keys(obj):
     return obj
 
 
-def _rate_limit_acquire():
+def _rate_limit_acquire() -> None:
     global _last_api_ts
     with _api_rate_lock:
         now = time.monotonic()
@@ -156,7 +158,7 @@ def _rate_limit_acquire():
         _last_api_ts = time.monotonic()
 
 
-def _fetch_active_dotm_markets_pm_trader(limit=200):
+def _fetch_active_dotm_markets_pm_trader(limit: int = 200) -> list[dict]:
     try:
         res = subprocess.run(
             ["pm-trader", "markets", "list", "--limit", str(limit)],
@@ -216,7 +218,7 @@ def _fetch_active_dotm_markets_pm_trader(limit=200):
         return []
 
 
-def _fetch_active_dotm_markets_gamma(limit=200):
+def _fetch_active_dotm_markets_gamma(limit: int = 200) -> list[dict]:
     markets = []
     offset = 0
     page_size = 100
@@ -305,7 +307,7 @@ def _fetch_active_dotm_markets_gamma(limit=200):
 GAMMA_API_MAX_PAGE = 100
 
 
-def _fetch_resolved_dotm_markets(limit=150):
+def _fetch_resolved_dotm_markets(limit: int = 150) -> list[dict]:
     markets = []
     offset = 0
     seen_slugs = set()
@@ -438,7 +440,7 @@ def _fetch_resolved_dotm_markets(limit=150):
     return markets[:limit]
 
 
-def backtest_analyze_single(market):
+def backtest_analyze_single(market: dict) -> dict:
     """
     Run the Composite Scoring pipeline on a single market.
     Returns analysis dict with p_model, signal_score, action, etc.
@@ -638,7 +640,7 @@ Rules:
     }
 
 
-def backtest_advisor_check(market, analysis):
+def backtest_advisor_check(market: dict, analysis: dict) -> tuple[bool, str]:
     question = market.get("question", "")
     p_model = analysis.get("p_model", 0)
     price = market.get("yes_price", 0)
@@ -704,7 +706,7 @@ Rules:
     return False, "UNKNOWN"
 
 
-def _parallel_analyze_markets(markets, label="BACKTEST"):
+def _parallel_analyze_markets(markets: list[dict], label: str = "BACKTEST") -> list[dict | None]:
     """
     Run backtest_analyze_single() in parallel using ThreadPoolExecutor.
     Returns list of (index, market, analysis_or_None) sorted by index.
@@ -734,7 +736,7 @@ def _parallel_analyze_markets(markets, label="BACKTEST"):
     return results
 
 
-def run_backtest_live(count=100, skip_advisor=False, use_calibrator=False):
+def run_backtest_live(count: int = 100, skip_advisor: bool = False, use_calibrator: bool = False) -> dict | None:
     """
     Default mode: Fetch closed+resolved DOTM markets, run analysis in parallel,
     compute Winrate and Brier Score immediately (resolutions are known).
@@ -958,7 +960,7 @@ def run_backtest_live(count=100, skip_advisor=False, use_calibrator=False):
     return _normalize_keys(load_json(BACKTEST_OUTPUT, {}))
 
 
-def run_backtest_live_active(count=100, skip_advisor=False):
+def run_backtest_live_active(count: int = 100, skip_advisor: bool = False) -> dict | None:
     """
     LIVE mode: Fetch active DOTM markets, run analysis in parallel, record predictions.
     Use --check later to resolve them.
@@ -1080,7 +1082,7 @@ def run_backtest_live_active(count=100, skip_advisor=False):
     return stats
 
 
-def run_backtest_sim(count=50, skip_advisor=False):
+def run_backtest_sim(count: int = 50, skip_advisor: bool = False) -> dict | None:
     """
     SIM mode: Fetch resolved markets, simulate DOTM prices, run analysis in parallel.
     Provides immediate Brier Score calibration.
@@ -1246,7 +1248,7 @@ def run_backtest_sim(count=50, skip_advisor=False):
     return stats
 
 
-def check_pending():
+def check_pending() -> None:
     stats = _normalize_keys(load_json(BACKTEST_OUTPUT, {}))
     if not stats or stats.get("mode") != "live":
         print("No pending live backtest found. Run --mode live first.")

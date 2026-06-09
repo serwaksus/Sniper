@@ -3,6 +3,7 @@
 Health Monitor — 23 checks covering full trading pipeline + infrastructure.
 Sends Telegram alert ONLY if issues found. Runs once per sniper cycle.
 """
+from __future__ import annotations
 import json
 import os
 import re
@@ -37,7 +38,7 @@ WINRATE_MIN_SAMPLE = 15
 EQUITY_FILE = EQUITY_CURVE_FILE
 
 
-def _load_state():
+def _load_state() -> dict:
     try:
         with open(HEALTH_STATE_FILE) as f:
             return json.load(f)
@@ -46,7 +47,7 @@ def _load_state():
         return {HEALTH_LAST_ALERTS: {}, HEALTH_LAST_CYCLE_START: None, HEALTH_LAST_EQUITY: None}
 
 
-def _save_state(state):
+def _save_state(state: dict) -> None:
     try:
         import tempfile
         with tempfile.NamedTemporaryFile("w", dir=os.path.dirname(HEALTH_STATE_FILE), delete=False) as f:
@@ -58,7 +59,7 @@ def _save_state(state):
         logger.warning(f"[HEALTH] save state failed: {e}")
 
 
-def _should_alert(state, alert_key):
+def _should_alert(state: dict, alert_key: str) -> bool:
     last = state.get(HEALTH_LAST_ALERTS, {}).get(alert_key, "")
     if not last:
         return True
@@ -69,11 +70,11 @@ def _should_alert(state, alert_key):
         return True
 
 
-def _mark_alerted(state, alert_key):
+def _mark_alerted(state: dict, alert_key: str) -> None:
     state.setdefault(HEALTH_LAST_ALERTS, {})[alert_key] = datetime.now().isoformat()
 
 
-def _read_recent_log(hours=24):
+def _read_recent_log(hours: int = 24) -> list[str]:
     try:
         cutoff = datetime.now() - timedelta(hours=hours)
         lines = []
@@ -92,11 +93,11 @@ def _read_recent_log(hours=24):
         return []
 
 
-def _read_last_hour_log():
+def _read_last_hour_log() -> list[str]:
     return _read_recent_log(hours=1)
 
 
-def _send_telegram(message):
+def _send_telegram(message: str) -> bool:
     try:
         from tg_sender import send_telegram
         return send_telegram(message, max_retries=2, queue_on_fail=True)
@@ -106,7 +107,7 @@ def _send_telegram(message):
 
 
 # ── Check 1: No trades ──────────────────────────────────────────
-def _check_no_trades(lines, state):
+def _check_no_trades(lines: list[str], state: dict) -> tuple[str, str] | None:
     trade_signals = sum(1 for line in lines if "=> BUY" in line)
     blocked = sum(1 for line in lines if "TRADE-BLOCKED" in line)
     executed = sum(1 for line in lines if "Bought:" in line and "Bought: 0" not in line)
@@ -130,7 +131,7 @@ def _check_no_trades(lines, state):
 
 
 # ── Check 2: Equity drawdown ────────────────────────────────────
-def _check_equity_drawdown(state):
+def _check_equity_drawdown(state: dict) -> tuple[str, str] | None:
     try:
         with open(EQUITY_FILE) as _f:
             data = json.load(_f)
@@ -164,7 +165,7 @@ def _check_equity_drawdown(state):
 
 
 # ── Check 3: Order health ───────────────────────────────────────
-def _check_order_health(state):
+def _check_order_health(state: dict) -> tuple[str, str] | None:
     try:
         res = subprocess.run(
             ["pm-trader", "orders", "list"],
@@ -212,7 +213,7 @@ def _check_order_health(state):
 
 
 # ── Check 4: API health ─────────────────────────────────────────
-def _check_api_health(lines, state):
+def _check_api_health(lines: list[str], state: dict) -> tuple[str, str] | None:
     cutoff = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     hour_lines = [line for line in lines if line[:19] >= cutoff]
     issues = []
@@ -235,7 +236,7 @@ def _check_api_health(lines, state):
 
 
 # ── Check 5: Cycle timing ───────────────────────────────────────
-def _check_cycle_timing(state):
+def _check_cycle_timing(state: dict) -> tuple[str, str] | None:
     now_iso = datetime.now().isoformat()
     last_start = state.get(HEALTH_LAST_CYCLE_START)
 
@@ -256,7 +257,7 @@ def _check_cycle_timing(state):
 
 
 # ── Check 6: Error spike ────────────────────────────────────────
-def _check_error_spike(state):
+def _check_error_spike(state: dict) -> tuple[str, str] | None:
     hour_lines = _read_last_hour_log()
     errors = sum(1 for line in hour_lines if " ERROR " in line or "Traceback" in line)
     if errors >= ERROR_SPIKE_PER_HOUR:
@@ -268,7 +269,7 @@ def _check_error_spike(state):
 
 
 # ── Check 7: LLM cost guard ─────────────────────────────────────
-def _check_llm_usage(state):
+def _check_llm_usage(state: dict) -> tuple[str, str] | None:
     hour_lines = _read_last_hour_log()
     llm_calls = sum(1 for line in hour_lines if "[ANALYSIS]" in line or "[BATCH]" in line or "[ADVISOR]" in line)
     signals = sum(1 for line in hour_lines if "=> BUY" in line)
@@ -280,7 +281,7 @@ def _check_llm_usage(state):
 
 
 # ── Check 8: Disk space ─────────────────────────────────────────
-def _check_disk_space(state):
+def _check_disk_space(state: dict) -> tuple[str, str] | None:
     issues = []
     try:
         usage = shutil.disk_usage("/")
@@ -311,7 +312,7 @@ def _check_disk_space(state):
 
 
 # ── Check 9: Hypothesis DB growth ───────────────────────────────
-def _check_hypothesis_db(state):
+def _check_hypothesis_db(state: dict) -> tuple[str, str] | None:
     try:
         db = hypotheses_db.load_all()
         hypotheses = db.get("hypotheses", [])
@@ -327,7 +328,7 @@ def _check_hypothesis_db(state):
 
 
 # ── Check 10: Winrate tracker ───────────────────────────────────
-def _check_winrate(state):
+def _check_winrate(state: dict) -> tuple[str, str] | None:
     try:
         db = hypotheses_db.load_all()
         resolved = [h for h in db.get("hypotheses", []) if h.get("resolved")]
@@ -347,7 +348,7 @@ def _check_winrate(state):
 
 
 # ── Calibration overfit ─────────────────────────────────────────
-def _check_calibration_overfit(state):
+def _check_calibration_overfit(state: dict) -> tuple[str, str] | None:
     try:
         with open(CALIBRATION_MODEL_FILE) as _f:
             model = json.load(_f)
@@ -370,7 +371,7 @@ def _check_calibration_overfit(state):
 
 
 # ── Cache anomalies ─────────────────────────────────────────────
-def _check_cache(state):
+def _check_cache(state: dict) -> tuple[str, str] | None:
     try:
         with open(PRICE_TRACKING_FILE) as _f:
             tracking = json.load(_f)
@@ -387,7 +388,7 @@ def _check_cache(state):
 
 
 # ── Check 13: Telegram reachability ────────────────────────────
-def _check_telegram(state):
+def _check_telegram(state: dict) -> tuple[str, str] | None:
     try:
         _src_dir = os.path.dirname(os.path.abspath(__file__))
         if _src_dir not in sys.path:
@@ -410,7 +411,7 @@ def _check_telegram(state):
 
 
 # ── Check 14: Process crash frequency ──────────────────────────
-def _check_crash_frequency(state):
+def _check_crash_frequency(state: dict) -> tuple[str, str] | None:
     count = 0
     for logf in [SNIPER_SCREEN_LOG, HERMES_SCREEN_LOG]:
         try:
@@ -427,7 +428,7 @@ def _check_crash_frequency(state):
 
 
 # ── Check 15: JSON file integrity ─────────────────────────────
-def _check_json_integrity(state):
+def _check_json_integrity(state: dict) -> tuple[str, str] | None:
     critical_files = {
         "equity_curve.json": EQUITY_FILE,
         "price_tracking.json": PRICE_TRACKING_FILE,
@@ -458,7 +459,7 @@ def _check_json_integrity(state):
 
 
 # ── Check 16: Cron health ─────────────────────────────────────
-def _check_cron_health(state):
+def _check_cron_health(state: dict) -> tuple[str, str] | None:
     stale = []
     cron_logs = {
         "report": REPORT_LOG,
@@ -483,7 +484,7 @@ def _check_cron_health(state):
 
 
 # ── Check 17: LLM API error rate ──────────────────────────────
-def _check_llm_error_rate(state):
+def _check_llm_error_rate(state: dict) -> tuple[str, str] | None:
     lines = _read_recent_log(hours=6)
     total = sum(1 for line in lines if "model=" in line and "messages" in line)
     errors = sum(1 for line in lines if "[ADVISOR] Empty response" in line
@@ -499,7 +500,7 @@ def _check_llm_error_rate(state):
 
 
 # ── Check 18: Screen session integrity ─────────────────────────
-def _check_screen_sessions(state):
+def _check_screen_sessions(state: dict) -> tuple[str, str] | None:
     issues = []
     for proc_name in ["dotm_sniper.py", "hermes_advisor.py"]:
         try:
@@ -538,7 +539,7 @@ def _check_screen_sessions(state):
 
 
 # ── Check 19: Disk inode usage ─────────────────────────────────
-def _check_disk_inodes(state):
+def _check_disk_inodes(state: dict) -> tuple[str, str] | None:
     try:
         res = subprocess.run(
             ["df", "-i", PROJECT_ROOT],
@@ -560,7 +561,7 @@ def _check_disk_inodes(state):
 
 
 # ── Check 20: pm-trader CLI health ─────────────────────────────
-def _check_pm_trader_health(state):
+def _check_pm_trader_health(state: dict) -> tuple[str, str] | None:
     try:
         start = datetime.now()
         res = subprocess.run(
@@ -590,7 +591,7 @@ def _check_pm_trader_health(state):
 _API_KEY_CACHE = {"ts": None, "issues": None}
 
 
-def _check_api_keys(state):
+def _check_api_keys(state: dict) -> tuple[str, str] | None:
     now = datetime.now()
     if _API_KEY_CACHE["ts"] is not None:
         try:
@@ -650,7 +651,7 @@ def _check_api_keys(state):
 
 
 # ── Check 22: Memory usage ─────────────────────────────────────
-def _check_memory(state):
+def _check_memory(state: dict) -> tuple[str, str] | None:
     issues = []
     for proc_name in ["dotm_sniper.py", "hermes_advisor.py"]:
         try:
@@ -677,7 +678,7 @@ def _check_memory(state):
 
 
 # ── Check 23: Log file size ─────────────────────────────────────
-def _check_log_size(state):
+def _check_log_size(state: dict) -> tuple[str, str] | None:
     MAX_LOG_MB = 50
     large = []
     log_paths = [
@@ -711,7 +712,7 @@ def _check_log_size(state):
     return None
 
 
-def _summarize_trading_activity(lines):
+def _summarize_trading_activity(lines: list[str]) -> str:
     signals = sum(1 for line in lines if "=> BUY" in line)
     blocked = sum(1 for line in lines if "TRADE-BLOCKED" in line)
     executed = sum(1 for line in lines if "Bought:" in line and "Bought: 0" not in line)
@@ -719,11 +720,11 @@ def _summarize_trading_activity(lines):
     return f"signals={signals} blocked={blocked} executed={executed} diverge_overrides={diverge_overrides}"
 
 
-def _summarize_no_trades(lines):
+def _summarize_no_trades(lines: list[str]) -> str:
     return _summarize_trading_activity(lines)
 
 
-def _summarize_equity(state):
+def _summarize_equity(state: dict) -> str:
     try:
         with open(EQUITY_FILE) as _f:
             data = json.load(_f)
@@ -741,7 +742,7 @@ def _summarize_equity(state):
     return "equity=data_unavailable"
 
 
-def _summarize_orders():
+def _summarize_orders() -> str:
     try:
         res = subprocess.run(
             ["pm-trader", "orders", "list"],
@@ -756,24 +757,24 @@ def _summarize_orders():
         return "orders=api_error"
 
 
-def _summarize_cycle(state):
+def _summarize_cycle(state: dict) -> str:
     last_cycle = state.get(HEALTH_LAST_CYCLE_START, "never")
     avg_time = state.get("avg_cycle_time", 0)
     return f"last={last_cycle} avg_cycle={avg_time:.0f}s"
 
 
-def _summarize_errors(state):
+def _summarize_errors(state: dict) -> str:
     errs = state.get("errors_last_hour", 0)
     return f"errors_1h={errs}"
 
 
-def _summarize_llm(state):
+def _summarize_llm(state: dict) -> str:
     cost = state.get("llm_cost_today", 0)
     calls = state.get("llm_calls_today", 0)
     return f"calls={calls} cost=${cost:.2f}"
 
 
-def _summarize_disk():
+def _summarize_disk() -> str:
     try:
         usage = shutil.disk_usage(PROJECT_ROOT)
         pct = usage.used / usage.total
@@ -783,7 +784,7 @@ def _summarize_disk():
         return "disk=unknown"
 
 
-def _summarize_hypotheses():
+def _summarize_hypotheses() -> str:
     try:
         db = hypotheses_db.load_all()
         hyps = db.get("hypotheses", [])
@@ -795,7 +796,7 @@ def _summarize_hypotheses():
         return "hypotheses=data_error"
 
 
-def _summarize_winrate():
+def _summarize_winrate() -> str:
     try:
         db = hypotheses_db.load_all()
         resolved = [h for h in db.get("hypotheses", []) if h.get("resolved")]
@@ -808,7 +809,7 @@ def _summarize_winrate():
         return "winrate=data_error"
 
 
-def _summarize_calib():
+def _summarize_calib() -> str:
     try:
         with open(CALIBRATION_MODEL_FILE) as _f:
             model = json.load(_f)
@@ -824,7 +825,7 @@ def _summarize_calib():
         return "calib=no_model"
 
 
-def _summarize_cache():
+def _summarize_cache() -> str:
     try:
         with open(PRICE_TRACKING_FILE) as _f:
             tracking = json.load(_f)
@@ -836,7 +837,7 @@ def _summarize_cache():
         return "cache=error"
 
 
-def _check_sqlite_integrity(state):
+def _check_sqlite_integrity(state: dict) -> tuple[str, str] | None:
     try:
         import db
         db.init_db()
@@ -857,7 +858,7 @@ def _check_sqlite_integrity(state):
                 f"• {str(e)[:100]}")
 
 
-def _check_trade_activity(state):
+def _check_trade_activity(state: dict) -> tuple[str, str] | None:
     try:
         import db as _db
         settings = _db.load_settings()
@@ -872,7 +873,7 @@ def _check_trade_activity(state):
         return None
 
 
-def run_health_check():
+def run_health_check() -> list[tuple[str, str]] | None:
     state = _load_state()
     lines = _read_recent_log(hours=24)
     alerts = []
@@ -980,7 +981,7 @@ def run_health_check():
     return alerts
 
 
-def run_hourly_report():
+def run_hourly_report() -> list[str]:
     """Run all 25 checks, send ONE aggregated Telegram message with all issues.
     Called by cron every hour. Ignores cooldown — always reports full status."""
     state = _load_state()

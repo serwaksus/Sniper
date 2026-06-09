@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Centralized hypothesis_db access — abstracts JSON vs SQLite storage."""
+from __future__ import annotations
 import sys
 import os
 from typing import Any

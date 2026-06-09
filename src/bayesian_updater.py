@@ -4,6 +4,7 @@ Bayesian posterior updater for DOTM Sniper.
 Maintains log-odds prior per position, updates with news likelihood ratios.
 Replaces expensive LLM calls with fast Bayesian computation.
 """
+from __future__ import annotations
 import os
 import sys
 import math
@@ -34,7 +35,7 @@ NEWS_LIKELIHOOD = {
 _ADAPTIVE_CACHE = {"data": None, "loaded_at": 0}
 
 
-def _get_effective_likelihoods():
+def _get_effective_likelihoods() -> dict:
     now = time.time()
     if _ADAPTIVE_CACHE["data"] and (now - _ADAPTIVE_CACHE["loaded_at"]) < 300:
         return _ADAPTIVE_CACHE["data"]
@@ -69,7 +70,7 @@ def _logodds_to_prob(lo: float) -> float:
     return 1.0 / (1.0 + math.exp(-lo))
 
 
-def init_posterior(slug: str, p_model: float, p_market: float):
+def init_posterior(slug: str, p_model: float, p_market: float) -> None:
     with _bayes_lock:
         state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
         if not isinstance(state, dict):
@@ -218,7 +219,7 @@ Category:"""
     return "neutral"
 
 
-def cleanup_slug(slug: str):
+def cleanup_slug(slug: str) -> None:
     with _bayes_lock:
         state = load_json(BAYESIAN_STATE_FILE, {"positions": {}})
         if not isinstance(state, dict):

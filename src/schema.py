@@ -1,6 +1,7 @@
 """Single source of truth for JSON keys shared across modules."""
 
 # --- equity_curve.json ---
+from __future__ import annotations
 EQUITY_TIMESTAMP = "timestamp"
 EQUITY_CASH = "cash"
 EQUITY_POSITIONS_VALUE = "positions_value"

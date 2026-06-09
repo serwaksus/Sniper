@@ -4,16 +4,12 @@ Tests for dotm_sniper.py state invariants and position management.
 """
 import unittest
 import sys
-import json
-import tempfile
-import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from dotm_sniper import (
     repair_positions_file,
 )
-from config import POSITIONS_FILE
 
 
 class TestRepairPositionsFile(unittest.TestCase):

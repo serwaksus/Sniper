@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 import subprocess
 import json
 import os
@@ -74,7 +75,7 @@ class TelegramReporter:
 
     def alert_new_position(self, market_slug: str, question: str, entry_price: float,
                           amount: float, metaculus_prob: float | None = None,
-                          factors: list[dict] | None = None, reasoning: str | None = None):
+                          factors: list[dict] | None = None, reasoning: str | None = None) -> None:
         msg = "🚨 <b>New Position</b>\n\n"
         msg += f"📌 {html.escape(str(question[:55]))}...\n\n"
         msg += f"💰 Entry: <b>${entry_price:.3f}</b>\n"
@@ -100,34 +101,34 @@ class TelegramReporter:
 
         self._send(msg)
 
-    def alert_take_profit(self, market_slug: str, question: str, pnl_pct: float, pnl_abs: float):
+    def alert_take_profit(self, market_slug: str, question: str, pnl_pct: float, pnl_abs: float) -> None:
         msg = "✅ <b>Take Profit</b>\n\n"
         msg += f"📌 {html.escape(str(question[:50]))}...\n\n"
         msg += f"📈 P&L: <b>+{pnl_pct:.1f}%</b> (${pnl_abs:.2f})\n"
         self._send(msg)
 
-    def alert_stop_loss(self, market_slug: str, question: str, pnl_pct: float, pnl_abs: float):
+    def alert_stop_loss(self, market_slug: str, question: str, pnl_pct: float, pnl_abs: float) -> None:
         msg = "❌ <b>Stop Loss</b>\n\n"
         msg += f"📌 {html.escape(str(question[:50]))}...\n\n"
         msg += f"📉 P&L: <b>{pnl_pct:.1f}%</b> (${pnl_abs:.2f})\n"
         self._send(msg)
 
     def alert_convergence(self, market_slug: str, question: str, pnl_pct: float,
-                          pnl_abs: float, convergence_ratio: float):
+                          pnl_abs: float, convergence_ratio: float) -> None:
         msg = "🎯 <b>Gap Convergence</b> (edge captured)\n\n"
         msg += f"📌 {html.escape(str(question[:50]))}...\n\n"
         msg += f"📈 P&L: <b>+{pnl_pct:.1f}%</b> (${pnl_abs:.2f})\n"
         msg += f"📊 Convergence: {convergence_ratio:.0%}\n"
         self._send(msg)
 
-    def alert_news_blocked(self, market_slug: str, question: str, reason: str):
+    def alert_news_blocked(self, market_slug: str, question: str, reason: str) -> None:
         msg = "🚨 <b>Trade Blocked by News API</b>\n\n"
         msg += f"📌 {html.escape(str(question[:50]))}...\n\n"
         msg += f"⚠️ Reason: {html.escape(str(reason))}\n"
         self._send(msg)
 
     def send_daily_report(self, balance_data: dict[str, Any], portfolio: list[dict[str, Any]],
-                         history_summary: dict[str, Any], top_markets: list[dict[str, Any]]):
+                         history_summary: dict[str, Any], top_markets: list[dict[str, Any]]) -> None:
         import pytz
         msk_tz = pytz.timezone("Europe/Moscow")
         now_msk = datetime.now(msk_tz)
@@ -169,7 +170,7 @@ class TelegramReporter:
 from order_manager import get_balance, get_portfolio
 
 
-def get_markets():
+def get_markets() -> list[dict]:
     try:
         res = subprocess.run(["pm-trader", "markets", "list", "--limit", "5"],
                             capture_output=True, text=True, timeout=20)
@@ -180,7 +181,7 @@ def get_markets():
         return []
 
 
-def load_history():
+def load_history() -> dict:
     HISTORY_FILE = TRADES_HISTORY_FILE
     if os.path.exists(HISTORY_FILE):
         try:
@@ -192,7 +193,7 @@ def load_history():
     return {"trades": [], "summary": {"total_trades": 0, "wins": 0, "losses": 0, "total_pnl": 0}}
 
 
-def main():
+def main() -> None:
     force = "--force" in sys.argv
     no_telegram = "--no-telegram" in sys.argv
     import pytz
