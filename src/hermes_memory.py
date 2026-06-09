@@ -15,9 +15,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
 import positions_db
-
-MEMORY_FILE = "/root/dotm-sniper/hermes_memory.json"
-SKILLS_FILE = "/root/dotm-sniper/hermes_skills.json"
+from config import HERMES_MEMORY_FILE as MEMORY_FILE, HERMES_SKILLS_FILE as SKILLS_FILE
 
 logger = logging.getLogger(__name__)
 

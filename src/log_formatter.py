@@ -15,6 +15,7 @@ Enable JSON globally via environment:
 import json
 import logging
 import os
+from config import sanitize
 
 
 class StructuredFormatter(logging.Formatter):
@@ -23,15 +24,19 @@ class StructuredFormatter(logging.Formatter):
         self.json_mode = json_mode or os.environ.get("LOG_FORMAT") == "json"
 
     def format(self, record):
+        record.msg = sanitize(str(record.msg))
         if not self.json_mode:
-            return super().format(record)
+            result = super().format(record)
+            if record.exc_info and record.exc_text:
+                result = result.replace(record.exc_text, sanitize(record.exc_text))
+            return result
 
         log_entry = {
             "ts": self.formatTime(record, self.default_time_format),
             "level": record.levelname,
             "module": record.module,
-            "msg": record.getMessage(),
+            "msg": sanitize(record.getMessage()),
         }
         if record.exc_info and record.exc_info[1]:
-            log_entry["error"] = str(record.exc_info[1])
+            log_entry["error"] = sanitize(str(record.exc_info[1]))
         return json.dumps(log_entry, ensure_ascii=False)

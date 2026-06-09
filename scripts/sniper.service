@@ -18,8 +18,9 @@ WorkingDirectory=/root/dotm-sniper
 ExecStart=/usr/bin/python3 src/dotm_sniper.py
 Restart=on-failure
 RestartSec=30
-StandardOutput=append:/root/dotm-sniper/logs/sniper_stdout.log
-StandardError=append:/root/dotm-sniper/logs/sniper_stderr.log
+StandardOutput=journal
+StandardError=journal
+Environment=LOG_FORMAT=json
 EnvironmentFile=/root/dotm-sniper/.env
 
 [Install]

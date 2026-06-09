@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Any
 
-DB_PATH = "/root/dotm-sniper/sniper.db"
+from config import DB_PATH, POSITIONS_FILE, HYPOTHESIS_DB_FILE, SETTINGS_FILE
 
 _local = threading.local()
 
@@ -262,9 +262,9 @@ def auto_migrate() -> None:
     """One-time migration from JSON files to SQLite. Called at startup."""
     init_db()
 
-    positions_json = "/root/dotm-sniper/positions.json"
-    hypothesis_json = "/root/dotm-sniper/hypothesis_db.json"
-    settings_json = "/root/dotm-sniper/bot_settings.json"
+    positions_json = POSITIONS_FILE
+    hypothesis_json = HYPOTHESIS_DB_FILE
+    settings_json = SETTINGS_FILE
 
     if count_positions() == 0 and os.path.exists(positions_json):
         try:

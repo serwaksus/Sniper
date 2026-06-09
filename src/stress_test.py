@@ -13,11 +13,6 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from schema import HYP_DB_RESOLVED
 
-TRADES_JOURNAL = "/root/dotm-sniper/trades_journal.json"
-EQUITY_FILE = "/root/dotm-sniper/equity_curve.json"
-HYPOTHESIS_DB = "/root/dotm-sniper/hypothesis_db.json"
-CALIBRATION_LOG = "/root/dotm-sniper/calibration_log.json"
-
 logger = logging.getLogger(__name__)
 
 

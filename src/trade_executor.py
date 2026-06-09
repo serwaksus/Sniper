@@ -31,6 +31,11 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
     """Execute trade with advisor pre-check. Returns True if successful."""
     slug = market.get("slug", "")
 
+    from sell_executor import check_portfolio_drawdown
+    if check_portfolio_drawdown():
+        logger.warning(f"[TRADE] Portfolio drawdown stop active, skipping {slug[:60]}")
+        return False
+
     existing = positions_db.get(slug)
     if existing is not None:
         logger.info(f"[TRADE] {slug[:60]} already tracked, skipping")
@@ -99,8 +104,12 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
         POS_SHARES: shares,
     })
 
+    with contextlib.suppress(Exception):
+        from bayesian_updater import init_posterior
+        init_posterior(slug, analysis.get("p_model", market["price"] * 2), market["price"])
+
     if shares > 0:
-        ladder_results = _place_tp_ladder(market["slug"], market["outcome"], shares)
+        ladder_results = _place_tp_ladder(market["slug"], market["outcome"], shares, entry_price=actual_price)
         for price, shares_placed, ok, _method in ladder_results:
             if ok:
                 print(f"   🎯  TP rung placed @${price:.2f} ({shares_placed} shares)")

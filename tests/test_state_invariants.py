@@ -12,8 +12,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from dotm_sniper import (
     repair_positions_file,
-    POSITIONS_FILE,
 )
+from config import POSITIONS_FILE
 
 
 class TestRepairPositionsFile(unittest.TestCase):

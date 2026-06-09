@@ -42,9 +42,10 @@ from dotm_sniper import (
 )
 
 from utils import load_env_file
+from config import SNIPER_LOG, BACKTEST_STATS_FILE as BACKTEST_OUTPUT
 load_env_file()
 
-LOG_FILE = "/root/dotm-sniper/sniper.log"
+LOG_FILE = SNIPER_LOG
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -57,8 +58,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 GAMMA_API = "https://gamma-api.polymarket.com/markets"
-BACKTEST_OUTPUT = "/root/dotm-sniper/backtest_stats.json"
-SOURCE_CACHE_FILE = "/root/dotm-sniper/source_cache.json"
 
 DOTM_PRICE_MIN = 0.01
 DOTM_PRICE_MAX = 0.15
@@ -189,7 +188,8 @@ def _fetch_active_dotm_markets_pm_trader(limit=200):
                         try:
                             end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
                             ttl_hours = max(0, (end - now).total_seconds() / 3600)
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"[dotm_backtester] {type(e).__name__}: {e}")
                             pass
 
                     candidates.append({

@@ -9,6 +9,7 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
 from schema import HYP_TP_LIMIT_PLACED
+from config import SLIPPAGE_LOG_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,6 @@ MAX_SPREAD_PCT = 0.40
 LIMIT_SPREAD_THRESHOLD = 0.03
 LIMIT_PRICE_BUFFER = 0.005
 LIMIT_MAX_ATTEMPTS = 3
-SLIPPAGE_LOG_FILE = "/root/dotm-sniper/logs/slippage.json"
 
 
 def get_order_book(slug: str) -> dict[str, float | None]:
@@ -34,7 +34,8 @@ def get_order_book(slug: str) -> dict[str, float | None]:
         else:
             mid_price = best_ask or best_bid
         return {"best_bid": best_bid, "best_ask": best_ask, "mid_price": mid_price}
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[order_manager] {type(e).__name__}: {e}")
         return {"best_bid": None, "best_ask": None, "mid_price": None}
 
 def get_best_ask(slug: str) -> float | None:
@@ -48,7 +49,8 @@ def get_balance() -> dict[str, Any] | None:
             logger.error(f"[SNIPER] pm-trader balance failed: rc={res.returncode}")
             return None
         return json.loads(res.stdout).get("data", {})
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[order_manager] {type(e).__name__}: {e}")
         return None
 
 def get_portfolio() -> list[dict[str, Any]] | None:
@@ -59,7 +61,8 @@ def get_portfolio() -> list[dict[str, Any]] | None:
             return None
         data = json.loads(res.stdout).get("data", [])
         return [p for p in data if float(p.get("shares", 0)) > 0.001]
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[order_manager] {type(e).__name__}: {e}")
         return None
 
 def buy(market: dict[str, Any], amount: float) -> bool:
@@ -121,6 +124,7 @@ def buy(market: dict[str, Any], amount: float) -> bool:
             print(f"  ❌ {result}")
             return False
     except Exception as e:
+        logger.debug(f"[order_manager] {type(e).__name__}: {e}")
         print(f"  ❌ {e}")
         return False
 
@@ -156,14 +160,25 @@ def _place_tp_limit_order_single(slug: str, outcome: str, shares: float, price: 
     return False, "tp_limit_failed"
 
 
-def _place_tp_ladder(slug: str, outcome: str, total_shares: float) -> list[tuple[float, float, bool, str]]:
-    """v5.3.0 TP Ladder: 50% @$0.75, 30% @$0.85, 20% hold to expiry"""
+def _place_tp_ladder(slug: str, outcome: str, total_shares: float, entry_price: float = 0) -> list[tuple[float, float, bool, str]]:
+    """v5.4.0 TP Ladder: entry-price-based targets (2x and 3x), capped at 0.95"""
     existing = _get_open_tp_orders(slug)
     if existing:
         existing_prices = {o.get("limit_price") for o in existing}
         logger.info(f"[TP-LADDER] {slug[:40]}... {len(existing)} existing TP orders (prices={existing_prices}), skipping duplicate placement")
         return [(float(o.get("limit_price", 0)), float(o.get("amount", 0)), True, "existing") for o in existing]
-    ladder = [(0.50, 0.75), (0.30, 0.85)]
+
+    if entry_price <= 0:
+        entry_price = 0.10
+
+    rung1_price = min(entry_price * 2, 0.95)
+    rung2_price = min(entry_price * 3, 0.95)
+
+    if rung1_price >= 0.95:
+        ladder = [(1.0, 0.90)]
+    else:
+        ladder = [(0.50, rung1_price), (0.50, rung2_price)]
+
     results: list[tuple[float, float, bool, str]] = []
     allocated = 0.0
     for pct, price in ladder:
@@ -173,7 +188,7 @@ def _place_tp_ladder(slug: str, outcome: str, total_shares: float) -> list[tuple
             if allocated < total_shares:
                 shares = int(total_shares - allocated)
             if shares * price < 5.0:
-                single_price = round(min(0.85, price * 1.5), 2)
+                single_price = round(min(0.95, price * 1.5), 2)
                 single_shares = max(1, round(total_shares))
                 ok, m = _place_limit_sell(slug, outcome, single_shares, single_price)
                 return [(single_price, float(single_shares), ok, m)] if ok else []
@@ -190,7 +205,8 @@ def _get_open_tp_orders(slug: str) -> list[dict[str, Any]]:
         data = json.loads(res.stdout) if res.stdout else {}
         orders = data.get("data", []) if isinstance(data.get("data"), list) else []
         return [o for o in orders if o.get("market_slug") == slug and o.get("side") == "sell" and o.get("status") == "pending"]
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[order_manager] {type(e).__name__}: {e}")
         return []
 
 

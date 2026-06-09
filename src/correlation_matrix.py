@@ -12,10 +12,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
-
-PRICE_HISTORY_FILE = "/root/dotm-sniper/price_history.json"
-CORRELATION_FILE = "/root/dotm-sniper/correlation_matrix.json"
-POSITIONS_FILE = "/root/dotm-sniper/positions.json"
+from config import PRICE_HISTORY_FILE, CORRELATION_FILE, POSITIONS_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +45,8 @@ def _get_price_series(slug: str, min_points: int = 5) -> list[float]:
         if len(slug_data) < min_points:
             return []
         return [e["p"] for e in slug_data if "p" in e]
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[correlation_matrix] {type(e).__name__}: {e}")
         return []
 
 

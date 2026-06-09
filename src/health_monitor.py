@@ -13,6 +13,12 @@ import shutil
 from datetime import datetime, timedelta
 import positions_db
 import hypotheses_db
+from config import (
+    PROJECT_ROOT, HEALTH_STATE_FILE, SNIPER_LOG, PRICE_TRACKING_FILE, POSITIONS_FILE,
+    CALIBRATION_MODEL_FILE, EQUITY_CURVE_FILE,
+    SNIPER_SCREEN_LOG, HERMES_SCREEN_LOG, REPORT_LOG, EQUITY_TRACKER_LOG,
+    ADVISOR_CRON_LOG, HERMES_LOG, HEALTH_HOURLY_LOG,
+)
 from schema import (
     EQUITY_CASH, EQUITY_NUM_POSITIONS, EQUITY_POSITIONS_VALUE,
     EQUITY_SNAPSHOTS, EQUITY_TIMESTAMP, EQUITY_TOTAL, EQUITY_UNREALIZED_PNL,
@@ -21,14 +27,6 @@ from schema import (
 
 logger = logging.getLogger(__name__)
 
-HEALTH_STATE_FILE = "/root/dotm-sniper/health_state.json"
-SNIPER_LOG = "/root/dotm-sniper/logs/sniper.log"
-PRICE_TRACKING_FILE = "/root/dotm-sniper/price_tracking.json"
-POSITIONS_FILE = "/root/dotm-sniper/positions.json"
-CALIBRATION_MODEL_FILE = "/root/dotm-sniper/calibration_model.json"
-EQUITY_FILE = "/root/dotm-sniper/equity_curve.json"
-HYPOTHESIS_DB_FILE = "/root/dotm-sniper/hypothesis_db.json"
-
 ALERT_COOLDOWN_HOURS = 6
 EQUITY_DRAWDOWN_PCT = 0.10
 CYCLE_MAX_MINUTES = 15
@@ -36,13 +34,15 @@ ERROR_SPIKE_PER_HOUR = 5
 LLM_MAX_PER_HOUR = 60
 WINRATE_MIN = 0.15
 WINRATE_MIN_SAMPLE = 15
+EQUITY_FILE = EQUITY_CURVE_FILE
 
 
 def _load_state():
     try:
         with open(HEALTH_STATE_FILE) as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return {HEALTH_LAST_ALERTS: {}, HEALTH_LAST_CYCLE_START: None, HEALTH_LAST_EQUITY: None}
 
 
@@ -64,7 +64,8 @@ def _should_alert(state, alert_key):
         return True
     try:
         return datetime.now() - datetime.fromisoformat(last) > timedelta(hours=ALERT_COOLDOWN_HOURS)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return True
 
 
@@ -86,7 +87,8 @@ def _read_recent_log(hours=24):
                     if lines:
                         lines.append(line)
         return lines
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return []
 
 
@@ -143,7 +145,8 @@ def _check_equity_drawdown(state):
                 if datetime.fromisoformat(s[EQUITY_TIMESTAMP]) >= cutoff:
                     past_eq = s.get(EQUITY_TOTAL, 0)
                     break
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
                 continue
         if past_eq is None or past_eq <= 0:
             return None
@@ -154,7 +157,8 @@ def _check_equity_drawdown(state):
                     f"• 24h ago: ${past_eq:.2f} → now: ${now_eq:.2f}\n"
                     f"• Drop: ${past_eq - now_eq:.2f}")
         state[HEALTH_LAST_EQUITY] = now_eq
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
     return None
 
@@ -168,7 +172,8 @@ def _check_order_health(state):
         )
         data = json.loads(res.stdout) if res.stdout else {}
         orders = data.get("data", []) if isinstance(data.get("data"), list) else []
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "ORDERS_API", "⚠️ <b>pm-trader orders list failed</b>\n• Cannot check order health"
 
     issues = []
@@ -186,7 +191,8 @@ def _check_order_health(state):
 
     try:
         pos_slugs = set(positions_db.load_all().keys())
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pos_slugs = set()
 
     orphaned = [o for o in orders if o.get("status") == "pending"
@@ -243,7 +249,8 @@ def _check_cycle_timing(state):
             return ("CYCLE_SLOW",
                     f"⏱️ <b>Slow cycle: {elapsed:.0f} min</b>\n"
                     f"• Expected <{CYCLE_MAX_MINUTES}min. Bot may be hanging on LLM/Telegram timeout")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
     return None
 
@@ -280,19 +287,22 @@ def _check_disk_space(state):
         pct = usage.used / usage.total
         if pct > 0.90:
             issues.append(f"/: {pct:.0%} full ({usage.free // 1024**3}GB free)")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
     try:
         log_size = os.path.getsize(SNIPER_LOG) / 1024**2
         if log_size > 200:
             issues.append(f"sniper.log: {log_size:.0f}MB — consider rotation")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
     try:
         tmp_files = sum(1 for _ in os.listdir("/tmp") if _.startswith("dotm_telegram"))
         if tmp_files > 5:
             issues.append(f"{tmp_files} telegram session files in /tmp")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
 
     if not issues:
@@ -310,7 +320,8 @@ def _check_hypothesis_db(state):
             return ("HYP_DB",
                     f"📚 <b>Hypothesis DB: {len(unresolved)} unresolved</b>\n"
                     f"• Consider cleanup — stale entries slowing lookups")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
     return None
 
@@ -329,7 +340,8 @@ def _check_winrate(state):
             return ("LOW_WINRATE",
                     f"📊 <b>Low winrate: {wins}/{len(recent)}={wr:.0%}</b> (min {WINRATE_MIN:.0%})\n"
                     f"• Strategy may need adjustment — check recent losses")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
     return None
 
@@ -339,7 +351,8 @@ def _check_calibration_overfit(state):
     try:
         with open(CALIBRATION_MODEL_FILE) as _f:
             model = json.load(_f)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return None
     issues = []
     for cluster, data in model.items():
@@ -361,7 +374,8 @@ def _check_cache(state):
     try:
         with open(PRICE_TRACKING_FILE) as _f:
             tracking = json.load(_f)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return None
     cutoff = datetime.now() - timedelta(hours=48)
     high = sum(1 for v in tracking.values()
@@ -390,6 +404,7 @@ def _check_telegram(state):
         if not resp.ok:
             return "TG_API_FAIL", f"📡 <b>Telegram API error</b>\n• getMe returned {resp.status_code}"
     except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "TG_UNREACHABLE", f"📡 <b>Telegram unreachable</b>\n• {str(e)[:100]}"
     return None
 
@@ -397,11 +412,12 @@ def _check_telegram(state):
 # ── Check 14: Process crash frequency ──────────────────────────
 def _check_crash_frequency(state):
     count = 0
-    for logf in ["/root/dotm-sniper/logs/sniper_screen.log", "/root/dotm-sniper/logs/hermes_screen.log"]:
+    for logf in [SNIPER_SCREEN_LOG, HERMES_SCREEN_LOG]:
         try:
             with open(logf) as f:
                 count += sum(1 for line in f if "Traceback" in line)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             continue
     if count >= 3:
         return ("CRASH_FREQ",
@@ -426,11 +442,13 @@ def _check_json_integrity(state):
         except json.JSONDecodeError as e:
             broken.append(f"{name}: CORRUPT ({str(e)[:50]})")
         except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             broken.append(f"{name}: ERROR ({str(e)[:50]})")
     try:
         if not positions_db.load_all() and not os.path.exists(POSITIONS_FILE):
             broken.append("positions.json: MISSING (and DB empty)")
     except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         broken.append(f"positions DB: ERROR ({str(e)[:50]})")
     if broken:
         return ("JSON_INTEGRITY",
@@ -443,9 +461,9 @@ def _check_json_integrity(state):
 def _check_cron_health(state):
     stale = []
     cron_logs = {
-        "report": "/root/dotm-sniper/logs/report.log",
-        "equity_tracker": "/root/dotm-sniper/logs/equity_tracker.log",
-        "advisor_cron": "/root/dotm-sniper/logs/advisor_cron.log",
+        "report": REPORT_LOG,
+        "equity_tracker": EQUITY_TRACKER_LOG,
+        "advisor_cron": ADVISOR_CRON_LOG,
     }
     cutoff = datetime.now() - timedelta(hours=3)
     for name, path in cron_logs.items():
@@ -454,7 +472,8 @@ def _check_cron_health(state):
             if mtime < cutoff:
                 hours_stale = (datetime.now() - mtime).total_seconds() / 3600
                 stale.append(f"{name}: last update {hours_stale:.0f}h ago")
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             stale.append(f"{name}: log file missing")
     if stale:
         return ("CRON_STALE",
@@ -496,6 +515,7 @@ def _check_screen_sessions(state):
             elif count > 1:
                 issues.append(f"{proc_name}: {count} instances (possible fork)")
         except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             issues.append(f"{proc_name}: check failed ({str(e)[:50]})")
 
     try:
@@ -506,7 +526,8 @@ def _check_screen_sessions(state):
         sockets = [line for line in res.stdout.split("\n") if "Detached" in line or "Attached" in line]
         if len(sockets) < 2:
             issues.append(f"screen sessions: only {len(sockets)} found (need 2)")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
 
     if issues:
@@ -520,7 +541,7 @@ def _check_screen_sessions(state):
 def _check_disk_inodes(state):
     try:
         res = subprocess.run(
-            ["df", "-i", "/root/dotm-sniper"],
+            ["df", "-i", PROJECT_ROOT],
             capture_output=True, text=True, timeout=5, start_new_session=True
         )
         lines_l = res.stdout.strip().split("\n")
@@ -532,7 +553,8 @@ def _check_disk_inodes(state):
                     return ("INODE_USAGE",
                             f"💾 <b>Inode usage: {pct}%</b>\n"
                             f"• Clean up log files to prevent system crash")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
     return None
 
@@ -559,6 +581,7 @@ def _check_pm_trader_health(state):
     except FileNotFoundError:
         return "PM_TRADER_MISSING", "🔧 <b>pm-trader not found</b>\n• Check PATH or installation"
     except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "PM_TRADER_ERROR", f"🔧 <b>pm-trader error</b>\n• {str(e)[:100]}"
     return None
 
@@ -577,7 +600,8 @@ def _check_api_keys(state):
                             "🔑 <b>API key issues</b>\n" +
                             "\n".join(f"• {i}" for i in _API_KEY_CACHE["issues"]))
                 return None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             pass
 
     issues = []
@@ -612,6 +636,7 @@ def _check_api_keys(state):
             elif resp.status_code == 429:
                 issues.append("DeepSeek: 429 Rate Limited")
         except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             issues.append(f"DeepSeek: unreachable ({str(e)[:60]})")
 
     _API_KEY_CACHE["ts"] = now
@@ -641,7 +666,8 @@ def _check_memory(state):
                         if rss_mb > 500:
                             issues.append(f"{proc_name}: {rss_mb:.0f}MB RSS (>500MB)")
                         break
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             pass
     if issues:
         return ("MEMORY",
@@ -655,12 +681,12 @@ def _check_log_size(state):
     MAX_LOG_MB = 50
     large = []
     log_paths = [
-        "/root/dotm-sniper/logs/sniper.log",
-        "/root/dotm-sniper/logs/report.log",
-        "/root/dotm-sniper/logs/equity_tracker.log",
-        "/root/dotm-sniper/logs/advisor_cron.log",
-        "/root/dotm-sniper/logs/hermes.log",
-        "/root/dotm-sniper/logs/health_hourly.log",
+        SNIPER_LOG,
+        REPORT_LOG,
+        EQUITY_TRACKER_LOG,
+        ADVISOR_CRON_LOG,
+        HERMES_LOG,
+        HEALTH_HOURLY_LOG,
     ]
     for path in log_paths:
         try:
@@ -672,9 +698,11 @@ def _check_log_size(state):
                     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
                     from utils import rotate_log_if_needed
                     rotate_log_if_needed(path)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
                     pass
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             continue
     if large:
         return ("LOG_SIZE",
@@ -707,7 +735,8 @@ def _summarize_equity(state):
             pnl = snaps[-1].get(EQUITY_UNREALIZED_PNL, 0)
             n_pos = snaps[-1].get(EQUITY_NUM_POSITIONS, 0)
             return f"equity=${eq:.2f} cash=${cash:.2f} pos=${pos:.2f} pnl={pnl:+.2f} positions={n_pos}"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         pass
     return "equity=data_unavailable"
 
@@ -722,7 +751,8 @@ def _summarize_orders():
         orders = data.get("data", []) if isinstance(data.get("data"), list) else []
         pending = sum(1 for o in orders if o.get("status") == "pending")
         return f"pending_orders={pending}"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "orders=api_error"
 
 
@@ -745,10 +775,11 @@ def _summarize_llm(state):
 
 def _summarize_disk():
     try:
-        usage = shutil.disk_usage("/root/dotm-sniper")
+        usage = shutil.disk_usage(PROJECT_ROOT)
         pct = usage.used / usage.total
         return f"used={pct:.0%} free={usage.free // (1024**3)}GB"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "disk=unknown"
 
 
@@ -759,7 +790,8 @@ def _summarize_hypotheses():
         open_h = sum(1 for h in hyps if not h.get("resolved"))
         resolved = sum(1 for h in hyps if h.get("resolved"))
         return f"open={open_h} resolved={resolved}"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "hypotheses=data_error"
 
 
@@ -771,7 +803,8 @@ def _summarize_winrate():
         total = len(resolved)
         wr = wins / total if total else 0
         return f"resolved={total} wins={wins} winrate={wr:.0%}"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "winrate=data_error"
 
 
@@ -786,7 +819,8 @@ def _summarize_calib():
             if y and x:
                 clusters.append(f"{c}:p>{x[-1]:.0%}->{max(y):.0%}")
         return f"clusters=[{', '.join(clusters)}]"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "calib=no_model"
 
 
@@ -797,7 +831,8 @@ def _summarize_cache():
         total = len(tracking)
         high = sum(1 for v in tracking.values() if v.get("p_model", 0) >= 0.85)
         return f"tracked={total} high_p={high}"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return "cache=error"
 
 
@@ -816,6 +851,7 @@ def _check_sqlite_integrity(state):
         logger.info(f"[SQLITE] integrity=ok positions={pos_count} hypotheses={hyp_count}")
         return None
     except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return ("SQLITE_ERROR",
                 f"🗄️ <b>SQLite error</b>\n"
                 f"• {str(e)[:100]}")
@@ -831,7 +867,8 @@ def _check_trade_activity(state):
                     f"💤 <b>No trades for {no_trade_cycles} cycles</b>\n"
                     f"• Bot alive but not evaluating trades — check signal pipeline")
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return None
 
 
@@ -912,7 +949,8 @@ def run_health_check():
         summary = ""
         try:
             summary = summaries[i]() if i < len(summaries) else ""
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
             summary = "summary_error"
 
         try:

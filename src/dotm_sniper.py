@@ -12,7 +12,6 @@ v5.3.0 Changelog:
 import subprocess
 import json
 import time
-import re
 import os
 import sys
 import logging
@@ -24,10 +23,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from log_formatter import StructuredFormatter
 from dotm_report import TelegramReporter
 
+from config import (
+    PID_FILE, SNIPER_LOG as LOG_FILE, PRICE_TRACKING_FILE,
+    DAILY_STATS_FILE, CURRENT_STATUS_FILE,
+    MIN_P_MODEL, MIN_CONFIDENCE, BURN_IN_TRADES,
+)
+
 import positions_db
 import hypotheses_db
 from news_scanner import check_market_news
-from utils import load_json, save_json, check_and_write_pid, cleanup_pid_file
+from utils import load_json, save_json, check_and_write_pid, cleanup_pid_file, load_env_file, validate_env_vars
 from equity_tracker import log_equity_snapshot
 from correlation_matrix import check_correlation_limit
 from db import load_settings as _db_load_settings, save_settings as _db_save_settings
@@ -46,11 +51,7 @@ from schema import (
     SETTINGS_SIGNAL_THRESHOLD, SETTINGS_STARTING_BALANCE, SETTINGS_TOTAL_RESOLVED,
     SETTINGS_VERSION, TRACKING_LAST_CHECK, TRACKING_LAST_PRICE, TRACKING_P_MODEL,
 )
-
-PID_FILE = "/root/dotm-sniper/sniper.pid"
-
-from utils import load_env_file, validate_env_vars  # noqa: E402
-import contextlib  # noqa: E402
+import contextlib
 load_env_file()
 validate_env_vars(["DEEPSEEK_API_KEY", "TG_BOT_TOKEN", "TG_CHAT_ID"])
 
@@ -63,7 +64,6 @@ def _tr():
             _tr_instance = TelegramReporter()
     return _tr_instance
 
-LOG_FILE = "/root/dotm-sniper/logs/sniper.log"
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 _handler_file = RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3)
@@ -91,39 +91,12 @@ def _handle_shutdown(signum, frame):
 signal.signal(signal.SIGTERM, _handle_shutdown)
 signal.signal(signal.SIGINT, _handle_shutdown)
 
-MODEL_LIGHT = "deepseek-chat"
-MIN_P_MODEL = 0.03
-MIN_CONFIDENCE = 0.65
 MAX_POS_PCT = 0.10
-FRACTIONAL_KELLY_MULTIPLIER = 0.25
-BASE_POS_PCT = 0.02
-OTHER_BOOST_POS_PCT = 0.035
-MAX_CLUSTER_PCT = 0.30
-MAX_POSITIONS = 5
-BURN_IN_TRADES = 50
-TAKE_PROFIT = 2.00
-
-# v5.1.0: Smart Exit - automatic TP limit orders at $0.85
-SMART_EXIT_PRICE = 0.85
-SMART_EXIT_SLIPPAGE = 0.015  # $0.015 slippage penalty for backtesting
-
-HYPOTHESIS_DB = "/root/dotm-sniper/hypothesis_db.json"
-POSITIONS_FILE = "/root/dotm-sniper/positions.json"
-SETTINGS_FILE = "/root/dotm-sniper/bot_settings.json"
-CACHE_FILE = "/root/dotm-sniper/source_cache.json"
-PRICE_TRACKING_FILE = "/root/dotm-sniper/price_tracking.json"
-BACKTEST_STATS_FILE = "/root/dotm-sniper/backtest_stats.json"
-
-DAILY_STATS_FILE = "/root/dotm-sniper/daily_stats.json"
 
 PRICE_DELTA_THRESHOLD = 0.002
-CACHE_TTL_SECONDS = 21600
 
 MIN_TRADES_FOR_WEIGHT_ADJUSTMENT = 20
-BAYESIAN_PRIOR_STRENGTH = 10
 BACKTEST_COOLDOWN_SECONDS = 24 * 3600
-
-MIN_BID_LIQUIDITY = 5.0
 
 
 def update_daily_stats(balance, portfolio, trades_this_cycle):
@@ -138,42 +111,8 @@ def update_daily_stats(balance, portfolio, trades_this_cycle):
     save_json(DAILY_STATS_FILE, stats)
 
 def parse_llm_json(response_text):
-    start = response_text.find('{')
-    if start == -1:
-        return None
-    depth = 0
-    in_string = False
-    escape_next = False
-    for i in range(start, len(response_text)):
-        c = response_text[i]
-        if escape_next:
-            escape_next = False
-            continue
-        if c == '\\' and in_string:
-            escape_next = True
-            continue
-        if c == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if c == '{':
-            depth += 1
-        elif c == '}':
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(response_text[start:i + 1])
-                except json.JSONDecodeError:
-                    pass
-                break
-    match = re.search(r'\{.*\}', response_text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
-    return None
+    from utils import parse_llm_json as _parse
+    return _parse(response_text)
 
 
 
@@ -225,19 +164,8 @@ def save_hypothesis_db(db):
     hypotheses_db.save_all(db)
 
 def detect_clusters(question):
-    question_lower = question.lower()
-    found = set()
-    for cluster, keywords in CLUSTER_KEYWORDS.items():
-        for kw in keywords:
-            if ' ' in kw:
-                if kw in question_lower:
-                    found.add(cluster)
-                    break
-            else:
-                if re.search(r'(?:^|\s)' + re.escape(kw) + r'(?:\s|$|[^a-z])', question_lower):
-                    found.add(cluster)
-                    break
-    return list(found) if found else ["other"]
+    from position_manager import detect_clusters as _detect
+    return _detect(question)
 
 def calculate_brier_score(db):
     from resolution import calculate_brier_score as _impl
@@ -342,14 +270,14 @@ def _update_status_file():
         portfolio_data = json.loads(res.stdout).get("data", [])
         portfolio_data = [p for p in portfolio_data if float(p.get("shares", 0)) > 0.001]
         status = {"balance": balance_data, "portfolio": portfolio_data, "updated_at": datetime.now().isoformat()}
-        save_json("/root/dotm-sniper/current_status.json", status)
+        save_json(CURRENT_STATUS_FILE, status)
         for dest in [
             "/root/.openclaw/workspace/dotm_status.json",
             "/root/.openclaw/agents/market_analyst/dotm_status.json",
             "/root/.openclaw/workspace/memory/portfolio-current.json",
         ]:
             with contextlib.suppress(Exception):
-                shutil.copy("/root/dotm-sniper/current_status.json", dest)
+                shutil.copy(CURRENT_STATUS_FILE, dest)
     except Exception as e:
         logger.warning(f"[status_save] {type(e).__name__}: {e}")
 
@@ -510,7 +438,8 @@ def _main_inner():
             available_balance,
             confidence=analysis["confidence"],
             best_ask=analysis.get("best_ask"),
-            cluster=m.get("clusters", ["other"])[0]
+            cluster=m.get("clusters", ["other"])[0],
+            bid_liquidity=m.get("bid_liquidity"),
         )
 
         if estimated_size <= 0:
@@ -590,14 +519,14 @@ def _main_inner():
 
 
 # Re-export from extracted modules (at bottom to avoid circular imports)
-from order_manager import (get_balance, get_portfolio)  # noqa: E402
-from position_manager import (get_tier_params, position_size, check_cluster_limits,  # noqa: E402
-                               check_category_limits,
-                               CLUSTER_KEYWORDS)
-from sell_executor import (trailing_stop_check, TRAILING_STOP,  # noqa: E402, F401
+from order_manager import (get_balance, get_portfolio)
+from position_manager import (get_tier_params, position_size, check_cluster_limits,
+                                check_category_limits,
+                                CLUSTER_KEYWORDS)  # noqa: F401
+from sell_executor import (trailing_stop_check, TRAILING_STOP,  # noqa: F401
                            ATR_STOP_MULTIPLIER, ATR_TRAILING_MULTIPLIER,
                            TRAILING_ACTIVATION, CONVERGENCE_TAKE_PROFIT)
-from signal_pipeline import (fetch_markets,  # noqa: E402, F401
+from signal_pipeline import (fetch_markets,  # noqa: F401
                              fetch_gamma_dotm_candidates, pre_filter_before_batching,
                              full_market_analysis, batch_analyze_markets,
                              advisor_pre_check, BATCH_SIZE,

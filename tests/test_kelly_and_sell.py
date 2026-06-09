@@ -153,7 +153,7 @@ class TestConvergenceRatio(unittest.TestCase):
         self.assertAlmostEqual(convergence, 0.80)
 
     def test_convergence_at_threshold(self):
-        self.assertAlmostEqual(ds.CONVERGENCE_TAKE_PROFIT, 0.90)
+        self.assertAlmostEqual(ds.CONVERGENCE_TAKE_PROFIT, 0.60)
 
     def test_convergence_exceeds_threshold(self):
         convergence = 0.095 / 0.10

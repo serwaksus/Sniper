@@ -24,9 +24,25 @@ CLUSTER_KEYWORDS = {
 }
 
 
+def detect_clusters(question):
+    question_lower = question.lower()
+    found = set()
+    for cluster, keywords in CLUSTER_KEYWORDS.items():
+        for kw in keywords:
+            if ' ' in kw:
+                if kw in question_lower:
+                    found.add(cluster)
+                    break
+            else:
+                if re.search(r'(?:^|\s)' + re.escape(kw) + r'(?:\s|$|[^a-z])', question_lower):
+                    found.add(cluster)
+                    break
+    return list(found) if found else ["other"]
+
+
 def get_tier_params(balance: float) -> dict:
     if balance < 2000:
-        return {"kelly_mult": 0.28, "base_pct": 0.03, "other_pct": 0.045,
+        return {"kelly_mult": 0.28, "base_pct": 0.05, "other_pct": 0.05,
                 "max_pct": 0.10, "max_positions": 15, "max_price": 0.40,
                 "max_cluster": 0.35, "tier": "micro"}
     elif balance < 10000:
@@ -158,7 +174,7 @@ def check_category_limits(new_market: dict[str, Any], new_order_value: float, to
     return True, "OK"
 
 
-def position_size(p_model: float, market_price: float, balance: float, confidence: float = 1.0, best_ask: float | None = None, cluster: str | None = None) -> int:
+def position_size(p_model: float, market_price: float, balance: float, confidence: float = 1.0, best_ask: float | None = None, cluster: str | None = None, bid_liquidity: float | None = None) -> int:
     """
     Fractional Kelly position sizing with confidence weighting.
 
@@ -256,6 +272,12 @@ def position_size(p_model: float, market_price: float, balance: float, confidenc
         return 0
     kelly_dollars = min(kelly_dollars, round(balance * tier["max_pct"]))
 
+    if bid_liquidity is not None and bid_liquidity > 0:
+        liquidity_cap = round(bid_liquidity * 0.20)
+        if kelly_dollars > liquidity_cap:
+            logger.info(f"[KELLY] Liquidity cap: ${kelly_dollars} -> ${liquidity_cap} (bid_liq=${bid_liquidity:.0f} * 0.20)")
+            kelly_dollars = liquidity_cap
+
     logger.info(
         f"[KELLY] tier={tier['tier']} kelly_full={kelly_full:.4f} * frac={kelly_mult:.2f} "
         f"* conf={confidence:.2f} = {kelly_with_confidence:.4f} "
@@ -264,3 +286,19 @@ def position_size(p_model: float, market_price: float, balance: float, confidenc
     )
 
     return kelly_dollars
+
+
+def conviction_adjusted_size(base_size: int, signal_score: float, min_signal: float) -> int:
+    """Adjust position size based on signal conviction relative to threshold.
+    Top signals (>1.5x threshold) get 5%, medium (1.2-1.5x) get 3%, rest get 1.5%."""
+    if min_signal <= 0:
+        return base_size
+    conviction_ratio = signal_score / min_signal
+    if conviction_ratio >= 1.5:
+        multiplier = 1.0
+    elif conviction_ratio >= 1.2:
+        multiplier = 0.6
+    else:
+        multiplier = 0.3
+    adjusted = max(5, round(base_size * multiplier))
+    return adjusted

@@ -9,6 +9,7 @@ import fcntl
 import tempfile
 import logging
 import contextlib
+import re
 import sys
 from contextlib import contextmanager
 
@@ -94,7 +95,8 @@ def load_json(path, default):
             return _normalize_keys(json.load(f))
         finally:
             f.close()
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[utils] {type(e).__name__}: {e}")
         if not fd_owned:
             with contextlib.suppress(OSError):
                 os.close(fd)
@@ -121,7 +123,8 @@ def save_json(path, data):
             _unlock_file(lock_fd)
             with contextlib.suppress(OSError):
                 os.close(lock_fd)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[utils] {type(e).__name__}: {e}")
         with contextlib.suppress(OSError):
             os.unlink(tmp_path)
         raise
@@ -145,7 +148,8 @@ def save_json_versioned(path, data, expected_version=None):
                 try:
                     with open(path) as f:
                         current_data = json.load(f)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[utils] {type(e).__name__}: {e}")
                     current_data = {}
                 current_version = current_data.get("__version", 0) if isinstance(current_data, dict) else 0
                 if current_version != expected_version:
@@ -161,7 +165,8 @@ def save_json_versioned(path, data, expected_version=None):
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(tmp_path, path)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[utils] {type(e).__name__}: {e}")
                 with contextlib.suppress(OSError):
                     os.unlink(tmp_path)
                 raise
@@ -220,7 +225,10 @@ def sanitize_for_prompt(text):
     return cleaned[:500]
 
 
-def load_env_file(path="/root/dotm-sniper/.env"):
+def load_env_file(path=None):
+    if path is None:
+        from config import ENV_FILE
+        path = ENV_FILE
     if not os.path.exists(path):
         return
     with open(path) as f:
@@ -253,7 +261,8 @@ def rotate_log_if_needed(log_path, max_bytes=MAX_LOG_BYTES, keep_bytes=5*1024*10
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_path, log_path)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[utils] {type(e).__name__}: {e}")
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
             raise
@@ -269,3 +278,42 @@ def validate_env_vars(required_vars):
     if missing:
         print(f"FATAL: Missing required environment variables: {', '.join(missing)}")
         sys.exit(1)
+
+
+def parse_llm_json(response_text):
+    start = response_text.find('{')
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(start, len(response_text)):
+        c = response_text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if c == '\\' and in_string:
+            escape_next = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(response_text[start:i + 1])
+                except json.JSONDecodeError:
+                    pass
+                break
+    match = re.search(r'\{.*\}', response_text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    return None

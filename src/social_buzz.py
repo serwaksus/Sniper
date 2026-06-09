@@ -23,10 +23,10 @@ from datetime import datetime, timedelta, UTC
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
+from config import BUZZ_CACHE_FILE
 
 logger = logging.getLogger(__name__)
 
-BUZZ_CACHE_FILE = "/root/dotm-sniper/buzz_cache.json"
 BUZZ_CACHE_TTL = 3600
 
 DEFAULT_TELEGRAM_CHANNELS = [
@@ -39,7 +39,7 @@ GOOGLE_NEWS_URL = "https://news.google.com/rss/search"
 REDDIT_URL = "https://www.reddit.com/search.json"
 
 
-from utils import load_env_file  # noqa: E402
+from utils import load_env_file
 load_env_file()
 
 
@@ -230,7 +230,8 @@ def fetch_google_news(keywords: list[str]) -> dict:
                         count += 1
                 else:
                     count += 1
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[social_buzz] {type(e).__name__}: {e}")
                 count += 1
 
         return {"count": count, "total_feed": len(feed.entries), "status": "ok"}

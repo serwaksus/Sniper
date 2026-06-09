@@ -15,16 +15,17 @@ from datetime import datetime, UTC
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from utils import load_json, save_json, sanitize_for_prompt
+from utils import load_json, save_json, sanitize_for_prompt, parse_llm_json
+from config import CACHE_FILE, MAX_P_MODEL_RATIO, SNIPER_LOG
 from schema import HYP_CLUSTERS, HYP_CONFIDENCE, HYP_FACTORS, HYP_P_MODEL, HYP_SLUG
 import hypotheses_db
 from utils import load_env_file
+from position_manager import detect_clusters
+from db import load_settings as _db_load_settings
 
 load_env_file()
 
-HYPOTHESIS_DB_FILE = "/root/dotm-sniper/hypothesis_db.json"
-
-LOG_FILE = "/root/dotm-sniper/sniper.log"
+LOG_FILE = SNIPER_LOG
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -50,7 +51,6 @@ METACULUS_HEADERS = {"Authorization": f"Token {METACULUS_API_KEY}"}
 # ── Signal thresholds ────────────────────────────────────────
 MIN_PROB_RATIO = 2.0
 MIN_P_MODEL = 0.03
-MAX_P_MODEL_RATIO = 5.0
 MIN_CONFIDENCE = 0.65
 MIN_VOLUME = 25000
 MIN_TTL_HOURS = 48
@@ -74,9 +74,12 @@ ADVISOR_MODEL = "deepseek-reasoner"
 ADVISOR_MIN_CONFIDENCE = 0.70
 DATE_WINDOW_DAYS = 7
 
-CACHE_FILE = "/root/dotm-sniper/source_cache.json"
-
 _llm_call_times = []
+
+
+def get_settings():
+    return _db_load_settings() or {}
+
 
 def _check_llm_circuit_breaker():
     now = time.time()
@@ -352,7 +355,8 @@ def get_time_decay_threshold(end_date_str):
         end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
         now = datetime.now(end_dt.tzinfo) if end_dt.tzinfo else datetime.now()
         days_to_res = max(0, (end_dt - now).total_seconds() / 86400)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[signal_pipeline] {type(e).__name__}: {e}")
         return METACULUS_GAP_THRESHOLD
 
     if days_to_res > 30:
@@ -439,7 +443,8 @@ def normalize_probability(p):
 def _count_resolved_hypotheses():
     try:
         return hypotheses_db.count_resolved()
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[signal_pipeline] {type(e).__name__}: {e}")
         return 0
 
 
@@ -506,7 +511,6 @@ def _cluster_score_adjustment(cluster, settings=None):
     Reads from bot_settings.json cluster_score_adjustments, falls back to defaults.
     """
     if settings is None:
-        from dotm_sniper import get_settings
         settings = get_settings()
     adjustments = settings.get("cluster_score_adjustments", CLUSTER_SCORE_ADJUSTMENTS)
     adj = adjustments.get(cluster, 0)
@@ -515,8 +519,57 @@ def _cluster_score_adjustment(cluster, settings=None):
     return adj
 
 
+def _compute_signal_score(p_model, market_price, factors, volume, ttl_hours, cluster, slug="", question="", metaculus_prob_val=None, settings=None):
+    """Shared signal scoring logic for both individual and batch analysis."""
+    if settings is None:
+        settings = get_settings()
+
+    prob_ratio = p_model / market_price if market_price > 0 else 0
+    supporting = [f for f in factors if f.get("direction") == "supports"]
+    high_weight = [f for f in supporting if f.get("weight") == "high"]
+
+    ratio_score = min(prob_ratio / 3.0, 1.0) * 30
+
+    metaculus_alignment = 0
+    if metaculus_prob_val is not None:
+        diff_model_meta = abs(p_model - metaculus_prob_val)
+        diff_meta_pm = abs(metaculus_prob_val - market_price)
+        if diff_model_meta < 0.05:
+            metaculus_alignment = 10
+        elif p_model > metaculus_prob_val + 0.10 and diff_meta_pm < 0.03:
+            metaculus_alignment = -20
+
+    factor_score = min((len(supporting) + len(high_weight)) / 4, 1.0) * 20
+    vol_score = min(volume / 500_000, 1.0) * 20
+    ttl_days = ttl_hours / 24 if ttl_hours else 999 / 24
+    if ttl_days > 180:
+        time_score = 20
+    elif ttl_days > 90:
+        time_score = 15
+    elif ttl_days > 30:
+        time_score = 12
+    elif ttl_days > 14:
+        time_score = 8
+    elif ttl_days >= 2:
+        time_score = 5
+    else:
+        time_score = 0
+
+    signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings)
+
+    buzz_score = 0
+    try:
+        from social_buzz import compute_buzz_score
+        buzz = compute_buzz_score(slug, question)
+        buzz_score = buzz.get("buzz_score", 0)
+    except Exception as e:
+        logger.debug(f"[signal_pipeline] {type(e).__name__}: {e}")
+        pass
+
+    return signal_score + buzz_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days
+
+
 def fetch_markets():
-    from dotm_sniper import detect_clusters
     try:
         res = subprocess.run(["pm-trader", "markets", "list", "--limit", "200"],
                            capture_output=True, text=True, timeout=30, start_new_session=True)
@@ -596,7 +649,6 @@ def fetch_markets():
 
 
 def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
-    from dotm_sniper import detect_clusters
     try:
         url = "https://gamma-api.polymarket.com/markets"
         all_markets = []
@@ -634,13 +686,15 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
             if isinstance(outcome_prices, str):
                 try:
                     outcome_prices = json.loads(outcome_prices)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[signal_pipeline] {type(e).__name__}: {e}")
                     continue
             outcomes = m.get("outcomes", "[]")
             if isinstance(outcomes, str):
                 try:
                     outcomes = json.loads(outcomes)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[signal_pipeline] {type(e).__name__}: {e}")
                     continue
             vol = float(m.get("volume", 0))
             if vol < MIN_VOLUME:
@@ -730,7 +784,6 @@ def full_market_analysis(market):
     """
     Single-step market analysis: combines factor generation + probability estimation.
     """
-    from dotm_sniper import get_settings, parse_llm_json
     from order_manager import get_best_ask
 
     cluster = market.get(HYP_CLUSTERS, ["other"])[0]
@@ -885,54 +938,11 @@ Rules:
             "best_ask": best_ask
         }
 
-    prob_ratio = p_model / market["price"] if market["price"] > 0 else 0
-
-    supporting = [f for f in factors if f.get("direction") == "supports"]
-    high_weight = [f for f in supporting if f.get("weight") == "high"]
-
-    ratio_score = min(prob_ratio / 3.0, 1.0) * 30
-
-    metaculus_alignment = 0
-    metaculus_prob_val = metaculus_gap.get("metaculus_prob") if metaculus_gap else None
-    if metaculus_prob_val is not None:
-        diff_model_meta = abs(p_model - metaculus_prob_val)
-        diff_meta_pm = abs(metaculus_prob_val - market["price"])
-        if diff_model_meta < 0.05:
-            metaculus_alignment = 10
-            logger.info(
-                f"[META-ALIGN] +10: p_model={p_model:.1%} ~ metaculus={metaculus_prob_val:.1%} (diff={diff_model_meta:.1%})"
-            )
-        elif p_model > metaculus_prob_val + 0.10 and diff_meta_pm < 0.03:
-            metaculus_alignment = -20
-            logger.info(
-                f"[META-PENALTY] -20: p_model={p_model:.1%} >> metaculus={metaculus_prob_val:.1%} "
-                f"and metaculus~price (diff={diff_meta_pm:.1%}), LLM hallucination suspected"
-            )
-
-    factor_score = min((len(supporting) + len(high_weight)) / 4, 1.0) * 20
-    vol_score = min(market.get("volume", 0) / 500_000, 1.0) * 20
-    ttl_days = market.get("ttl_hours", 0) / 24
-    if ttl_days > 180:
-        time_score = 20
-    elif ttl_days > 90:
-        time_score = 15
-    elif ttl_days > 30:
-        time_score = 12
-    elif ttl_days > 14:
-        time_score = 8
-    elif ttl_days >= 2:
-        time_score = 5
-    else:
-        time_score = 0
-    signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings)
-
-    try:
-        from social_buzz import compute_buzz_score
-        buzz = compute_buzz_score(market.get(HYP_SLUG, ""), market.get("question", ""))
-        buzz_score = buzz.get("buzz_score", 0)
-        signal_score += buzz_score
-    except Exception:
-        buzz_score = 0
+    signal_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days = _compute_signal_score(
+        p_model, market["price"], factors, market.get("volume", 0), market.get("ttl_hours", 999),
+        cluster, slug=market.get(HYP_SLUG, ""), question=market.get("question", ""),
+        metaculus_prob_val=metaculus_prob_val, settings=settings
+    )
 
     base_threshold = get_settings().get("signal_threshold", 55)
     if ttl_days > 90:
@@ -1186,10 +1196,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
     Convert parsed batch array into list of analysis dicts
     matching the full_market_analysis schema.
     """
-    from dotm_sniper import get_settings
-
     slug_to_item = {it[HYP_SLUG]: it for it in batch_items}
-    {it[HYP_SLUG]: i for i, it in enumerate(batch_items)}
 
     results_map = {}
     for item in parsed_array:
@@ -1242,49 +1249,12 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
             }
             continue
 
-        prob_ratio = p_model / market_price if market_price > 0 else 0
-        supporting = [f for f in factors if f.get("direction") == "supports"]
-        high_weight = [f for f in supporting if f.get("weight") == "high"]
-
-        ratio_score = min(prob_ratio / 3.0, 1.0) * 30
-
         metaculus_prob_val = metaculus_cache.get(slug) if metaculus_cache else None
-        metaculus_alignment = 0
-        if metaculus_prob_val is not None:
-            diff_model_meta = abs(p_model - metaculus_prob_val)
-            diff_meta_pm = abs(metaculus_prob_val - market_price)
-            if diff_model_meta < 0.05:
-                metaculus_alignment = 10
-                logger.info(f"[META-ALIGN-BATCH] +10: p_model={p_model:.1%} ~ metaculus={metaculus_prob_val:.1%}")
-            elif p_model > metaculus_prob_val + 0.10 and diff_meta_pm < 0.03:
-                metaculus_alignment = -20
-                logger.info(f"[META-PENALTY-BATCH] -20: p_model={p_model:.1%} >> metaculus={metaculus_prob_val:.1%}")
-
-        factor_score = min((len(supporting) + len(high_weight)) / 4, 1.0) * 20
-        vol_score = min(bi.get("volume", 0) / 500_000, 1.0) * 20
-        ttl_hours = bi.get("ttl_hours", 999)
-        ttl_days = ttl_hours / 24
-        if ttl_days > 180:
-            time_score = 20
-        elif ttl_days > 90:
-            time_score = 15
-        elif ttl_days > 30:
-            time_score = 12
-        elif ttl_days > 14:
-            time_score = 8
-        elif ttl_days >= 2:
-            time_score = 5
-        else:
-            time_score = 0
-
-        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings)
-
-        try:
-            from social_buzz import compute_buzz_score
-            buzz = compute_buzz_score(slug, bi.get("question", ""))
-            batch_buzz = buzz.get("buzz_score", 0)
-        except Exception:
-            batch_buzz = 0
+        signal_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days = _compute_signal_score(
+            p_model, market_price, factors, bi.get("volume", 0), bi.get("ttl_hours", 999),
+            cluster, slug=slug, question=bi.get("question", ""),
+            metaculus_prob_val=metaculus_prob_val, settings=settings
+        )
 
         base_threshold = settings.get("signal_threshold", 55)
         if ttl_days > 90:
@@ -1322,14 +1292,14 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
 
         prob_ratio = p_model / market_price if market_price > 0 else 0
         ratio_score = min(prob_ratio / 3.0, 1.0) * 30
-        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + batch_buzz
+        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + buzz_score
 
         action = "BUY" if signal_score >= min_signal and confidence >= settings.get("min_confidence", MIN_CONFIDENCE) and prob_ratio >= MIN_PROB_RATIO else "SKIP"
 
         logger.info(
             f"[SIGNAL-BATCH] ratio={prob_ratio:.2f}x -> {ratio_score:.0f}, factors={len(supporting)}/{len(high_weight)} -> {factor_score:.0f}, "
             f"vol=${bi.get('volume',0):,.0f} -> {vol_score:.0f}, ttl={ttl_days:.0f}d -> {time_score:.0f}, "
-            f"buzz={batch_buzz:.1f} "
+            f"buzz={buzz_score:.1f} "
             f"= {signal_score:.0f}/{min_signal} => {action}"
         )
 
@@ -1485,7 +1455,7 @@ Rules:
             return True, verdict, confidence, "advisor_warning_allowed"
         elif verdict == "DIVERGE":
             size_pct = estimated_size / balance if balance > 0 else 1
-            advisor_agrees_direction = advisor_p > price
+            advisor_agrees_direction = advisor_p >= 0.5 * p_model
             if size_pct <= 0.02:
                 logger.info(f"[ADVISOR] 🔄 DIVERGE override: micro-position {size_pct:.1%} ≤ 2%, allowing")
                 return True, verdict, confidence, "diverge_micro_override"

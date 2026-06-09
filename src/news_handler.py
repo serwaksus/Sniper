@@ -5,10 +5,9 @@ from utils import load_json
 from schema import (
     CACHE_METACULUS, CACHE_NEWS, CACHE_TIMESTAMP, CACHE_LAST_UPDATE,
 )
+from config import CACHE_FILE
 
 logger = logging.getLogger(__name__)
-
-CACHE_FILE = "/root/dotm-sniper/source_cache.json"
 
 
 def _check_news_cache_freshness(cluster_key, slug=None):

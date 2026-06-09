@@ -19,8 +19,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json, file_lock
-
-QUEUE_FILE = "/root/dotm-sniper/tg_queue.json"
+from config import TG_QUEUE_FILE as QUEUE_FILE, ENV_FILE
 MAX_QUEUE_SIZE = 100
 MAX_AGE_HOURS = 48
 SEND_TIMEOUT = 15
@@ -46,7 +45,7 @@ def _get_credentials():
     token = os.environ.get("TG_BOT_TOKEN", "")
     chat_id = os.environ.get("TG_CHAT_ID", "")
     if not token or not chat_id:
-        env_path = "/root/dotm-sniper/.env"
+        env_path = ENV_FILE
         if os.path.exists(env_path):
             with open(env_path) as f:
                 for line in f:
@@ -76,7 +75,8 @@ def _send_once(token, chat_id, message, timeout=SEND_TIMEOUT):
             time.sleep(retry_after)
             return False
         return resp.ok
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[tg_sender] {type(e).__name__}: {e}")
         return False
 
 

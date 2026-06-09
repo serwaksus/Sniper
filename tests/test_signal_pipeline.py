@@ -23,7 +23,7 @@ MOCK_SETTINGS = {"signal_threshold": 55, "min_confidence": 0.65, "min_p_model": 
 def _mock_settings(return_value=None):
     if return_value is None:
         return_value = MOCK_SETTINGS
-    return patch("dotm_sniper.get_settings", return_value=return_value)
+    return patch("signal_pipeline.get_settings", return_value=return_value)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -873,7 +873,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
         })}}]}
         mock_post.return_value = mock_resp
         with _mock_settings():
-            with patch("dotm_sniper.parse_llm_json") as mock_parse:
+            with patch("signal_pipeline.parse_llm_json") as mock_parse:
                 mock_parse.return_value = self._mock_llm_response(0.30, 0.80, [
                     {"factor": "strong", "direction": "supports", "weight": "high", "source": "news"},
                     {"factor": "momentum", "direction": "supports", "weight": "medium", "source": "data"},
@@ -911,7 +911,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
         mock_resp.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
         mock_post.return_value = mock_resp
         with _mock_settings():
-            with patch("dotm_sniper.parse_llm_json") as mock_parse:
+            with patch("signal_pipeline.parse_llm_json") as mock_parse:
                 mock_parse.return_value = self._mock_llm_response(0.02, 0.40, [])
                 with patch("order_manager.get_best_ask", return_value=None):
                     result = sp.full_market_analysis(self._market())
@@ -937,7 +937,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
         mock_resp.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
         mock_post.return_value = mock_resp
         with _mock_settings():
-            with patch("dotm_sniper.parse_llm_json") as mock_parse:
+            with patch("signal_pipeline.parse_llm_json") as mock_parse:
                 mock_parse.return_value = self._mock_llm_response(0.25, 0.70, [
                     {"factor": "test", "direction": "supports", "weight": "high", "source": "test"},
                 ])
@@ -1159,7 +1159,7 @@ class TestTimeScoreBranches(unittest.TestCase):
             "ttl_hours": ttl_hours, HYP_CLUSTERS: ["ai_tech"], "oracle_type": "uma",
         }
         with _mock_settings():
-            with patch("dotm_sniper.parse_llm_json") as mock_parse:
+            with patch("signal_pipeline.parse_llm_json") as mock_parse:
                 mock_parse.return_value = {
                     "estimated_probability": 0.30,
                     HYP_CONFIDENCE: 0.80,
@@ -1200,7 +1200,7 @@ class TestConstants(unittest.TestCase):
     def test_key_constants_exist(self):
         self.assertEqual(sp.MIN_PROB_RATIO, 2.0)
         self.assertEqual(sp.MIN_P_MODEL, 0.03)
-        self.assertEqual(sp.MAX_P_MODEL_RATIO, 5.0)
+        self.assertEqual(sp.MAX_P_MODEL_RATIO, 3.0)
         self.assertEqual(sp.MIN_CONFIDENCE, 0.65)
         self.assertEqual(sp.MIN_VOLUME, 25000)
         self.assertEqual(sp.MIN_TTL_HOURS, 48)

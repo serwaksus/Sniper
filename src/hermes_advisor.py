@@ -27,6 +27,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotm_report import TelegramReporter
 from news_scanner import fetch_recent_news
 from utils import load_json, save_json, sanitize_for_prompt, load_env_file, check_and_write_pid, cleanup_pid_file, validate_env_vars
+from config import (
+    HERMES_PID_FILE, HERMES_LOG, CACHE_FILE,
+    ALERT_STATE_FILE, EMERGENCY_LOG_FILE,
+)
 from schema import (
     ALERT_HOLD_COUNTS, ALERT_LAST_NOTIFIED, ALERT_POSITION_STATUS, ALERT_UPDATED_AT,
     CACHE_LAST_UPDATE, CACHE_METACULUS, CACHE_NEWS, CACHE_TIMESTAMP,
@@ -39,7 +43,6 @@ from schema import (
 load_env_file()
 validate_env_vars(["DEEPSEEK_API_KEY", "TG_BOT_TOKEN", "TG_CHAT_ID"])
 
-HERMES_LOG = "/root/dotm-sniper/logs/hermes.log"
 os.makedirs(os.path.dirname(HERMES_LOG), exist_ok=True)
 
 class UnbufferedRotatingFileHandler(RotatingFileHandler):
@@ -71,10 +74,6 @@ def _handle_shutdown(signum, frame):
 signal.signal(signal.SIGTERM, _handle_shutdown)
 signal.signal(signal.SIGINT, _handle_shutdown)
 
-POSITIONS_FILE = "/root/dotm-sniper/positions.json"
-SETTINGS_FILE = "/root/dotm-sniper/bot_settings.json"
-CACHE_FILE = "/root/dotm-sniper/source_cache.json"
-
 RECONCILE_INTERVAL_SECONDS = 900
 NEWS_CHECK_INTERVAL_SECONDS = 600
 TP_LIMIT_PRICE = 0.85
@@ -83,7 +82,6 @@ MAX_EMERGENCY_RETRIES = 3
 NOTIFICATION_COOLDOWN_SECONDS = 4 * 3600
 TELEGRAM_REPORTER = TelegramReporter()
 
-ALERT_STATE_FILE = "/root/dotm-sniper/logs/hermes_alert_state.json"
 _last_alert_status = {}
 _last_notified_at = {}
 _status_hold_counts = {}
@@ -173,26 +171,7 @@ def get_settings():
     from db import load_settings
     return load_settings() or {}
 
-def get_balance():
-    try:
-        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15, start_new_session=True)
-        if res.returncode != 0:
-            logger.error(f"[HERMES] pm-trader balance failed: rc={res.returncode} stderr={res.stderr[:200]}")
-            return None
-        return json.loads(res.stdout).get("data", {})
-    except Exception:
-        return None
-
-def get_portfolio():
-    try:
-        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15, start_new_session=True)
-        if res.returncode != 0:
-            logger.error(f"[HERMES] pm-trader portfolio failed: rc={res.returncode} stderr={res.stderr[:200]}")
-            return None
-        data = json.loads(res.stdout).get("data", [])
-        return [p for p in data if float(p.get("shares", 0)) > 0.001]
-    except Exception:
-        return None
+from order_manager import get_portfolio
 
 def get_open_orders():
     try:
@@ -775,7 +754,7 @@ def _log_emergency_exit(slug, pos_data, reason):
         "action": "emergency_exit"
     }
 
-    log_file = "/root/dotm-sniper/logs/emergency_log.json"
+    log_file = EMERGENCY_LOG_FILE
     logs = load_json(log_file, [])
     logs.append(log_entry)
     logs = logs[-1000:]
@@ -812,7 +791,8 @@ def _resolve_predictions_loop():
                 try:
                     elapsed = (datetime.now() - datetime.fromisoformat(last_skill)).total_seconds()
                     should_gen = elapsed >= 6 * 3600
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[hermes_advisor] {type(e).__name__}: {e}")
                     should_gen = True
             if should_gen:
                 skills = generate_skills()
@@ -835,7 +815,8 @@ def _check_resolved_markets():
             ["pm-trader", "orders", "list"],
             capture_output=True, text=True, timeout=15, start_new_session=True
         )
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[hermes_advisor] {type(e).__name__}: {e}")
         return
 
     known_active = set()
@@ -868,8 +849,6 @@ def _check_resolved_markets():
     except Exception as e:
         logger.warning(f"[HERMES] Resolution check failed: {e}")
 
-
-HERMES_PID_FILE = "/root/dotm-sniper/hermes.pid"
 
 def main():
     logger.info("="*60)

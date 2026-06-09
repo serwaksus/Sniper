@@ -14,8 +14,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
-
-BAYESIAN_STATE_FILE = "/root/dotm-sniper/bayesian_state.json"
+from config import BAYESIAN_STATE_FILE
 
 logger = logging.getLogger(__name__)
 

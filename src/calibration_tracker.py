@@ -15,14 +15,12 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
 import hypotheses_db
+from config import CALIBRATION_LOG_FILE as CALIBRATION_LOG, PLATT_MODEL_FILE, HYPOTHESIS_DB_FILE as HYPOTHESIS_DB  # noqa: F401
 from schema import (
     HYP_DB_HYPOTHESES, HYP_MARKET_PRICE, HYP_OUTCOME, HYP_P_MODEL,
     HYP_RESOLVED, HYP_SLUG,
 )
 
-CALIBRATION_LOG = "/root/dotm-sniper/calibration_log.json"
-HYPOTHESIS_DB = "/root/dotm-sniper/hypothesis_db.json"
-PLATT_MODEL_FILE = "/root/dotm-sniper/platt_model.json"
 MIN_PLATT_SAMPLES = 15
 
 logger = logging.getLogger(__name__)

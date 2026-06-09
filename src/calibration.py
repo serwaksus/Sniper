@@ -11,10 +11,10 @@ from sklearn.isotonic import IsotonicRegression
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import save_json
+from config import CALIBRATION_MODEL_FILE
 
 logger = logging.getLogger(__name__)
 
-CALIBRATION_MODEL_FILE = "/root/dotm-sniper/calibration_model.json"
 MIN_SAMPLES_PER_CLUSTER = 20
 
 

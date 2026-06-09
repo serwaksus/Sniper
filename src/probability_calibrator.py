@@ -16,9 +16,8 @@ import sys
 import numpy as np
 from collections import defaultdict
 from sklearn.isotonic import IsotonicRegression
+from config import CALIBRATOR_MODEL_FILE as CALIBRATOR_MODEL_PATH, BACKTEST_BASELINE_FILE as BACKTEST_BASELINE_PATH
 
-CALIBRATOR_MODEL_PATH = "/root/dotm-sniper/calibrator_model.json"
-BACKTEST_BASELINE_PATH = "/root/dotm-sniper/backtest_stats_v533_baseline.json"
 MIN_CLUSTER_SAMPLES = 30
 MIN_GLOBAL_SAMPLES = 100
 

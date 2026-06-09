@@ -1,21 +1,21 @@
 # Install:
-#   sudo cp hermes.service /etc/systemd/system/
+#   sudo cp metrics.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable hermes
-#   sudo systemctl start hermes
+#   sudo systemctl enable metrics
+#   sudo systemctl start metrics
 #
 # Check status:
-#   sudo systemctl status hermes
-#   journalctl -u hermes -f
+#   sudo systemctl status metrics
+#   journalctl -u metrics -f
 
 [Unit]
-Description=DOTM Hermes Risk Advisor
+Description=DOTM Metrics Server
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/root/dotm-sniper
-ExecStart=/usr/bin/python3 src/hermes_advisor.py
+ExecStart=/usr/bin/python3 src/metrics_server.py 8765
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal

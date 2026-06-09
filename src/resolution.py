@@ -7,6 +7,7 @@ from collections import defaultdict
 
 import positions_db
 from calibration_tracker import log_calibration_entry, detect_model_drift
+from config import BURN_IN_TRADES, MIN_P_MODEL, MIN_TRADES_FOR_WEIGHT as MIN_TRADES_FOR_WEIGHT_ADJUSTMENT, BAYESIAN_PRIOR_STRENGTH
 from schema import (
     HYP_CLUSTERS,
     HYP_DB_HYPOTHESES,
@@ -21,13 +22,6 @@ from schema import (
 )
 
 logger = logging.getLogger(__name__)
-
-BURN_IN_TRADES = 50
-MIN_P_MODEL = 0.03
-MIN_TRADES_FOR_WEIGHT_ADJUSTMENT = 20
-BAYESIAN_PRIOR_STRENGTH = 10
-
-POSITIONS_FILE = "/root/dotm-sniper/positions.json"
 
 
 def _get_sniper_deps():

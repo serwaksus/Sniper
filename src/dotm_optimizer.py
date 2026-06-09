@@ -32,9 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from dotm_sniper import load_json, save_json
-
-BACKTEST_FILE = "/root/dotm-sniper/backtest_stats.json"
-OPTIMIZER_OUTPUT = "/root/dotm-sniper/optimizer_results.json"
+from config import BACKTEST_STATS_FILE as BACKTEST_FILE, OPTIMIZER_OUTPUT_FILE as OPTIMIZER_OUTPUT
 
 COMPOSITE_THRESHOLDS = [65, 70, 75, 80]
 VOLUME_THRESHOLDS = [100000, 150000, 200000, 250000]

@@ -9,6 +9,7 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import positions_db
 from utils import load_json, save_json
+from config import PRICE_HISTORY_FILE
 from schema import (
     HYP_DB_RESOLVED, HYP_SLUG,
     POS_CLUSTERS, POS_ENTRY_PRICE, POS_HIGH_PRICE, POS_LAST_CHECKED,
@@ -22,13 +23,12 @@ logger = logging.getLogger(__name__)
 
 TRAILING_ACTIVATION = 0.30
 TRAILING_STOP = 0.25
-CONVERGENCE_TAKE_PROFIT = 0.90
+CONVERGENCE_TAKE_PROFIT = 0.60
 MIN_POSITION_CHECK_INTERVAL_HOURS = 3
 ATR_STOP_MULTIPLIER = 2.5
 ATR_TRAILING_MULTIPLIER = 1.5
 ATR_LOOKBACK_DAYS = 7
-PRICE_HISTORY_FILE = "/root/dotm-sniper/price_history.json"
-POSITIONS_FILE = "/root/dotm-sniper/positions.json"
+
 MAX_SPREAD_PCT = 0.15
 LIMIT_SPREAD_THRESHOLD = 0.03
 LIMIT_PRICE_BUFFER = 0.005
@@ -194,7 +194,8 @@ def _calculate_atr(slug: str, current_price: float) -> float:
 
         atr = sum(true_ranges) / len(true_ranges)
         return max(atr, abs(current_price) * 0.03)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[sell_executor] {type(e).__name__}: {e}")
         return abs(current_price) * 0.10
 
 
@@ -333,7 +334,8 @@ def trailing_stop_check() -> None:
         if p.get(POS_LAST_CHECKED):
             try:
                 last_checked = datetime.fromisoformat(p[POS_LAST_CHECKED])
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[sell_executor] {type(e).__name__}: {e}")
                 last_checked = None
 
         check_interval = MIN_POSITION_CHECK_INTERVAL_HOURS * 3600
@@ -362,12 +364,13 @@ def trailing_stop_check() -> None:
 
         if not om._get_open_tp_orders(slug) and current_price < 0.70 and not p.get(POS_TP_LADDER_FAILED):
             try:
-                ladder_results = om._place_tp_ladder(slug, outcome, shares)
+                ladder_results = om._place_tp_ladder(slug, outcome, shares, entry_price=entry_price)
                 if any(ok for _, _, ok, _ in ladder_results):
                     logger.info(f"[TP-REFRESH] Placed TP ladder for {slug[:40]}... (was missing)")
                 else:
                     p[POS_TP_LADDER_FAILED] = True
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[sell_executor] {type(e).__name__}: {e}")
                 p[POS_TP_LADDER_FAILED] = True
 
         sold = False
@@ -399,6 +402,42 @@ def trailing_stop_check() -> None:
                     logger.warning(f"[CONVERGENCE-SELL] Failed for {slug}: {e}")
             elif convergence >= CONVERGENCE_TAKE_PROFIT:
                 logger.info(f"[CONVERGENCE] {slug[:40]}... convergence={convergence:.2f} but TP ladder active, letting limits execute")
+
+        if not sold and entry_price > 0 and current_price <= entry_price * 0.50:
+            sold_reason = f"hard_stop_50pct: price=${current_price:.4f} <= entry*0.50=${entry_price * 0.50:.4f}"
+            logger.warning(f"[HARD-STOP] -50% stop triggered: {slug[:40]}... price=${current_price:.4f} entry=${entry_price:.4f}")
+            try:
+                sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=True)
+                if sold:
+                    eff_price = eff_price or current_price
+                    actual_pnl = (eff_price - entry_price) / entry_price
+                    pnl_abs = shares * (eff_price - entry_price)
+                    logger.info(f"SOLD hard stop -50% ({method}): {slug} pnl={actual_pnl:.2%}")
+                    if sniper._tr():
+                        sniper._tr().alert_stop_loss(market_slug=slug, question=pos.get("market_question", ""), pnl_pct=actual_pnl * 100, pnl_abs=pnl_abs)
+            except Exception as e:
+                logger.warning(f"[hard_stop_sell] {type(e).__name__}: {e}")
+
+        if not sold and stored_pos:
+            created_at = stored_pos.get("created_at")
+            ttl_hours = stored_pos.get("ttl_hours")
+            if created_at and ttl_hours and ttl_hours > 0:
+                try:
+                    age_hours = (now - datetime.fromisoformat(str(created_at))).total_seconds() / 3600
+                    age_ratio = age_hours / ttl_hours
+                    if age_ratio > 0.60 and current_price < entry_price * 1.5:
+                        sold_reason = f"time_decay: age={age_ratio:.0%} of TTL, price=${current_price:.4f} < entry*1.5"
+                        logger.info(f"[TIME-DECAY] Selling stale position: {slug[:40]}... age={age_ratio:.0%}")
+                        sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
+                        if sold:
+                            eff_price = eff_price or current_price
+                            actual_pnl = (eff_price - entry_price) / entry_price
+                            pnl_abs = shares * (eff_price - entry_price)
+                            logger.info(f"SOLD time-decay ({method}): {slug} pnl={actual_pnl:.2%}")
+                            if sniper._tr():
+                                sniper._tr().alert_stop_loss(market_slug=slug, question=pos.get("market_question", ""), pnl_pct=actual_pnl * 100, pnl_abs=pnl_abs)
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"[time_decay] {type(e).__name__}: {e}")
 
         if not sold and current_price <= p.get(POS_STOP_LOSS, 0):
             sold_reason = f"atr_stop: price=${current_price:.4f} <= atr_stop"
@@ -539,3 +578,28 @@ def trailing_stop_check() -> None:
         except Exception as e:
             logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
         logger.info(f"[CLEANUP] Removed stale position: {s}")
+
+
+def check_portfolio_drawdown() -> bool:
+    """Check if portfolio is in >10% drawdown from high-water mark. Returns True if trading should pause."""
+    try:
+        from config import EQUITY_HISTORY_FILE
+        from utils import load_json
+        history = load_json(EQUITY_HISTORY_FILE, [])
+        if not isinstance(history, list) or len(history) < 2:
+            return False
+
+        high_water = max(s.get("total_equity", 0) for s in history if isinstance(s, dict))
+        current = history[-1].get("total_equity", 0) if isinstance(history[-1], dict) else 0
+
+        if high_water <= 0:
+            return False
+
+        drawdown = (high_water - current) / high_water
+        if drawdown >= 0.10:
+            logger.warning(f"[DRAWDOWN-STOP] Portfolio drawdown {drawdown:.1%} >= 10%, pausing new trades")
+            return True
+        return False
+    except Exception as e:
+        logger.debug(f"[sell_executor] {type(e).__name__}: {e}")
+        return False

@@ -6,7 +6,10 @@ Uses Tavily API for real-time news search.
 import os
 import re
 import sys
+import logging
 import requests
+
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json
@@ -17,8 +20,8 @@ NEWS_TIME_WINDOW_HOURS = 48
 MAX_NEWS_AGE_DAYS_DEFAULT = 30
 
 def load_env():
-    """Load environment variables from .env file"""
-    env_path = "/root/dotm-sniper/.env"
+    from config import ENV_FILE
+    env_path = ENV_FILE
     if os.path.exists(env_path):
         with open(env_path) as f:
             for line in f:
@@ -70,7 +73,8 @@ def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_
                 "query": query,
                 "found": len(headlines) > 0
             }
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[news_scanner] {type(e).__name__}: {e}")
         pass
 
     return _fetch_ddg_news_fallback(market_keywords, max_results, max_age_days)
@@ -110,7 +114,8 @@ def _fetch_ddg_news_fallback(keywords: list[str], max_results: int, max_age_days
                 "query": " ".join(keywords),
                 "found": len(headlines) > 0
             }
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[news_scanner] {type(e).__name__}: {e}")
         pass
 
     return {"headlines": [], "sources": [], "query": "", "found": False}
@@ -204,6 +209,7 @@ def news_sanity_check(market_title: str, news_headlines: list[str],
             return True, f"Ambiguous LLM response: {content[:20]}, default PASS"
 
     except Exception as e:
+        logger.debug(f"[news_scanner] {type(e).__name__}: {e}")
         return True, f"LLM error: {str(e)[:50]}, default PASS"
 
 
@@ -229,10 +235,12 @@ def check_market_news(market: dict) -> tuple[bool, str]:
     )
 
     try:
-        cache = load_json("/root/dotm-sniper/source_cache.json", {})
+        from config import CACHE_FILE
+        cache = load_json(CACHE_FILE, {})
         cache.setdefault("news", {}).setdefault(cluster_key, {})["passed"] = passed
-        save_json("/root/dotm-sniper/source_cache.json", cache)
-    except Exception:
+        save_json(CACHE_FILE, cache)
+    except Exception as e:
+        logger.debug(f"[news_scanner] {type(e).__name__}: {e}")
         pass
 
     return passed, reason

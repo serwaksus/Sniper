@@ -10,7 +10,9 @@ import requests
 from datetime import datetime
 from typing import Any
 
-LOG_FILE = "/root/dotm-sniper/logs/report.log"
+from config import REPORT_LOG as LOG_FILE, TRADES_HISTORY_FILE, CURRENT_STATUS_FILE
+
+LOG_FILE = LOG_FILE
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from utils import load_env_file, save_json, load_json  # noqa: E402
+from utils import load_env_file, save_json, load_json
 load_env_file()
 
 
@@ -164,29 +166,7 @@ class TelegramReporter:
         return self._send(msg)
 
 
-def get_balance():
-    try:
-        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True, timeout=15)
-        if res.returncode != 0:
-            return None
-        data = json.loads(res.stdout).get("data", {})
-        logger.info(f"Balance fetched: ${data.get('total_value', 0):.2f}")
-        return data
-    except Exception as e:
-        logger.error(f"Failed to get balance: {e}")
-        return None
-
-
-def get_portfolio():
-    try:
-        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True, timeout=15)
-        data = json.loads(res.stdout).get("data", [])
-        data = [p for p in data if float(p.get("shares", 0)) > 0.001]
-        logger.info(f"Portfolio fetched: {len(data)} positions (dust filtered)")
-        return data
-    except Exception as e:
-        logger.error(f"Failed to get portfolio: {e}")
-        return []
+from order_manager import get_balance, get_portfolio
 
 
 def get_markets():
@@ -201,12 +181,13 @@ def get_markets():
 
 
 def load_history():
-    HISTORY_FILE = "/root/dotm-sniper/trades_history.json"
+    HISTORY_FILE = TRADES_HISTORY_FILE
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE) as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[dotm_report] {type(e).__name__}: {e}")
             pass
     return {"trades": [], "summary": {"total_trades": 0, "wins": 0, "losses": 0, "total_pnl": 0}}
 
@@ -227,7 +208,7 @@ def main():
 
     balance = get_balance()
     if not balance:
-        cached_status = load_json("/root/dotm-sniper/current_status.json", {})
+        cached_status = load_json(CURRENT_STATUS_FILE, {})
         cached_balance = cached_status.get("balance")
         if cached_balance:
             logger.warning("Balance API failed, using cached balance from current_status.json")
@@ -247,7 +228,7 @@ def main():
         sent = reporter.send_daily_report(balance, portfolio, history.get("summary", {}), top_markets)
         logger.info(f"Report Telegram send result: {sent}")
 
-    status_file = "/root/dotm-sniper/current_status.json"
+    status_file = CURRENT_STATUS_FILE
     try:
         save_json(status_file, {"balance": balance, "portfolio": portfolio, "updated_at": datetime.now().isoformat()})
         import shutil

@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import subprocess
-import json
 import os
 import sys
 import logging
@@ -10,15 +8,12 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json, save_json, check_and_write_pid, cleanup_pid_file
+from config import EQUITY_CURVE_FILE, TRADES_JOURNAL_FILE, EQUITY_TRACKER_LOG as LOG_FILE
 from schema import (
     EQUITY_CASH, EQUITY_NUM_POSITIONS, EQUITY_POSITIONS, EQUITY_POSITIONS_VALUE,
     EQUITY_SNAPSHOTS, EQUITY_TIMESTAMP, EQUITY_TOTAL, EQUITY_UNREALIZED_PNL,
 )
 
-EQUITY_FILE = "/root/dotm-sniper/equity_curve.json"
-TRADES_JOURNAL_FILE = "/root/dotm-sniper/trades_journal.json"
-
-LOG_FILE = "/root/dotm-sniper/logs/equity_tracker.log"
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
@@ -30,31 +25,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from utils import load_env_file  # noqa: E402
+EQUITY_FILE = EQUITY_CURVE_FILE
+
+from utils import load_env_file
 load_env_file()
 
 
-def get_balance():
-    try:
-        res = subprocess.run(["pm-trader", "balance"], capture_output=True, text=True,
-                           timeout=15, start_new_session=True)
-        if res.returncode != 0:
-            return None
-        return json.loads(res.stdout).get("data", {})
-    except Exception:
-        return None
-
-
-def get_portfolio():
-    try:
-        res = subprocess.run(["pm-trader", "portfolio"], capture_output=True, text=True,
-                           timeout=15, start_new_session=True)
-        if res.returncode != 0:
-            return []
-        data = json.loads(res.stdout).get("data", [])
-        return [p for p in data if float(p.get("shares", 0)) > 0.001]
-    except Exception:
-        return []
+from order_manager import get_balance, get_portfolio
 
 
 def log_equity_snapshot():

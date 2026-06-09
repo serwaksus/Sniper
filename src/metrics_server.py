@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import load_json
 import positions_db
 from db import load_settings
+from config import EQUITY_CURVE_FILE, HEALTH_STATE_FILE
 
 
 class MetricsHandler(BaseHTTPRequestHandler):
@@ -32,8 +33,8 @@ class MetricsHandler(BaseHTTPRequestHandler):
         data = {}
         positions = positions_db.load_all()
         settings = load_settings()
-        equity = load_json("/root/dotm-sniper/equity_curve.json", {})
-        health = load_json("/root/dotm-sniper/health_state.json", {})
+        equity = load_json(EQUITY_CURVE_FILE, {})
+        health = load_json(HEALTH_STATE_FILE, {})
 
         data["positions_count"] = len(positions)
         data["total_resolved"] = settings.get("total_resolved", 0)
@@ -52,7 +53,7 @@ class MetricsHandler(BaseHTTPRequestHandler):
         self._json_response(data)
 
     def _serve_health(self):
-        health = load_json("/root/dotm-sniper/health_state.json", {})
+        health = load_json(HEALTH_STATE_FILE, {})
         positions = positions_db.load_all()
         self._json_response({
             "status": "ok" if not health.get("alerts") else "warning",
@@ -72,6 +73,6 @@ class MetricsHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    server = HTTPServer(("0.0.0.0", port), MetricsHandler)
+    server = HTTPServer(("127.0.0.1", port), MetricsHandler)
     print(f"Metrics server on :{port}")
     server.serve_forever()
