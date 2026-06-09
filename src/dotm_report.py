@@ -213,12 +213,13 @@ def load_history():
 
 def main():
     force = "--force" in sys.argv
+    no_telegram = "--no-telegram" in sys.argv
     import pytz
     msk_tz = pytz.timezone("Europe/Moscow")
     now_msk = datetime.now(msk_tz)
     hour_msk = now_msk.hour
 
-    logger.info(f"Report started (MSK={hour_msk}, force={force})")
+    logger.info(f"Report started (MSK={hour_msk}, force={force}, no_telegram={no_telegram})")
 
     if not force and (hour_msk < 9 or hour_msk >= 22):
         logger.info(f"Outside schedule (MSK={hour_msk}), skipping (use --force to override)")
@@ -239,9 +240,12 @@ def main():
     history = load_history()
     top_markets = get_markets()
 
-    reporter = TelegramReporter()
-    sent = reporter.send_daily_report(balance, portfolio, history.get("summary", {}), top_markets)
-    logger.info(f"Report Telegram send result: {sent}")
+    if no_telegram:
+        logger.info("Telegram report skipped (--no-telegram flag set)")
+    else:
+        reporter = TelegramReporter()
+        sent = reporter.send_daily_report(balance, portfolio, history.get("summary", {}), top_markets)
+        logger.info(f"Report Telegram send result: {sent}")
 
     status_file = "/root/dotm-sniper/current_status.json"
     try:

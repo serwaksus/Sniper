@@ -381,7 +381,7 @@ def _notify_position_closed(slug, pos_data):
             computed_pnl_abs = 0
         if TELEGRAM_REPORTER:
             TELEGRAM_REPORTER.alert_convergence(
-                slug=slug,
+                market_slug=slug,
                 question=pos_data.get(POS_MARKET_QUESTION, "Unknown"),
                 pnl_pct=computed_pnl_pct,
                 pnl_abs=computed_pnl_abs,
@@ -395,7 +395,7 @@ def _notify_partial_fill(slug, pos_data, filled, fill_price=None):
         if TELEGRAM_REPORTER:
             fp = fill_price or TP_LIMIT_PRICE
             TELEGRAM_REPORTER.alert_take_profit(
-                slug=slug,
+                market_slug=slug,
                 question=pos_data.get("question", "Unknown"),
                 pnl_pct=((fp - pos_data.get(POS_ENTRY_PRICE, 0)) / pos_data.get(POS_ENTRY_PRICE, 1)) * 100 if pos_data.get(POS_ENTRY_PRICE, 0) > 0 else 0,
                 pnl_abs=filled * (fp - pos_data.get(POS_ENTRY_PRICE, 0))
@@ -745,7 +745,7 @@ def _execute_emergency_exit(slug, pos_data, reason):
         if TELEGRAM_REPORTER:
             try:
                 TELEGRAM_REPORTER.alert_stop_loss(
-                    slug=slug,
+                    market_slug=slug,
                     question=pos_data.get(POS_MARKET_QUESTION, "Unknown"),
                     pnl_pct=actual_pnl_pct,
                     pnl_abs=actual_pnl_abs
