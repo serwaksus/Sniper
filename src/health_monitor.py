@@ -336,7 +336,9 @@ def run_hourly_report() -> list[str]:
         issues.append(first_line)
         logger.info(f"[HOURLY] {name}: ISSUE [{alert_key}]")
 
-    ts = datetime.now().strftime("%m/%d %H:%M")
+    import pytz
+    msk_tz = pytz.timezone("Europe/Moscow")
+    ts = datetime.now(msk_tz).strftime("%m/%d %H:%M MSK")
     if not issues:
         logger.info(f"[HOURLY] ({ts}): All 25 checks OK")
         return []
