@@ -355,8 +355,27 @@ Rules:
             "market_price": market["price"],
         })
         if ml_used:
-            logger.info(f"[ML] predict={ml_pred:.1%} vs llm={p_model:.1%}")
-            p_model = 0.6 * ml_pred + 0.4 * p_model
+            logger.info(f"[ML] lgbm predict={ml_pred:.1%} vs llm={p_model:.1%}")
+
+    sgd_pred: float | None = None
+    with contextlib.suppress(Exception):
+        from online_learner import online_predict
+        sgd_pred = online_predict({
+            "p_model": p_model,
+            "confidence": confidence,
+            "metaculus_prob": metaculus_prob_val,
+            "price": market["price"],
+            "market_price": market["price"],
+        })
+
+    if ml_used and sgd_pred is not None:
+        p_model = 0.3 * sgd_pred + 0.3 * ml_pred + 0.4 * p_model
+        logger.info(f"[ML] blended: sgd={sgd_pred:.1%} + lgbm={ml_pred:.1%} + llm → {p_model:.1%}")
+    elif ml_used:
+        p_model = 0.6 * ml_pred + 0.4 * p_model
+    elif sgd_pred is not None:
+        p_model = 0.5 * sgd_pred + 0.5 * p_model
+        logger.info(f"[ML] sgd-only: sgd={sgd_pred:.1%} + llm → {p_model:.1%}")
 
     settings = _sp_get_settings()
 

@@ -12,6 +12,7 @@ from calibration_tracker import log_calibration_entry, detect_model_drift
 from config import BURN_IN_TRADES, MIN_P_MODEL, MIN_TRADES_FOR_WEIGHT as MIN_TRADES_FOR_WEIGHT_ADJUSTMENT, BAYESIAN_PRIOR_STRENGTH
 from schema import (
     HYP_CLUSTERS,
+    HYP_CONFIDENCE,
     HYP_DB_HYPOTHESES,
     HYP_DB_RESOLVED, HYP_EXIT_PRICE, HYP_EXIT_TYPE, HYP_FACTORS,
     HYP_MARKET_PRICE, HYP_OUTCOME, HYP_P_MODEL, HYP_PNL_AT_EXIT,
@@ -382,6 +383,23 @@ def resolve_hypotheses() -> None:
             learn_from_results(db)
 
         for h in db.get(HYP_DB_RESOLVED, []):
+            if h.get(HYP_OUTCOME) in ("YES", "NO"):
+                with contextlib.suppress(Exception):
+                    from online_learner import online_train_on_resolved
+                    resolved_yes = h[HYP_OUTCOME] == "YES"
+                    online_train_on_resolved({
+                        "p_model": h.get(HYP_P_MODEL, 0),
+                        "confidence": h.get(HYP_CONFIDENCE, 0),
+                        "metaculus_prob": h.get("metaculus_prob", 0),
+                        "price": h.get(HYP_MARKET_PRICE, 0),
+                        "market_price": h.get(HYP_MARKET_PRICE, 0),
+                        "buzz_score": h.get("buzz_score", 0),
+                        "volume_ratio": h.get("volume_ratio", 1.0),
+                        "end_date_iso": h.get("end_date_iso", ""),
+                        "slug": h.get(HYP_SLUG, ""),
+                    }, resolved_yes=resolved_yes)
+
+        for h in db.get(HYP_DB_RESOLVED, []):
             if h.get(HYP_OUTCOME) in ("YES", "NO") and h.get(HYP_P_MODEL) is not None:
                 with contextlib.suppress(Exception):
                     log_calibration_entry(
@@ -403,3 +421,9 @@ def resolve_hypotheses() -> None:
                 logger.warning(f"[CALIBRATION] {drift_alert}")
         except Exception as e:
             logger.warning(f"[drift_detect] {type(e).__name__}: {e}")
+
+        with contextlib.suppress(Exception):
+            from online_learner import online_detect_drift
+            drift = online_detect_drift()
+            if drift:
+                logger.warning(f"[ONLINE-ML] Feature drift: {drift}")
