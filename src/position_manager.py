@@ -6,6 +6,8 @@ import os
 from collections import defaultdict
 from typing import Any
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 logger = logging.getLogger(__name__)
@@ -175,40 +177,81 @@ def check_category_limits(new_market: dict[str, Any], new_order_value: float, to
     return True, "OK"
 
 
-def position_size(p_model: float, market_price: float, balance: float, confidence: float = 1.0, best_ask: float | None = None, cluster: str | None = None, bid_liquidity: float | None = None) -> int:
+def _mean_std_to_beta(mean: float, std: float) -> tuple[float, float]:
+    """Convert (mean, std) to Beta distribution parameters (alpha, beta)."""
+    if std <= 0 or mean <= 0 or mean >= 1:
+        return max(mean * 100, 1), max((1 - mean) * 100, 1)
+    var = std * std
+    t = mean * (1 - mean) / var - 1
+    if t <= 0:
+        return max(mean * 100, 1), max((1 - mean) * 100, 1)
+    alpha = mean * t
+    beta_param = (1 - mean) * t
+    return max(alpha, 0.01), max(beta_param, 0.01)
+
+
+def bayesian_kelly(price: float, p_mean: float, p_std: float,
+                   risk_aversion: float = 2.0, n_samples: int = 500) -> tuple[float, float]:
     """
-    Fractional Kelly position sizing with confidence weighting.
+    Bayesian Kelly Criterion with uncertainty-aware position sizing.
 
-    Kelly Criterion formula: f = (p * b - q) / b
-      p = p_model (our estimated true probability)
-      q = 1 - p
-      b = payout coefficient = (1 - price) / price
-           (net odds received on winning YES bet)
+    Instead of using point estimate p_model, integrates Kelly over the
+    full posterior distribution Beta(alpha, beta) fitted from (p_mean, p_std).
 
-    The Kelly fraction is reduced by two factors:
-      1. FRACTIONAL_KELLY_MULTIPLIER (default 0.25 = "quarter Kelly")
-         Quarter Kelly is a conservative approach that reduces volatility
-         while still capturing most of the edge
-      2. confidence score acts as an additional multiplier since high
-         confidence in our probability estimate justifies a larger bet
-
-    Hard limits enforced:
-      - Minimum order: $5 (exchange fee protection)
-      - Cluster-aware max cap:
-          * "other" cluster: OTHER_BOOST_POS_PCT (3.5% of balance)
-          * all others: BASE_POS_PCT (2% of balance)
-      - Absolute ceiling: MAX_POS_PCT (10%)
+    This automatically reduces position size when uncertainty is high,
+    preventing overbetting on unreliable probability estimates.
 
     Args:
-        p_model: our estimated probability (0.0 to 1.0)
-        market_price: current Polymarket price (used if best_ask not provided)
-        balance: current account balance in dollars
-        confidence: our confidence in p_model estimate (0.0 to 1.0)
-        best_ask: best ask price from order book (more accurate than midpoint)
-        cluster: primary cluster name for position sizing boost
+        price: current market price
+        p_mean: our probability estimate (e.g. 0.12)
+        p_std: uncertainty of estimate (e.g. 0.05)
+        risk_aversion: higher = more conservative (default 2.0)
+        n_samples: Monte Carlo integration points (500 = fast + accurate)
 
     Returns:
-        Dollar amount to bet
+        (kelly_fraction, uncertainty_penalty) tuple
+    """
+    if p_mean <= 0 or price <= 0 or price >= 1:
+        return 0.0, 0.0
+
+    p_std = max(p_std, 0.01)
+    p_std = min(p_std, p_mean * 0.95, (1 - p_mean) * 0.95)
+
+    alpha, beta_param = _mean_std_to_beta(p_mean, p_std)
+
+    fee = 0.01
+    b = (1 - price - fee) / price
+
+    samples = np.random.default_rng(42).beta(alpha, beta_param, n_samples)
+    samples = np.clip(samples, 0.001, 0.999)
+
+    kelly_values = (b * samples - (1 - samples)) / b
+    kelly_values = np.maximum(kelly_values, 0)
+
+    expected_kelly = float(np.mean(kelly_values))
+
+    uncertainty_penalty = 1.0 / (1.0 + risk_aversion * (p_std / max(p_mean, 0.01)))
+
+    return expected_kelly * uncertainty_penalty, uncertainty_penalty
+
+
+def _confidence_to_std(p_model: float, confidence: float) -> float:
+    """Convert (p_model, confidence) to estimated standard deviation.
+
+    High confidence (0.9) -> low std (5% of p_model)
+    Low confidence (0.5) -> high std (50% of p_model)
+    """
+    uncertainty = 1.0 - confidence
+    return p_model * (0.05 + 0.45 * uncertainty)
+
+
+def position_size(p_model: float, market_price: float, balance: float, confidence: float = 1.0, best_ask: float | None = None, cluster: str | None = None, bid_liquidity: float | None = None) -> int:
+    """
+    Bayesian Kelly position sizing with confidence-based uncertainty.
+
+    Uses bayesian_kelly() instead of point-estimate Kelly to account
+    for uncertainty in p_model. Higher confidence -> lower uncertainty ->
+    larger position. Lower confidence -> higher uncertainty -> smaller position.
     """
     if not isinstance(p_model, (int, float)) or p_model < 0:
         return 0
@@ -223,8 +266,6 @@ def position_size(p_model: float, market_price: float, balance: float, confidenc
         logger.warning("[KELLY] market_price <= 0, using minimum $5")
         return 0
 
-    # Prefer best_ask for Kelly calculation (actual executable price)
-    # vs market_price which might be midpoint with poor liquidity
     effective_price = market_price
 
     if effective_price <= 0.001:
@@ -232,41 +273,31 @@ def position_size(p_model: float, market_price: float, balance: float, confidenc
         return 0
     if effective_price >= 0.999:
         return 0
-    fee = 0.01  # 1% Polymarket fee
-    b = (1 - effective_price - fee) / effective_price
 
-    p = p_model
-    q = 1 - p
-    prob_ratio = p / market_price if market_price > 0 else 0
-    kelly_full = (b * p - q) / b
+    prob_ratio = p_model / market_price if market_price > 0 else 0
 
-    logger.info(f"[KELLY] p={p:.3f}, b={b:.2f}, q={q:.3f}, kelly_full={kelly_full:.4f}")
-
-    # Reject negative Kelly (no edge case)
-    if kelly_full <= 0:
-        logger.info(f"[KELLY] kelly_full={kelly_full:.4f} <= 0, no edge - skipping")
-        return 0
-
-    # Reject if our probability estimate is too low
     from dotm_sniper import get_settings
     min_p_model = get_settings().get("min_p_model", MIN_P_MODEL)
-    if p < min_p_model:
-        logger.info(f"[KELLY] p_model={p:.1%} < MIN_P_MODEL={min_p_model:.1%}, skipping")
+    if p_model < min_p_model:
+        logger.info(f"[KELLY] p_model={p_model:.1%} < MIN_P_MODEL={min_p_model:.1%}, skipping")
         return 0
 
-    # Step 1: Fractional Kelly reduction (adaptive by balance tier)
+    # Bayesian Kelly with uncertainty from confidence
+    p_std = _confidence_to_std(p_model, confidence)
+    bayesian_frac, uncertainty_penalty = bayesian_kelly(
+        effective_price, p_model, p_std, risk_aversion=2.0
+    )
+
+    if bayesian_frac <= 0:
+        logger.info(f"[KELLY] bayesian_kelly={bayesian_frac:.4f} <= 0, no edge - skipping")
+        return 0
+
     tier = get_tier_params(balance)
     kelly_mult = tier["kelly_mult"]
-    kelly_fraction = kelly_full * kelly_mult
+    kelly_fraction = bayesian_frac * kelly_mult
 
-    # Step 2: Confidence weighting (high confidence = bigger bet)
-    kelly_with_confidence = kelly_fraction * confidence
-
-    # Cluster-aware position cap
-    # Named clusters: Kelly decides up to max_pct (10%+ depending on tier)
-    # "other" cluster: conservative base_pct cap
     effective_cap = tier["base_pct"] if cluster == "other" else tier["max_pct"]
-    size_pct = min(kelly_with_confidence, effective_cap)
+    size_pct = min(kelly_fraction, effective_cap)
 
     kelly_dollars = round(balance * size_pct)
     if kelly_dollars < 5:
@@ -289,9 +320,15 @@ def position_size(p_model: float, market_price: float, balance: float, confidenc
             logger.info(f"[KELLY] Liquidity cap: ${kelly_dollars} -> ${liquidity_cap} (bid_liq=${bid_liquidity:.0f} * 0.20)")
             kelly_dollars = liquidity_cap
 
+    # Log classical Kelly for comparison
+    fee = 0.01
+    b_classical = (1 - effective_price - fee) / effective_price
+    classical_kelly = max(0, (b_classical * p_model - (1 - p_model)) / b_classical)
+
     logger.info(
-        f"[KELLY] tier={tier['tier']} kelly_full={kelly_full:.4f} * frac={kelly_mult:.2f} "
-        f"* conf={confidence:.2f} = {kelly_with_confidence:.4f} "
+        f"[KELLY] tier={tier['tier']} bayesian={bayesian_frac:.4f} "
+        f"(classical={classical_kelly:.4f}, penalty={uncertainty_penalty:.2f}, "
+        f"p_std={p_std:.3f}) * frac={kelly_mult:.2f} "
         f"=> ${kelly_dollars} ({size_pct:.2%} of ${balance:.2f}) "
         f"[cap={effective_cap:.1%}, cluster={cluster}]"
     )

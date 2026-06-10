@@ -222,3 +222,55 @@ class TestConvictionAdjustedSize:
     def test_minimum_5(self):
         result = pm.conviction_adjusted_size(10, 5.0, 10.0)
         assert result >= 5
+
+
+class TestBayesianKelly:
+    def test_high_confidence_larger_than_low(self):
+        high = pm.position_size(0.12, 0.05, 10000, confidence=0.90, cluster="test")
+        low = pm.position_size(0.12, 0.05, 10000, confidence=0.55, cluster="test")
+        assert high >= low
+
+    def test_bayesian_smaller_than_classical(self):
+        k_b, _ = pm.bayesian_kelly(0.05, 0.12, 0.05)
+        fee = 0.01
+        b = (1 - 0.05 - fee) / 0.05
+        k_c = (b * 0.12 - 0.88) / b
+        assert 0 < k_b < k_c
+
+    def test_zero_std_converges_to_classical(self):
+        k_b, penalty = pm.bayesian_kelly(0.05, 0.12, 0.001)
+        fee = 0.01
+        b = (1 - 0.05 - fee) / 0.05
+        k_c = (b * 0.12 - 0.88) / b
+        assert abs(k_b - k_c) < 0.02
+
+    def test_no_edge_returns_zero(self):
+        k_b, _ = pm.bayesian_kelly(0.50, 0.10, 0.02)
+        assert k_b <= 0.001
+
+    def test_uncertainty_penalty_decreases_size(self):
+        _, p1 = pm.bayesian_kelly(0.05, 0.12, 0.01)
+        _, p2 = pm.bayesian_kelly(0.05, 0.12, 0.08)
+        assert p1 > p2
+
+    def test_confidence_to_std(self):
+        s_high = pm._confidence_to_std(0.12, 0.90)
+        s_low = pm._confidence_to_std(0.12, 0.50)
+        assert s_high < s_low
+        assert s_high > 0
+        assert s_low > 0
+
+    def test_beta_params_valid(self):
+        a, b = pm._mean_std_to_beta(0.12, 0.05)
+        assert a > 0
+        assert b > 0
+        mean = a / (a + b)
+        assert abs(mean - 0.12) < 0.05
+
+    def test_beta_params_edge_cases(self):
+        a, b = pm._mean_std_to_beta(0.5, 0.0)
+        assert a > 0 and b > 0
+        a, b = pm._mean_std_to_beta(0.0, 0.1)
+        assert a >= 0.01
+        a, b = pm._mean_std_to_beta(1.0, 0.1)
+        assert b >= 0.01
