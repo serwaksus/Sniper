@@ -571,6 +571,15 @@ from signal_pipeline import (fetch_markets,  # noqa: F401
 if __name__ == "__main__":
     single_run = len(sys.argv) > 1 and sys.argv[1] == "--once"
 
+    if "--train-ml" in sys.argv:
+        from ml_predictor import train_if_ready
+        result = train_if_ready()
+        if result:
+            print(f"Model trained: {result}")
+        else:
+            print("Not enough data for training")
+        sys.exit(0)
+
     if not check_and_write_pid(PID_FILE):
         sys.exit(1)
     try:

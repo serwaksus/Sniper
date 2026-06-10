@@ -40,3 +40,4 @@ ENV/
 sniper.db
 sniper.db-shm
 sniper.db-wal
+ml_models/

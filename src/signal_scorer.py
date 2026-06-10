@@ -343,6 +343,21 @@ Rules:
     metaculus_prob_val = metaculus_gap.get("metaculus_prob") if metaculus_gap else None
     p_model, _was_dampened = calibrate_prediction(p_model, market["price"], metaculus_prob_val, cluster=cluster)
 
+    ml_pred = 0.0
+    ml_used = False
+    with contextlib.suppress(Exception):
+        from ml_predictor import predict as _ml_predict
+        ml_pred, ml_used = _ml_predict({
+            "p_model": p_model,
+            "confidence": confidence,
+            "metaculus_prob": metaculus_prob_val,
+            "price": market["price"],
+            "market_price": market["price"],
+        })
+        if ml_used:
+            logger.info(f"[ML] predict={ml_pred:.1%} vs llm={p_model:.1%}")
+            p_model = 0.6 * ml_pred + 0.4 * p_model
+
     settings = _sp_get_settings()
 
     min_p_model = settings.get("min_p_model", MIN_P_MODEL)
@@ -420,5 +435,7 @@ Rules:
         "signal_score": signal_score,
         "min_signal": min_signal,
         "reasoning": f"score={signal_score:.0f}/{min_signal}(horizon), ratio={prob_ratio:.2f}x, conf={confidence:.2f}, src={source_signal}, meta_align={metaculus_alignment:+d}",
-        "best_ask": best_ask
+        "best_ask": best_ask,
+        "ml_pred": ml_pred,
+        "ml_used": ml_used,
     }
