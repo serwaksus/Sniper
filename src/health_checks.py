@@ -109,13 +109,28 @@ def _send_telegram(message: str) -> bool:
 def _check_no_trades(lines: list[str], state: dict) -> tuple[str, str] | None:
     trade_signals = sum(1 for line in lines if "=> BUY" in line)
     blocked = sum(1 for line in lines if "TRADE-BLOCKED" in line)
-    executed = sum(1 for line in lines if "Bought:" in line and "Bought: 0" not in line)
-    sum(1 for line in lines if "DOTM SNIPER" in line and "starting" in line.lower())
+    slippage_blocked = sum(1 for line in lines if "Slippage guard" in line)
+    diverge_overrides = sum(1 for line in lines if "DIVERGE override" in line or "micro-position" in line)
+    executed = sum(1 for line in lines if "[JOURNAL] BUY:" in line)
+    liquidity_skipped = sum(1 for line in lines if "LIQUIDITY-SKIP" in line)
 
     issues = []
+    if executed > 0:
+        return None
+
     if trade_signals > 0 and executed == 0:
-        block_rate = blocked / max(trade_signals, 1)
-        issues.append(f"Advisor blocks {blocked}/{trade_signals} ({block_rate:.0%}). 0 trades executed")
+        parts = []
+        if blocked > 0:
+            parts.append(f"advisor blocked {blocked}")
+        if slippage_blocked > 0:
+            parts.append(f"slippage guard {slippage_blocked}")
+        if liquidity_skipped > 0:
+            parts.append(f"liquidity skip {liquidity_skipped}")
+        if diverge_overrides > 0:
+            parts.append(f"diverge override {diverge_overrides}")
+        if not parts:
+            parts.append(f"{trade_signals} signals, 0 executed — check logs")
+        issues.append(f"0 trades from {trade_signals} signals. " + ", ".join(parts))
     elif trade_signals == 0 and executed == 0:
         p_models = re.findall(r"p_model=([0-9.]+)%", " ".join(lines[-500:]))
         if p_models:
@@ -225,7 +240,10 @@ def _check_api_health(lines: list[str], state: dict) -> tuple[str, str] | None:
     if gamma_fails >= 2:
         issues.append(f"Gamma API: {gamma_fails} failures in last hour")
 
-    pm_fails = sum(1 for line in hour_lines if "pm-trader" in line.lower() and ("failed" in line.lower() or "error" in line.lower()))
+    pm_fails = sum(1 for line in hour_lines
+                    if ("[ORDER]" in line or "[SNIPER]" in line or "[BALANCE]" in line)
+                    and "pm-trader" in line.lower()
+                    and ("failed" in line.lower() or "error" in line.lower()))
     if pm_fails >= 2:
         issues.append(f"pm-trader: {pm_fails} errors in last hour")
 
@@ -360,12 +378,13 @@ def _check_calibration_overfit(state: dict) -> tuple[str, str] | None:
     for cluster, data in model.items():
         y_thresh = data.get("y_thresholds_", [])
         x_thresh = data.get("X_thresholds_", [])
-        if y_thresh and x_thresh:
+        n_samples = data.get("n_samples_", 0)
+        if y_thresh and x_thresh and n_samples >= 10:
             max_y = max(y_thresh)
             max_y_idx = y_thresh.index(max_y)
             x_at_max = x_thresh[max_y_idx]
             if max_y >= 0.90 and x_at_max < 0.30:
-                issues.append(f"'{cluster}': p>{x_at_max:.1%} → {max_y:.0%} ({len(y_thresh)} pts)")
+                issues.append(f"'{cluster}': p>{x_at_max:.1%} → {max_y:.0%} ({len(y_thresh)} pts, n={n_samples})")
     if not issues:
         return None
     return "CALIB_OVERFIT", "⚠️ <b>Calibration overfit</b>\n" + "\n".join(f"• {i}" for i in issues)
@@ -503,34 +522,44 @@ def _check_llm_error_rate(state: dict) -> tuple[str, str] | None:
 # ── Check 18: Screen session integrity ─────────────────────────
 def _check_screen_sessions(state: dict) -> tuple[str, str] | None:
     issues = []
-    for proc_name in ["dotm_sniper.py", "hermes_advisor.py"]:
+    for svc, proc in [("sniper", "dotm_sniper.py"), ("hermes", "hermes_advisor.py")]:
         try:
             res = subprocess.run(
-                ["ps", "aux"],
+                ["systemctl", "is-active", svc],
                 capture_output=True, text=True, timeout=5, start_new_session=True
             )
-            count = sum(1 for line in res.stdout.split("\n")
-                        if f"python3 src/{proc_name}" in line
-                        and "SCREEN" not in line and "bash -c" not in line)
-            if count == 0:
-                issues.append(f"{proc_name}: NOT RUNNING")
-            elif count > 1:
-                issues.append(f"{proc_name}: {count} instances (possible fork)")
+            status = res.stdout.strip()
+            if status != "active":
+                try:
+                    res2 = subprocess.run(
+                        ["ps", "aux"], capture_output=True, text=True, timeout=5, start_new_session=True
+                    )
+                    count = sum(1 for line in res2.stdout.split("\n")
+                                if f"python3 src/{proc}" in line
+                                and "SCREEN" not in line and "bash -c" not in line)
+                    if count == 0:
+                        issues.append(f"{proc}: NOT RUNNING (systemd={status}, no process)")
+                except Exception as e:
+                    logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
+                    issues.append(f"{proc}: not active (systemd={status})")
+        except FileNotFoundError:
+            try:
+                res = subprocess.run(
+                    ["ps", "aux"], capture_output=True, text=True, timeout=5, start_new_session=True
+                )
+                count = sum(1 for line in res.stdout.split("\n")
+                            if f"python3 src/{proc}" in line
+                            and "SCREEN" not in line and "bash -c" not in line)
+                if count == 0:
+                    issues.append(f"{proc}: NOT RUNNING")
+                elif count > 1:
+                    issues.append(f"{proc}: {count} instances (possible fork)")
+            except Exception as e:
+                logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
+                issues.append(f"{proc}: check failed ({str(e)[:50]})")
         except Exception as e:
             logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
-            issues.append(f"{proc_name}: check failed ({str(e)[:50]})")
-
-    try:
-        res = subprocess.run(
-            ["screen", "-ls"],
-            capture_output=True, text=True, timeout=5, start_new_session=True
-        )
-        sockets = [line for line in res.stdout.split("\n") if "Detached" in line or "Attached" in line]
-        if len(sockets) < 2:
-            issues.append(f"screen sessions: only {len(sockets)} found (need 2)")
-    except Exception as e:
-        logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
-        pass
+            issues.append(f"{proc}: check failed ({str(e)[:50]})")
 
     if issues:
         return ("SCREEN_HEALTH",

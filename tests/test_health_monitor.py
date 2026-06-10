@@ -66,7 +66,7 @@ class TestCheckNoTrades:
     def test_executed_trades_ok(self):
         lines = [
             "2025-01-01 00:00:00 INFO => BUY signal",
-            "2025-01-01 00:00:00 INFO Bought: 100 shares",
+            "2025-01-01 00:00:00 INFO [JOURNAL] BUY: some-market pnl=+0.0% reason=test",
         ]
         state = {}
         result = hm._check_no_trades(lines, state)
