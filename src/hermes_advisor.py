@@ -27,8 +27,8 @@ from config import (
     HERMES_PID_FILE, HERMES_LOG,
 )
 from schema import (
-    POS_ENTRY_PRICE, POS_HIGH_PRICE, POS_IN_EMERGENCY_EXIT,
-    POS_MARKET_QUESTION,
+    POS_ENTRY_PRICE, POS_IN_EMERGENCY_EXIT,
+    POS_MARKET_QUESTION, POS_OUTCOME,
     POS_PARTIAL_FILLS, POS_PARTIAL_PROCEEDS,
     POS_SHARES, POS_SHARES_AT_TP_OPEN,
 )
@@ -280,21 +280,36 @@ def reconcile_positions() -> None:
 def _notify_position_closed(slug: str, pos_data: dict) -> None:
     try:
         entry = pos_data.get(POS_ENTRY_PRICE, 0)
-        high = pos_data.get(POS_HIGH_PRICE, entry)
-        if entry > 0 and high > 0:
-            computed_pnl_pct = (high - entry) / entry * 100
-            computed_pnl_abs = (high - entry) * pos_data.get(POS_SHARES, 0)
+        shares = pos_data.get(POS_SHARES, 0)
+        outcome = pos_data.get(POS_OUTCOME, "yes")
+        resolved_to = pos_data.get("resolved_to", 0)
+        if resolved_to > 0:
+            exit_price = resolved_to
+        elif outcome == "yes":
+            exit_price = 1.0
         else:
-            computed_pnl_pct = 0
-            computed_pnl_abs = 0
+            exit_price = 0.0
+        if entry > 0 and exit_price > 0:
+            pnl_pct = (exit_price - entry) / entry * 100
+            pnl_abs = (exit_price - entry) * shares
+        else:
+            pnl_pct = 0
+            pnl_abs = 0
         if TELEGRAM_REPORTER:
-            TELEGRAM_REPORTER.alert_convergence(
-                market_slug=slug,
-                question=pos_data.get(POS_MARKET_QUESTION, "Unknown"),
-                pnl_pct=computed_pnl_pct,
-                pnl_abs=computed_pnl_abs,
-                convergence_ratio=0
-            )
+            if pnl_pct >= 0:
+                TELEGRAM_REPORTER.alert_take_profit(
+                    market_slug=slug,
+                    question=pos_data.get(POS_MARKET_QUESTION, "Unknown"),
+                    pnl_pct=pnl_pct,
+                    pnl_abs=pnl_abs,
+                )
+            else:
+                TELEGRAM_REPORTER.alert_stop_loss(
+                    market_slug=slug,
+                    question=pos_data.get(POS_MARKET_QUESTION, "Unknown"),
+                    pnl_pct=pnl_pct,
+                    pnl_abs=pnl_abs,
+                )
     except Exception as e:
         logger.warning(f"[HERMES] Position closed notification failed: {e}")
 

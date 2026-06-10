@@ -154,18 +154,20 @@ class TestExecuteEmergencyExit:
 class TestNotificationKwargs:
     @patch("hermes_advisor.TELEGRAM_REPORTER")
     def test_position_closed_notification_uses_market_slug(self, mock_reporter):
-        mock_reporter.alert_convergence = MagicMock()
+        mock_reporter.alert_take_profit = MagicMock()
         import hermes_advisor as ha
         ha._notify_position_closed("test-slug", {
             "entry_price": 0.10,
-            "high_price": 0.20,
+            "outcome": "yes",
             "shares": 100,
             "market_question": "Q?",
         })
-        mock_reporter.alert_convergence.assert_called_once()
-        call_kwargs = mock_reporter.alert_convergence.call_args[1]
+        mock_reporter.alert_take_profit.assert_called_once()
+        call_kwargs = mock_reporter.alert_take_profit.call_args[1]
         assert "market_slug" in call_kwargs
         assert call_kwargs["market_slug"] == "test-slug"
+        assert call_kwargs["pnl_pct"] == 900.0
+        assert call_kwargs["pnl_abs"] == 90.0
 
 
 class TestLogEmergencyExit:
