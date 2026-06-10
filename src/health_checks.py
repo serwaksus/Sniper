@@ -379,7 +379,7 @@ def _check_calibration_overfit(state: dict) -> tuple[str, str] | None:
         y_thresh = data.get("y_thresholds_", [])
         x_thresh = data.get("X_thresholds_", [])
         n_samples = data.get("n_samples_", 0)
-        if y_thresh and x_thresh and n_samples >= 10:
+        if y_thresh and x_thresh and n_samples >= 20:
             max_y = max(y_thresh)
             max_y_idx = y_thresh.index(max_y)
             x_at_max = x_thresh[max_y_idx]

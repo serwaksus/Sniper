@@ -16,15 +16,12 @@ from schema import (
 )
 
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[
-        RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3),
-        logging.StreamHandler()
-    ]
-)
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    logger.addHandler(RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=3))
+    logger.addHandler(logging.StreamHandler())
+    logger.propagate = False
 
 EQUITY_FILE = EQUITY_CURVE_FILE
 

@@ -163,7 +163,8 @@ def _merge_save_positions(deleted_slugs: set[str] | None = None, updated_positio
 
 
 def evaluate_emergency_exit() -> None:
-    from hermes_advisor import TELEGRAM_REPORTER
+    from hermes_advisor import TELEGRAM_REPORTER as _tg
+    TELEGRAM_REPORTER = _tg
     logger.info("[HERMES] Starting emergency exit evaluation...")
 
     os.makedirs("logs", exist_ok=True)

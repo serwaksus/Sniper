@@ -89,8 +89,13 @@ def _handle_shutdown(signum: int, frame: Any) -> None:
     _shutdown_requested = True
     logger.info("[HERMES] Shutdown signal received, finishing current cycle...")
 
-signal.signal(signal.SIGTERM, _handle_shutdown)
-signal.signal(signal.SIGINT, _handle_shutdown)
+def _register_signal_handlers() -> None:
+    import threading
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _handle_shutdown)
+        signal.signal(signal.SIGINT, _handle_shutdown)
+
+_register_signal_handlers()
 
 RECONCILE_INTERVAL_SECONDS = 900
 NEWS_CHECK_INTERVAL_SECONDS = 600
