@@ -167,6 +167,17 @@ class TelegramReporter:
         cluster_text = format_cluster_report()
         msg += f"\n\n<pre>{html.escape(cluster_text)}</pre>"
 
+        with contextlib.suppress(Exception):
+            from market_graph import portfolio_diversification
+            pos_slugs = [p.get("market_slug", "") for p in portfolio if p.get("market_slug")]
+            if len(pos_slugs) >= 2:
+                div = portfolio_diversification(pos_slugs)
+                div_emoji = "🟢" if div["diversification_score"] > 0.7 else "🟡" if div["diversification_score"] > 0.4 else "🔴"
+                msg += f"\n{div_emoji} Diversification: <b>{div['diversification_score']:.2f}</b>"
+                msg += f" (density={div.get('density', 0):.2f})"
+                if div["recommendation"] != "OK":
+                    msg += f"\n⚠️ {html.escape(div['recommendation'])}"
+
         self._send(msg)
 
         return

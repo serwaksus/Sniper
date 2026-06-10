@@ -383,6 +383,11 @@ def _main_inner() -> None:
 
     print(f"📈 Candidates: {len(markets)} (pm-trader + {len(gamma_candidates)} gamma)")
 
+    from market_graph import build_graph_if_stale
+    build_graph_if_stale([{"slug": m.get("slug", ""), "question": m.get("question", ""),
+                           "price": m.get("price", 0), "clusters": m.get("clusters", [])}
+                          for m in markets])
+
     candidates_bought = 0
     available_balance = balance
 
@@ -521,6 +526,12 @@ def _main_inner() -> None:
                 continue
         else:
             print(f"   📰 News cache fresh for cluster '{cluster_key}', skipping news check")
+
+        from market_graph import check_correlation as _graph_check_corr
+        _corr = _graph_check_corr(m["slug"], list(position_slugs))
+        if _corr.get("correlated"):
+            logger.warning(f"[GRAPH] High correlation: {_corr['warnings']}")
+            estimated_size = max(5, estimated_size // 2)
 
         if execute_trade(m, estimated_size, factors, analysis, total_balance):
             candidates_bought += 1
