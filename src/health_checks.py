@@ -233,18 +233,18 @@ def _check_api_health(lines: list[str], state: dict) -> tuple[str, str] | None:
     issues = []
 
     llm_errors = sum(1 for line in hour_lines if "LLM error" in line or "LLM unavailable" in line)
-    if llm_errors >= 3:
+    if llm_errors >= 5:
         issues.append(f"DeepSeek: {llm_errors} errors in last hour")
 
     gamma_fails = sum(1 for line in hour_lines if "[GAMMA]" in line and "status=" in line and "200" not in line)
-    if gamma_fails >= 2:
+    if gamma_fails >= 3:
         issues.append(f"Gamma API: {gamma_fails} failures in last hour")
 
     pm_fails = sum(1 for line in hour_lines
                     if ("[ORDER]" in line or "[SNIPER]" in line or "[BALANCE]" in line)
                     and "pm-trader" in line.lower()
                     and ("failed" in line.lower() or "error" in line.lower()))
-    if pm_fails >= 2:
+    if pm_fails >= 5:
         issues.append(f"pm-trader: {pm_fails} errors in last hour")
 
     if not issues:

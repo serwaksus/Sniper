@@ -259,7 +259,7 @@ CRITICAL REGULATION FOR CONFIDENCE SCORING: Do NOT default to a flat 0.65 confid
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,
                     "max_tokens": 2000
-                }, timeout=90)
+                }, timeout=60)
                 break
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as _e:
                 if _attempt < 2:
@@ -580,7 +580,7 @@ Rules:
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
             "max_tokens": 2000
-        }, timeout=120)
+        }, timeout=60)
 
         resp_data = resp.json()
         msg = resp_data.get("choices", [{}])[0].get("message", {})
