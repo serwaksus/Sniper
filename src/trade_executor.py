@@ -17,6 +17,7 @@ from schema import (
     POS_MARKET_QUESTION, POS_METACULUS_PROB, POS_OUTCOME, POS_SHARES,
     POS_STOP_LOSS, POS_TRAILING_ON,
 )
+from db import record_trade
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,16 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
         approved, _verdict, _adv_conf, adv_reason = advisor_pre_check(market, analysis, estimated_size, balance)
         if not approved:
             logger.info(f"[TRADE-BLOCKED] {slug}: {adv_reason}")
+            with contextlib.suppress(Exception):
+                record_trade(mode="demo", slug=slug, action="skip", price=market["price"],
+                             size_usd=estimated_size, p_model=analysis.get("p_model", 0),
+                             confidence=analysis.get("confidence", 0),
+                             signal_score=analysis.get("signal_score", 0),
+                             prob_ratio=analysis.get("prob_ratio", 0),
+                             reason=f"advisor_veto: {adv_reason}",
+                             cluster=market.get("clusters", ["other"])[0] if market.get("clusters") else "",
+                             source="sniper",
+                             metadata={"advisor_verdict": _verdict, "advisor_blocked": True})
             return False
 
     if market["price"] < 0.10:
@@ -70,6 +81,16 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
     current_ask = get_best_ask(slug)
     if current_ask is not None and current_ask > market["price"] * (1 + max_slippage):
         logger.warning(f"[SNIPER] Slippage guard: ask={current_ask:.4f} > {max_slippage:.0%} above price={market['price']:.4f}, aborting")
+        with contextlib.suppress(Exception):
+            record_trade(mode="demo", slug=slug, action="skip", price=market["price"],
+                         size_usd=estimated_size, p_model=analysis.get("p_model", 0),
+                         confidence=analysis.get("confidence", 0),
+                         signal_score=analysis.get("signal_score", 0),
+                         prob_ratio=analysis.get("prob_ratio", 0),
+                         reason="slippage_guard",
+                         cluster=market.get("clusters", ["other"])[0] if market.get("clusters") else "",
+                         source="sniper",
+                         metadata={"slippage_blocked": True, "ask": current_ask})
         return False
 
     positions_db.update(slug, {
@@ -158,6 +179,21 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
             invested=estimated_size,
             reason=analysis.get("reasoning", "")[:100],
         )
+
+    with contextlib.suppress(Exception):
+        record_trade(mode="demo", slug=market[HYP_SLUG], action="buy",
+                     price=actual_price, size_usd=estimated_size, shares=shares,
+                     p_model=analysis.get("p_model", 0),
+                     confidence=analysis.get("confidence", 0),
+                     signal_score=analysis.get("signal_score", 0),
+                     prob_ratio=analysis.get("prob_ratio", 0),
+                     reason=analysis.get("reasoning", "")[:200],
+                     cluster=market.get("clusters", ["other"])[0] if market.get("clusters") else "",
+                     source="sniper",
+                     metadata={"factors": factors,
+                               "source_signal": analysis.get("source_signal", "default"),
+                               "advisor_verdict": "CONFIRM" if signal_score >= min_signal * 1.5 else "checked",
+                               "slippage_blocked": False})
 
     if _tr():
         meta_prob = analysis.get("p_model")

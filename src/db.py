@@ -15,6 +15,36 @@ from config import DB_PATH, POSITIONS_FILE, HYPOTHESIS_DB_FILE, SETTINGS_FILE
 logger = logging.getLogger(__name__)
 
 MIGRATIONS: list[tuple[int, str, str]] = [
+    (
+        1,
+        "create_trade_history",
+        """
+        CREATE TABLE IF NOT EXISTS trade_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            action TEXT NOT NULL,
+            price REAL,
+            size_usd REAL,
+            shares REAL,
+            p_model REAL,
+            confidence REAL,
+            signal_score REAL,
+            prob_ratio REAL,
+            reason TEXT,
+            outcome TEXT,
+            pnl_pct REAL,
+            pnl_usd REAL,
+            cluster TEXT,
+            source TEXT,
+            metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_trade_history_mode ON trade_history(mode);
+        CREATE INDEX IF NOT EXISTS idx_trade_history_slug ON trade_history(slug);
+        CREATE INDEX IF NOT EXISTS idx_trade_history_ts ON trade_history(ts);
+        """,
+    ),
 ]
 
 _local = threading.local()
@@ -363,3 +393,96 @@ def migrate_json_to_sqlite(json_path: str, table: str, key_col: str = "slug", va
                 count += 1
     conn.commit()
     return count
+
+
+def record_trade(mode: str, slug: str, action: str, price: float = 0, size_usd: float = 0,
+                  shares: float = 0, p_model: float = 0, confidence: float = 0,
+                  signal_score: float = 0, prob_ratio: float = 0, reason: str = "",
+                  cluster: str = "", source: str = "sniper", metadata: dict | None = None) -> int:
+    """Record a trade action in trade_history. Returns row id."""
+    from datetime import datetime, UTC
+    conn = _get_conn()
+    ts = datetime.now(UTC).isoformat()
+    metadata_json = json.dumps(metadata, default=str) if metadata else None
+    cur = conn.execute(
+        "INSERT INTO trade_history "
+        "(ts, mode, slug, action, price, size_usd, shares, p_model, confidence, "
+        "signal_score, prob_ratio, reason, outcome, pnl_pct, pnl_usd, cluster, source, metadata) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, ?)",
+        (ts, mode, slug, action, price, size_usd, shares, p_model, confidence,
+         signal_score, prob_ratio, reason, cluster, source, metadata_json),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_trade_outcome(slug: str, mode: str, pnl_pct: float, pnl_usd: float, outcome: str = "win") -> None:
+    """Update outcome when market resolves."""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE trade_history SET outcome = ?, pnl_pct = ?, pnl_usd = ? "
+        "WHERE slug = ? AND mode = ? AND outcome = 'pending'",
+        (outcome, pnl_pct, pnl_usd, slug, mode),
+    )
+    conn.commit()
+
+
+def load_trade_history(mode: str | None = None, limit: int = 100) -> list[dict]:
+    """Load trade history, optionally filtered by mode."""
+    conn = _get_conn()
+    if mode is not None:
+        rows = conn.execute(
+            "SELECT * FROM trade_history WHERE mode = ? ORDER BY ts DESC LIMIT ?",
+            (mode, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM trade_history ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        d = dict(row)
+        if d.get("metadata"):
+            d["metadata"] = json.loads(d["metadata"])
+        result.append(d)
+    return result
+
+
+def compare_modes() -> dict:
+    """Compare demo vs simulated performance. Returns stats dict."""
+    conn = _get_conn()
+
+    def _stats(m: str) -> dict:
+        rows = conn.execute(
+            "SELECT outcome, pnl_pct, pnl_usd FROM trade_history WHERE mode = ?",
+            (m,),
+        ).fetchall()
+        total = len(rows)
+        wins = sum(1 for r in rows if r["outcome"] == "win")
+        losses = sum(1 for r in rows if r["outcome"] == "loss")
+        pending = sum(1 for r in rows if r["outcome"] == "pending")
+        resolved = [r for r in rows if r["outcome"] in ("win", "loss")]
+        avg_pnl = sum(r["pnl_pct"] or 0 for r in resolved) / len(resolved) if resolved else 0
+        total_pnl = sum(r["pnl_usd"] or 0 for r in resolved)
+        return {
+            "total_trades": total,
+            "wins": wins,
+            "losses": losses,
+            "pending": pending,
+            "avg_pnl_pct": round(avg_pnl, 4),
+            "total_pnl_usd": round(total_pnl, 4),
+            "winrate": round(wins / (wins + losses), 4) if (wins + losses) > 0 else 0,
+        }
+
+    demo = _stats("demo")
+    simulated = _stats("simulated")
+    return {
+        "demo": demo,
+        "simulated": simulated,
+        "divergence": {
+            "pnl_diff_pct": round(demo["avg_pnl_pct"] - simulated["avg_pnl_pct"], 4),
+            "winrate_diff": round(demo["winrate"] - simulated["winrate"], 4),
+            "trade_count_diff": demo["total_trades"] - simulated["total_trades"],
+        },
+    }

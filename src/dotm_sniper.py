@@ -316,6 +316,10 @@ def _main_inner() -> None:
     repair_positions_file()
     cleanup_stale_orders()
 
+    with contextlib.suppress(Exception):
+        from smart_money import init_smart_money
+        init_smart_money()
+
     settings = get_settings()
     validate_settings(settings)
     last_backtest = settings.get(SETTINGS_LAST_BACKTEST, 0)

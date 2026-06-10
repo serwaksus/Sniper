@@ -64,6 +64,19 @@ def fetch_markets():
             if ttl_hours < MIN_TTL_HOURS:
                 continue
 
+            condition_token_id = ""
+            tokens_raw = m.get("tokens", [])
+            if isinstance(tokens_raw, str):
+                try:
+                    tokens_raw = json.loads(tokens_raw)
+                except Exception:
+                    tokens_raw = []
+            if isinstance(tokens_raw, list):
+                for t in tokens_raw:
+                    if isinstance(t, dict) and t.get("outcome", "").lower() == "yes":
+                        condition_token_id = t.get("token_id", "")
+                        break
+
             for outcome, price in zip(m.get("outcomes", []), m.get("outcome_prices", []), strict=False):
                 try:
                     price = float(price)
@@ -92,7 +105,8 @@ def fetch_markets():
                         "end_date": end_date,
                         "ttl_hours": ttl_hours,
                         HYP_CLUSTERS: clusters,
-                        "oracle_type": m.get("oracle_type", "unknown")
+                        "oracle_type": m.get("oracle_type", "unknown"),
+                        "condition_token_id": condition_token_id,
                     })
 
         candidates.sort(key=lambda x: -x["volume"])
@@ -169,6 +183,19 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
                     logger.debug(f"[ttl_parse] {type(e).__name__}: {e}")
             if ttl_hours < MIN_TTL_HOURS:
                 continue
+            condition_token_id = ""
+            gamma_tokens = m.get("tokens", [])
+            if isinstance(gamma_tokens, str):
+                try:
+                    gamma_tokens = json.loads(gamma_tokens)
+                except Exception:
+                    gamma_tokens = []
+            if isinstance(gamma_tokens, list):
+                for t in gamma_tokens:
+                    if isinstance(t, dict) and t.get("outcome", "").lower() == "yes":
+                        condition_token_id = t.get("token_id", "")
+                        break
+
             for outcome, price_str in zip(outcomes, outcome_prices, strict=False):
                 try:
                     price = float(price_str)
@@ -196,6 +223,7 @@ def fetch_gamma_dotm_candidates(existing_slugs: set) -> list:
                     HYP_CLUSTERS: clusters,
                     "oracle_type": m.get("oracleType", m.get("oracle_type", "unknown")),
                     "source": "gamma",
+                    "condition_token_id": condition_token_id,
                 })
         candidates.sort(key=lambda x: -x["volume"])
         seen = set()

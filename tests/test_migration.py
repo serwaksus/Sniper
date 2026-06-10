@@ -10,11 +10,16 @@ import db as db_module
 
 def _setup_db(tmp_path):
     db_module.DB_PATH = str(tmp_path / "test.db")
-    if hasattr(db_module._local, 'conn') and db_module._local.conn is not None:
+    if hasattr(db_module._local, "conn") and db_module._local.conn is not None:
         db_module._local.conn.close()
         db_module._local.conn = None
     db_module._initialized = False
-    db_module.init_db()
+    original_migrations = db_module.MIGRATIONS
+    db_module.MIGRATIONS = []
+    try:
+        db_module.init_db()
+    finally:
+        db_module.MIGRATIONS = original_migrations
 
 
 class TestMigration:

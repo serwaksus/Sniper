@@ -434,10 +434,11 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
             continue
 
         metaculus_prob_val = metaculus_cache.get(slug) if metaculus_cache else None
-        signal_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days = _compute_signal_score(
+        signal_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days, orderbook_score, _ob_reason = _compute_signal_score(
             p_model, market_price, factors, bi.get("volume", 0), bi.get("ttl_hours", 999),
             cluster, slug=slug, question=bi.get("question", ""),
-            metaculus_prob_val=metaculus_prob_val, settings=settings
+            metaculus_prob_val=metaculus_prob_val, settings=settings,
+            condition_token_id=bi.get("condition_token_id", "")
         )
 
         base_threshold = settings.get("signal_threshold", 55)
@@ -476,14 +477,25 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
 
         prob_ratio = p_model / market_price if market_price > 0 else 0
         ratio_score = min(prob_ratio / 3.0, 1.0) * 30
-        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + buzz_score
+        sm_score_batch = 0
+        ct_id = bi.get("condition_token_id", "")
+        if ct_id:
+            try:
+                from smart_money import check_smart_money_activity
+                sm_result = check_smart_money_activity(ct_id)
+                sm_score_batch = sm_result.get("signal_score", 0)
+                if sm_score_batch > 0:
+                    logger.info(f"[SMART_MONEY-BATCH] {slug[:30]}... score=+{sm_score_batch}")
+            except Exception:
+                pass
+        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + buzz_score + orderbook_score + sm_score_batch + orderbook_score
 
         action = "BUY" if signal_score >= min_signal and confidence >= settings.get("min_confidence", MIN_CONFIDENCE) and prob_ratio >= MIN_PROB_RATIO else "SKIP"
 
         logger.info(
             f"[SIGNAL-BATCH] ratio={prob_ratio:.2f}x -> {ratio_score:.0f}, factors={len(supporting)}/{len(high_weight)} -> {factor_score:.0f}, "
             f"vol=${bi.get('volume',0):,.0f} -> {vol_score:.0f}, ttl={ttl_days:.0f}d -> {time_score:.0f}, "
-            f"buzz={buzz_score:.1f} "
+            f"buzz={buzz_score:.1f}, ob={orderbook_score} "
             f"= {signal_score:.0f}/{min_signal} => {action}"
         )
 

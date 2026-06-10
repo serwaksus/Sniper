@@ -4,6 +4,7 @@ Extracted from signal_pipeline.py.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
@@ -112,7 +113,7 @@ def _cluster_score_adjustment(cluster: str, settings: dict | None = None) -> flo
     return adj
 
 
-def _compute_signal_score(p_model: float, market_price: float, factors: list[dict], volume: float, ttl_hours: float, cluster: str, slug: str = "", question: str = "", metaculus_prob_val: float | None = None, settings: dict | None = None) -> tuple[float, float, list[dict], list[dict], float, float, float, float, float, float, float]:
+def _compute_signal_score(p_model: float, market_price: float, factors: list[dict], volume: float, ttl_hours: float, cluster: str, slug: str = "", question: str = "", metaculus_prob_val: float | None = None, settings: dict | None = None, condition_token_id: str = "") -> tuple[float, float, list[dict], list[dict], float, float, float, float, float, float, float, int, str]:
     if settings is None:
         settings = get_settings()
 
@@ -158,7 +159,31 @@ def _compute_signal_score(p_model: float, market_price: float, factors: list[dic
         logger.debug(f"[signal_scorer] {type(e).__name__}: {e}")
         pass
 
-    return signal_score + buzz_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days
+    orderbook_score = 0
+    ob_reason = ""
+    if condition_token_id:
+        try:
+            from orderbook_analyzer import analyze_orderbook_depth
+            ob = analyze_orderbook_depth(condition_token_id, market_price)
+            orderbook_score = ob.get("signal_score", 0)
+            ob_reason = ob.get("reason", "")
+            if orderbook_score > 0:
+                logger.info(f"[ORDERBOOK] {slug[:30]}... score=+{orderbook_score} ({ob_reason})")
+        except Exception as e:
+            logger.debug(f"[signal_scorer] orderbook: {type(e).__name__}: {e}")
+
+    sm_score = 0
+    if condition_token_id:
+        try:
+            from smart_money import check_smart_money_activity
+            sm = check_smart_money_activity(condition_token_id)
+            sm_score = sm.get("signal_score", 0)
+            if sm_score > 0:
+                logger.info(f"[SMART_MONEY] {slug[:30]}... score=+{sm_score}")
+        except Exception as e:
+            logger.debug(f"[signal_scorer] smart_money: {type(e).__name__}: {e}")
+
+    return signal_score + buzz_score + orderbook_score + sm_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days, orderbook_score, ob_reason
 
 
 def full_market_analysis(market: dict) -> dict:
@@ -337,10 +362,11 @@ Rules:
             "best_ask": best_ask
         }
 
-    signal_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days = _compute_signal_score(
+    signal_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days, orderbook_score, _ob_reason = _compute_signal_score(
         p_model, market["price"], factors, market.get("volume", 0), market.get("ttl_hours", 999),
         cluster, slug=market.get(HYP_SLUG, ""), question=market.get("question", ""),
-        metaculus_prob_val=metaculus_prob_val, settings=settings
+        metaculus_prob_val=metaculus_prob_val, settings=settings,
+        condition_token_id=market.get("condition_token_id", "")
     )
 
     base_threshold = _sp_get_settings().get("signal_threshold", 55)
@@ -355,13 +381,29 @@ Rules:
 
     action = "BUY" if signal_score >= min_signal and confidence >= _sp_get_settings().get("min_confidence", MIN_CONFIDENCE) and prob_ratio >= MIN_PROB_RATIO else "SKIP"
 
+    if action == "BUY":
+        with contextlib.suppress(Exception):
+            from db import record_trade as _record_simulated
+            _record_simulated(mode="simulated", slug=market[HYP_SLUG], action="buy",
+                              price=market["price"],
+                              size_usd=0,
+                              p_model=p_model,
+                              confidence=confidence,
+                              signal_score=signal_score,
+                              prob_ratio=prob_ratio,
+                              reason=f"score={signal_score:.0f}/{min_signal}",
+                              cluster=cluster,
+                              source=source_signal,
+                              metadata={"factors": [f.get("factor", "") for f in supporting],
+                                        "source_signal": source_signal})
+
     if supporting:
         print(f"   📊 Factors: {len(supporting)} supporting ({len(high_weight)} high)")
 
     logger.info(
         f"[SIGNAL] ratio={prob_ratio:.2f}x -> {ratio_score:.0f}, factors={len(supporting)} -> {factor_score:.0f}, "
         f"vol=${market.get('volume',0):,.0f} -> {vol_score:.0f}, ttl={ttl_days:.0f}d -> {time_score:.0f}, "
-        f"buzz={buzz_score:.1f} "
+        f"buzz={buzz_score:.1f}, ob={orderbook_score} "
         f"= {signal_score:.0f}/{min_signal} => {action}"
     )
 
