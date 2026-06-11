@@ -253,8 +253,9 @@ class TestStalePositionCleanup:
             "hypotheses": [], "resolved": [],
         }
 
+        stale_pos = {"entry_price": 0.10, "shares": 100, "_miss_count": 2}
         mock_pos_db.load_all.return_value = {
-            "stale-slug": {"entry_price": 0.10, "shares": 100},
+            "stale-slug": stale_pos,
         }
         mock_pos_db.delete.return_value = None
 

@@ -105,7 +105,8 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
     logger.info(f"[TRADE] {slug[:60]} pending position recorded before buy")
 
     if not buy(market, estimated_size):
-        print(f"   ❌ Buy failed for {slug}")
+        positions_db.delete(slug)
+        logger.warning(f"[TRADE] Buy failed for {slug[:60]}, cleaned up pending_fill")
         return False
 
     time.sleep(10)
@@ -118,7 +119,7 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
     if shares <= 0:
         return False
 
-    actual_price = fill_data.get("price", market["price"]) if fill_data else market["price"]
+    actual_price = fill_data.get("avg_price", market["price"]) if fill_data else market["price"]
 
     positions_db.update(slug, {
         "status": "active",

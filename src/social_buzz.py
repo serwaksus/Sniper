@@ -175,6 +175,7 @@ def fetch_gdelt(keywords: list[str]) -> dict:
 
         with _GDELT_LOCK:
             _GDELT_FAIL_COUNT = 0
+            _GDELT_LAST_FAIL = 0.0
 
         data = resp.json()
         articles = data.get("articles", [])

@@ -73,19 +73,34 @@ def _mark_alerted(state: dict, alert_key: str) -> None:
     state.setdefault(HEALTH_LAST_ALERTS, {})[alert_key] = datetime.now().isoformat()
 
 
+def _parse_log_timestamp(line: str) -> datetime | None:
+    try:
+        ts = datetime.strptime(line[:19], "%Y-%m-%d %H:%M:%S")
+        return ts
+    except (ValueError, IndexError):
+        pass
+    try:
+        data = json.loads(line)
+        ts_str = data.get("ts", "")
+        if ts_str:
+            return datetime.strptime(ts_str[:19], "%Y-%m-%d %H:%M:%S")
+    except (json.JSONDecodeError, ValueError, IndexError):
+        pass
+    return None
+
+
 def _read_recent_log(hours: int = 24) -> list[str]:
     try:
         cutoff = datetime.now() - timedelta(hours=hours)
         lines = []
         with open(SNIPER_LOG) as f:
             for line in f:
-                try:
-                    ts = datetime.strptime(line[:19], "%Y-%m-%d %H:%M:%S")
+                ts = _parse_log_timestamp(line)
+                if ts is not None:
                     if ts >= cutoff:
                         lines.append(line)
-                except (ValueError, IndexError):
-                    if lines:
-                        lines.append(line)
+                elif lines:
+                    lines.append(line)
         return lines
     except Exception as e:
         logger.debug(f"[health_monitor] {type(e).__name__}: {e}")

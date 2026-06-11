@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import signal_pipeline as sp
 from schema import HYP_CLUSTERS, HYP_CONFIDENCE, HYP_FACTORS, HYP_P_MODEL, HYP_SLUG
 
-MOCK_SETTINGS = {"signal_threshold": 55, "min_confidence": 0.65, "min_p_model": 0.03}
+MOCK_SETTINGS = {"signal_threshold": 50, "min_confidence": 0.65, "min_p_model": 0.03}
 
 
 def _mock_settings(return_value=None):
@@ -839,6 +839,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
             "ttl_hours": 2160,
             HYP_CLUSTERS: ["ai_tech"],
             "oracle_type": "uma",
+            "condition_token_id": "test_token",
         }
         base.update(overrides)
         return base
@@ -862,7 +863,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
         mock_get_cal.return_value = mock_cal
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"choices": [{"message": {"content": json.dumps({
-            "estimated_probability": 0.30,
+            "estimated_probability": 0.50,
             HYP_CONFIDENCE: 0.80,
             HYP_FACTORS: [
                 {"factor": "strong", "direction": "supports", "weight": "high", "source": "news"},
@@ -872,14 +873,14 @@ class TestFullMarketAnalysis(unittest.TestCase):
         })}}]}
         mock_post.return_value = mock_resp
         with _mock_settings(), patch("signal_scorer.parse_llm_json") as mock_parse:
-            mock_parse.return_value = self._mock_llm_response(0.30, 0.80, [
+            mock_parse.return_value = self._mock_llm_response(0.50, 0.80, [
                 {"factor": "strong", "direction": "supports", "weight": "high", "source": "news"},
                 {"factor": "momentum", "direction": "supports", "weight": "medium", "source": "data"},
             ])
             with patch("order_manager.get_best_ask", return_value=None):
-                result = sp.full_market_analysis(self._market())
+                result = sp.full_market_analysis(self._market(price=0.07, ttl_hours=500))
         self.assertEqual(result["action"], "BUY")
-        self.assertGreater(result["signal_score"], 55)
+        self.assertGreater(result["signal_score"], 50)
 
     @patch("signal_scorer._cluster_score_adjustment", return_value=0)
     @patch("signal_scorer.check_metaculus_gap", return_value=None)
@@ -1194,7 +1195,7 @@ class TestConstants(unittest.TestCase):
     def test_key_constants_exist(self):
         self.assertEqual(sp.MIN_PROB_RATIO, 2.0)
         self.assertEqual(sp.MIN_P_MODEL, 0.03)
-        self.assertEqual(sp.MAX_P_MODEL_RATIO, 3.0)
+        self.assertEqual(sp.MAX_P_MODEL_RATIO, 2.0)
         self.assertEqual(sp.MIN_CONFIDENCE, 0.65)
         self.assertEqual(sp.MIN_VOLUME, 25000)
         self.assertEqual(sp.MIN_TTL_HOURS, 48)

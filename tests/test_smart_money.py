@@ -87,6 +87,7 @@ class TestCheckSmartMoneyActivity(unittest.TestCase):
     @patch("smart_money.requests.get")
     def test_api_returns_smart_money_match(self, mock_get, mock_load):
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "status": "1",
             "result": [{"from": "0xabc", "value": "1000"}],
@@ -102,6 +103,7 @@ class TestCheckSmartMoneyActivity(unittest.TestCase):
     @patch("smart_money.requests.get")
     def test_api_returns_no_match(self, mock_get, mock_load):
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "status": "1",
             "result": [{"from": "0xunknown", "value": "1000"}],
@@ -145,9 +147,11 @@ class TestCheckSmartMoneyActivity(unittest.TestCase):
 
 class TestDiscoverProfitableWallets(unittest.TestCase):
     @patch.dict(os.environ, {"POLYGONSCAN_API_KEY": "testkey"})
+    @patch.dict(os.environ, {"POLYGONSCAN_API_KEY": "testkey"})
     @patch("smart_money.requests.get")
     def test_returns_wallets_from_txs(self, mock_get):
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "status": "1",
             "result": [

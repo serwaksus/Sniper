@@ -60,6 +60,16 @@ def _get_conn() -> sqlite3.Connection:
         _local.conn = conn
     return _local.conn
 
+
+def checkpoint_wal() -> None:
+    try:
+        conn = _get_conn()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        logger.debug("[DB] WAL checkpoint completed")
+    except Exception as e:
+        logger.warning(f"[DB] WAL checkpoint failed: {e}")
+
+
 def init_db() -> None:
     """Create tables if they don't exist."""
     conn = _get_conn()
@@ -185,6 +195,7 @@ def delete_position(slug: str) -> None:
 def merge_save_positions(updated_positions: dict[str, dict[str, Any]]) -> None:
     conn = _get_conn()
     now = time.time()
+    conn.execute("BEGIN IMMEDIATE")
     for slug, data in updated_positions.items():
         try:
             _validate_position(data)

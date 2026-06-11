@@ -115,6 +115,8 @@ def update_posterior(slug: str, news_category: str, llm_assessment: str | None =
         p_prior = _logodds_to_prob(prior)
 
         lr = math.log(max(p_yes_given_news, 1e-8) / max(p_no_given_news, 1e-8))
+        max_lr = 1.5
+        lr = max(-max_lr, min(max_lr, lr))
         new_posterior = prior + lr
 
         pos["posterior_logodds"] = round(new_posterior, 4)

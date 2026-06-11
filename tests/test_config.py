@@ -51,10 +51,10 @@ class TestPathConstants(unittest.TestCase):
 
 class TestSharedConstants(unittest.TestCase):
     def test_min_p_model(self):
-        self.assertEqual(config.MIN_P_MODEL, 0.03)
+        self.assertEqual(config.MIN_P_MODEL, 0.10)
 
     def test_max_p_model_ratio(self):
-        self.assertEqual(config.MAX_P_MODEL_RATIO, 3.0)
+        self.assertEqual(config.MAX_P_MODEL_RATIO, 2.0)
 
     def test_min_confidence(self):
         self.assertEqual(config.MIN_CONFIDENCE, 0.65)

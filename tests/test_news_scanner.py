@@ -50,17 +50,20 @@ class TestFetchRecentNews:
 
 
 class TestDDGFallback:
-    @patch("news_scanner.requests.get")
-    def test_parses_html_headlines(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.ok = True
-        mock_resp.text = '<a class="result__a" href="http://x">Breaking: Something important happened today</a>'
-        mock_get.return_value = mock_resp
+    @patch("duckduckgo_search.DDGS")
+    def test_parses_html_headlines(self, mock_ddgs_cls):
+        mock_ddgs = MagicMock()
+        mock_ddgs.__enter__ = MagicMock(return_value=mock_ddgs)
+        mock_ddgs.__exit__ = MagicMock(return_value=False)
+        mock_ddgs.news.return_value = [
+            {"title": "Breaking: Something important happened today", "url": "http://x"}
+        ]
+        mock_ddgs_cls.return_value = mock_ddgs
         result = ns._fetch_ddg_news_fallback(["AI"], 5)
         assert len(result["headlines"]) >= 1
 
-    @patch("news_scanner.requests.get", side_effect=Exception("err"))
-    def test_exception_returns_empty(self, mock_get):
+    @patch("duckduckgo_search.DDGS", side_effect=Exception("err"))
+    def test_exception_returns_empty(self, mock_ddgs_cls):
         result = ns._fetch_ddg_news_fallback(["AI"], 5)
         assert result["headlines"] == []
         assert result["found"] is False

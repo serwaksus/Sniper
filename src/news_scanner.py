@@ -74,52 +74,32 @@ def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_
                 "query": query,
                 "found": len(headlines) > 0
             }
+        else:
+            logger.warning(f"[news_scanner] Tavily HTTP {response.status_code}: {response.text[:100]}")
     except Exception as e:
-        logger.debug(f"[news_scanner] {type(e).__name__}: {e}")
-        pass
+        logger.warning(f"[news_scanner] Tavily error: {type(e).__name__}: {e}")
 
     return _fetch_ddg_news_fallback(market_keywords, max_results, max_age_days)
 
 
 def _fetch_ddg_news_fallback(keywords: list[str], max_results: int, max_age_days: int = 30) -> dict:
-    """
-    Fallback using DuckDuckGo HTML news search
-    when Tavily API is not available.
-    Applies freshness filter: only results within max_age_days.
-    """
-    query = "+".join([__import__('urllib.parse', fromlist=['quote']).quote(k) for k in keywords[:3]])
-    if max_age_days <= 1:
-        df = "d"
-    elif max_age_days <= 7:
-        df = "w"
-    elif max_age_days <= 30:
-        df = "m"
-    else:
-        df = "y"
-    url = f"https://duckduckgo.com/html/?q={query}+news&df={df}&ia=news"
-
+    query = " ".join(keywords[:5])
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.ok:
-            import re
-            html_content = response.text
-            headlines = re.findall(r'<a class="result__a"[^>]*href="[^"]*"[^>]*>([^<]+)</a>', html_content)[:max_results]
-            if not headlines:
-                headlines = re.findall(r'<h2[^>]*>([^<]+)</h2>', html_content)[:max_results]
+        from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            timelimit = "m" if max_age_days <= 30 else "y"
+            results = list(ddgs.news(query, max_results=max_results, timelimit=timelimit))
+            headlines = [r.get("title", "") for r in results if r.get("title")]
+            sources = [r.get("url", "") for r in results if r.get("url")]
             return {
-                "headlines": [h.strip() for h in headlines if len(h.strip()) > 20],
-                "sources": [],
-                "query": " ".join(keywords),
+                "headlines": headlines,
+                "sources": sources,
+                "query": query,
                 "found": len(headlines) > 0
             }
     except Exception as e:
-        logger.debug(f"[news_scanner] {type(e).__name__}: {e}")
-        pass
-
-    return {"headlines": [], "sources": [], "query": "", "found": False}
+        logger.debug(f"[news_scanner] DDG fallback failed: {type(e).__name__}: {e}")
+    return {"headlines": [], "sources": [], "query": query, "found": False}
 
 
 def extract_keywords(question: str) -> list[str]:

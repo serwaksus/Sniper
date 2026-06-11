@@ -25,6 +25,7 @@ from metaculus import normalize_probability, check_metaculus_gap
 logger = logging.getLogger(__name__)
 
 MIN_PROB_RATIO = 2.0
+DOTM_PRICE_FLOOR = 0.05
 MIN_P_MODEL = 0.03
 MIN_CONFIDENCE = 0.65
 CALIBRATION_DAMPING_FACTOR = 0.65
@@ -117,11 +118,14 @@ def _compute_signal_score(p_model: float, market_price: float, factors: list[dic
     if settings is None:
         settings = get_settings()
 
+    if market_price < DOTM_PRICE_FLOOR:
+        return 0, 0, [], [], 0, 0, 0, 0, 0, 0, 0, 0, "price_below_floor"
+
     prob_ratio = p_model / market_price if market_price > 0 else 0
     supporting = [f for f in factors if f.get("direction") == "supports"]
     high_weight = [f for f in supporting if f.get("weight") == "high"]
 
-    ratio_score = min(prob_ratio / 3.0, 1.0) * 30
+    ratio_score = min(prob_ratio / 5.0, 1.0) * 25
 
     metaculus_alignment = 0
     if metaculus_prob_val is not None:
@@ -183,7 +187,14 @@ def _compute_signal_score(p_model: float, market_price: float, factors: list[dic
         except Exception as e:
             logger.debug(f"[signal_scorer] smart_money: {type(e).__name__}: {e}")
 
-    return signal_score + buzz_score + orderbook_score + sm_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days, orderbook_score, ob_reason
+    cascade_score = 0
+    with contextlib.suppress(Exception):
+        from cascade_detector import get_cascade_signal
+        cascade_score = get_cascade_signal(slug)
+        if cascade_score > 0:
+            logger.info(f"[CASCADE] {slug[:30]}... score=+{cascade_score}")
+
+    return signal_score + buzz_score + orderbook_score + sm_score + cascade_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days, orderbook_score, ob_reason
 
 
 def full_market_analysis(market: dict) -> dict:

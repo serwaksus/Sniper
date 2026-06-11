@@ -48,6 +48,9 @@ def save_smart_money_wallets(wallets: list[str]) -> None:
 
 def discover_profitable_wallets(days: int = 180, min_profit: float = 1000, min_winrate: float = 0.35) -> list[str]:
     api_key = os.environ.get(POLYSCAN_KEY_ENV, "")
+    if not api_key:
+        logger.info("[SMART_MONEY] No Polygonscan API key, skipping wallet discovery")
+        return []
     try:
         params = {
             "module": "account",
@@ -58,12 +61,18 @@ def discover_profitable_wallets(days: int = 180, min_profit: float = 1000, min_w
             "sort": "desc",
             "page": 1,
             "offset": 100,
+            "apikey": api_key,
         }
-        if api_key:
-            params["apikey"] = api_key
 
         resp = requests.get(POLYGONSCAN_API, params=params, timeout=15)
-        data = resp.json()
+        if resp.status_code != 200:
+            logger.warning(f"[SMART_MONEY] Polygonscan HTTP {resp.status_code}, skipping discovery")
+            return []
+        try:
+            data = resp.json()
+        except ValueError:
+            logger.warning("[SMART_MONEY] Polygonscan returned non-JSON response")
+            return []
 
         if data.get("status") != "1":
             logger.info(f"[SMART_MONEY] Polygonscan returned: {data.get('message', 'unknown')}")
@@ -78,7 +87,7 @@ def discover_profitable_wallets(days: int = 180, min_profit: float = 1000, min_w
         return wallets[:100]
 
     except Exception as e:
-        logger.warning(f"[SMART_MONEY] Discovery failed: {e}")
+        logger.warning(f"[SMART_MONEY] Discovery failed: {type(e).__name__}: {e}")
         return []
 
 
@@ -113,7 +122,12 @@ def check_smart_money_activity(condition_token_id: str) -> dict[str, Any]:
             params["apikey"] = api_key
 
         resp = requests.get(POLYGONSCAN_API, params=params, timeout=10)
-        data = resp.json()
+        if resp.status_code != 200:
+            return []
+        try:
+            data = resp.json()
+        except ValueError:
+            return []
 
         if data.get("status") == "1" and isinstance(data.get("result"), list):
             tracked_lower = {w.lower() for w in wallets}

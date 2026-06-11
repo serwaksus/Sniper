@@ -368,7 +368,7 @@ def _main_inner() -> None:
 
     markets = fetch_markets()
     db = load_hypothesis_db()
-    existing_slugs = {h[HYP_SLUG] for h in db.get(HYP_DB_HYPOTHESES, []) if not h.get(HYP_RESOLVED)}
+    existing_slugs = {h[HYP_SLUG] for h in db.get(HYP_DB_HYPOTHESES, [])}
     position_slugs = {p.get("market_slug", "") for p in portfolio}
     already_active = existing_slugs | position_slugs
     gamma_candidates = fetch_gamma_dotm_candidates(existing_slugs | position_slugs)
@@ -387,6 +387,12 @@ def _main_inner() -> None:
     build_graph_if_stale([{"slug": m.get("slug", ""), "question": m.get("question", ""),
                            "price": m.get("price", 0), "clusters": m.get("clusters", [])}
                           for m in markets])
+
+    from cascade_detector import record_prices, detect_and_find
+    record_prices(markets)
+    cascade_opps = detect_and_find(markets)
+    if cascade_opps:
+        logger.info(f"[CASCADE] {len(cascade_opps)} laggard opportunities detected")
 
     candidates_bought = 0
     available_balance = balance
@@ -615,4 +621,7 @@ if __name__ == "__main__":
                     time.sleep(10)
             logger.info("[MAIN] Graceful shutdown complete")
     finally:
+        with contextlib.suppress(Exception):
+            from db import checkpoint_wal
+            checkpoint_wal()
         cleanup_pid_file(PID_FILE)

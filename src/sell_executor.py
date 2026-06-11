@@ -136,7 +136,9 @@ def _execute_sell(slug: str, outcome: str, shares: float, current_price: float, 
 
     logger.info(f"[MARKET-SELL] {slug[:40]}... bid={best_bid:.4f} spread=${spread:.4f}")
     try:
-        current_portfolio = _get_om().get_portfolio()
+        om = _get_om()
+        om._cancel_all_tp_orders(slug)
+        current_portfolio = om.get_portfolio()
         if current_portfolio is None:
             return False, best_bid, "portfolio_error"
         actual_shares = 0.0
@@ -145,6 +147,7 @@ def _execute_sell(slug: str, outcome: str, shares: float, current_price: float, 
                 actual_shares = float(p.get("size", p.get("shares", 0)))
                 break
         if actual_shares <= 0:
+            logger.warning(f"[SELL] {slug[:40]}... actual_shares=0, position already sold")
             return False, best_bid, "already_sold"
         res = subprocess.run(["pm-trader", "sell", slug, outcome, str(int(actual_shares))],
                              capture_output=True, text=True, timeout=20, start_new_session=True)
@@ -272,6 +275,9 @@ def trailing_stop_check() -> None:
     for pos in portfolio:
         slug = pos["market_slug"]
         shares = pos.get("shares", 0)
+        if shares <= 0:
+            continue
+
         stored_pos = positions_db.get(slug)
         stored_entry = stored_pos.get(POS_ENTRY_PRICE, 0) if stored_pos else 0
         entry_price = stored_entry if stored_entry > 0 else pos.get("avg_entry_price", 0)
@@ -296,12 +302,19 @@ def trailing_stop_check() -> None:
         if current_price <= 0:
             continue
 
+        if entry_price <= 0:
+            entry_price = current_price
+            logger.warning(f"[EMERGENCY] {slug[:40]}... entry_price=0, using current_price={current_price:.4f}")
+
         _log_price_for_atr(slug, current_price)
 
         pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
 
         positions = positions_db.load_all()
         if slug not in positions:
+            if shares <= 0:
+                logger.info(f"[SKIP] {slug[:40]}... 0 shares in portfolio, not recreating")
+                continue
             atr_stop = _get_atr_stop(slug, entry_price, current_price)
             positions[slug] = {
                 POS_ENTRY_PRICE: entry_price,
@@ -399,7 +412,8 @@ def trailing_stop_check() -> None:
                 try:
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                     if sold:
-                        assert eff_price is not None
+                        if eff_price is None:
+                            eff_price = current_price
                         logger.info(f"SOLD take-profit convergence ({method}): {slug} pnl={pnl_pct:.2%}")
                         pnl_abs = shares * (eff_price - entry_price)
                         actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
@@ -417,7 +431,14 @@ def trailing_stop_check() -> None:
             logger.warning(f"[HARD-STOP] -50% stop triggered: {slug[:40]}... price=${current_price:.4f} entry=${entry_price:.4f}")
             try:
                 sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=True)
-                if sold:
+                if method == "already_sold":
+                    sold = True
+                    positions = positions_db.load_all()
+                    if slug in positions:
+                        del positions[slug]
+                        positions_db.save_all(positions)
+                    logger.info(f"[HARD-STOP] {slug[:40]}... already sold, cleaned up from positions_db")
+                elif sold:
                     eff_price = eff_price or current_price
                     actual_pnl = (eff_price - entry_price) / entry_price
                     pnl_abs = shares * (eff_price - entry_price)
@@ -467,7 +488,8 @@ def trailing_stop_check() -> None:
                     else:
                         sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                         if sold:
-                            assert eff_price is not None
+                            if eff_price is None:
+                                eff_price = current_price
                             actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                             logger.info(f"SOLD hard stop ({method}): {slug} mid_pnl={pnl_pct:.2%} eff_pnl={actual_pnl:.2%}")
                             pnl_abs = shares * (eff_price - entry_price)
@@ -477,7 +499,8 @@ def trailing_stop_check() -> None:
                     logger.warning(f"[EMERGENCY-SELL] {slug[:40]}... forcing market after {limit_attempts} limit attempts")
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price, force_market=True)
                     if sold:
-                        assert eff_price is not None
+                        if eff_price is None:
+                            eff_price = current_price
                         actual_pnl = (eff_price - entry_price) / entry_price if entry_price > 0 else pnl_pct
                         logger.info(f"SOLD emergency ({method}): {slug} pnl={actual_pnl:.2%}")
                         pnl_abs = shares * (eff_price - entry_price)
@@ -513,7 +536,8 @@ def trailing_stop_check() -> None:
             try:
                 sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                 if sold:
-                    assert eff_price is not None
+                    if eff_price is None:
+                        eff_price = current_price
                     logger.info(f"SOLD trailing stop ({method}): {slug}")
                     p.pop(POS_TRAILING_CONFIRMED, None)
                     p.pop(POS_TRAILING_CONFIRM_TIME, None)
@@ -535,7 +559,8 @@ def trailing_stop_check() -> None:
                 try:
                     sold, eff_price, method = _execute_sell(slug, outcome, shares, current_price, entry_price)
                     if sold:
-                        assert eff_price is not None
+                        if eff_price is None:
+                            eff_price = current_price
                         logger.info(f"SOLD take-profit ({method}): {slug}")
                         pnl_abs = shares * (eff_price - entry_price)
                         if sniper._tr():
@@ -573,12 +598,29 @@ def trailing_stop_check() -> None:
                 logger.debug(f"[bayesian_cleanup] {type(e).__name__}: {e}")
         else:
             p.pop(POS_SELLING_IN_PROGRESS, None)
+            if not sold and sold_reason:
+                override_ts = (now - timedelta(hours=MIN_POSITION_CHECK_INTERVAL_HOURS - 0.25)).isoformat()
+                p[POS_LAST_CHECKED] = override_ts
+                logger.info(f"[RETRY-SOON] {slug[:40]}... sell failed ({sold_reason}), recheck in 15min")
             positions[slug] = p
             positions_db.save_all(positions)
 
     current_slugs = {p["market_slug"] for p in portfolio}
     all_pos = positions_db.load_all()
-    stale = [s for s in list(all_pos.keys()) if s not in current_slugs or s in resolved_slugs]
+    stale = []
+    for s in list(all_pos.keys()):
+        if s in resolved_slugs:
+            stale.append(s)
+            continue
+        if s not in current_slugs:
+            pos_data = all_pos[s]
+            miss_count = pos_data.get("_miss_count", 0) + 1
+            pos_data["_miss_count"] = miss_count
+            if miss_count >= 3:
+                stale.append(s)
+            else:
+                all_pos[s] = pos_data
+    positions_db.save_all(all_pos)
     for s in stale:
         with contextlib.suppress(Exception):
             om._cancel_all_tp_orders(s)

@@ -12,6 +12,8 @@ from utils import load_json, save_json
 from schema import HYP_TP_LIMIT_PLACED
 from config import SLIPPAGE_LOG_FILE
 
+import math
+
 logger = logging.getLogger(__name__)
 
 MAX_SPREAD_PCT = 0.40
@@ -29,6 +31,10 @@ def get_order_book(slug: str) -> dict[str, float | None]:
         bids = data.get("data", {}).get("bids", [])
         best_ask = float(asks[0]["price"]) if asks and float(asks[0].get("price", 0)) > 0 else None
         best_bid = float(bids[0]["price"]) if bids and float(bids[0].get("price", 0)) > 0 else None
+        if best_ask is not None and (math.isnan(best_ask) or math.isinf(best_ask)):
+            best_ask = None
+        if best_bid is not None and (math.isnan(best_bid) or math.isinf(best_bid)):
+            best_bid = None
         mid_price: float | None = None
         if best_bid is not None and best_ask is not None:
             mid_price = (best_bid + best_ask) / 2
@@ -125,7 +131,7 @@ def buy(market: dict[str, Any], amount: float) -> bool:
             print(f"  ❌ {result}")
             return False
     except Exception as e:
-        logger.debug(f"[order_manager] {type(e).__name__}: {e}")
+        logger.warning(f"[order_manager] {type(e).__name__}: {e}")
         print(f"  ❌ {e}")
         return False
 
@@ -182,17 +188,20 @@ def _place_tp_ladder(slug: str, outcome: str, total_shares: float, entry_price: 
 
     results: list[tuple[float, float, bool, str]] = []
     allocated = 0.0
-    for pct, price in ladder:
-        shares = round(total_shares * pct)
-        shares = max(shares, 1)
+    for i, (pct, price) in enumerate(ladder):
+        remaining = total_shares - allocated
+        if i == len(ladder) - 1:
+            shares = int(remaining)
+        else:
+            shares = round(total_shares * pct)
+            shares = min(shares, int(remaining))
+        if shares <= 0:
+            continue
         if shares * price < 5.0:
-            if allocated < total_shares:
-                shares = int(total_shares - allocated)
-            if shares * price < 5.0:
-                single_price = round(min(0.95, price * 1.5), 2)
-                single_shares = max(1, round(total_shares))
-                ok, m = _place_limit_sell(slug, outcome, single_shares, single_price)
-                return [(single_price, float(single_shares), ok, m)] if ok else []
+            single_price = round(min(0.95, price * 1.5), 2)
+            single_shares = max(1, int(remaining))
+            ok, m = _place_limit_sell(slug, outcome, single_shares, single_price)
+            return [(single_price, float(single_shares), ok, m)] if ok else []
         ok, m = _place_tp_limit_order_single(slug, outcome, shares, price)
         results.append((price, float(shares), ok, m))
         allocated += shares

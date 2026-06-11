@@ -58,24 +58,48 @@ def normalize_probability(p: float | None) -> float:
 
 
 def metaculus_search(query: str, limit: int = 10) -> list[dict]:
-    try:
-        resp = requests.get(METACULUS_URL, headers=METACULUS_HEADERS,
-                          params={"search": query, "limit": limit, "status": "open"},  # type: ignore[arg-type]
-                          timeout=15)
-        if resp.status_code == 200:
-            return resp.json().get("results", [])
-    except Exception as e:
-        logger.warning(f"[metaculus_search] {type(e).__name__}: {e}")
+    for attempt in range(3):
+        try:
+            resp = requests.get(METACULUS_URL, headers=METACULUS_HEADERS,
+                              params={"search": query, "limit": limit, "status": "open"},  # type: ignore[arg-type]
+                              timeout=30)
+            if resp.status_code == 200:
+                return resp.json().get("results", [])
+            if resp.status_code >= 500 and attempt < 2:
+                import time as _t
+                _t.sleep(2 ** attempt)
+                continue
+        except requests.exceptions.Timeout:
+            if attempt < 2:
+                import time as _t
+                _t.sleep(2 ** attempt)
+                continue
+            logger.warning(f"[metaculus_search] Timeout after {attempt + 1} attempts")
+        except Exception as e:
+            logger.warning(f"[metaculus_search] {type(e).__name__}: {e}")
+            break
     return []
 
 
 def metaculus_get_question(qid: int) -> dict | None:
-    try:
-        resp = requests.get(f"{METACULUS_URL}{qid}/", headers=METACULUS_HEADERS, timeout=15)
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception as e:
-        logger.warning(f"[metaculus_get_question] {type(e).__name__}: {e}")
+    for attempt in range(3):
+        try:
+            resp = requests.get(f"{METACULUS_URL}{qid}/", headers=METACULUS_HEADERS, timeout=30)
+            if resp.status_code == 200:
+                return resp.json()
+            if resp.status_code >= 500 and attempt < 2:
+                import time as _t
+                _t.sleep(2 ** attempt)
+                continue
+        except requests.exceptions.Timeout:
+            if attempt < 2:
+                import time as _t
+                _t.sleep(2 ** attempt)
+                continue
+            logger.warning(f"[metaculus_get_question] Timeout after {attempt + 1} attempts")
+        except Exception as e:
+            logger.warning(f"[metaculus_get_question] {type(e).__name__}: {e}")
+            break
     return None
 
 
