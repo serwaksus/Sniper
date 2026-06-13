@@ -149,11 +149,20 @@ def _execute_sell(slug: str, outcome: str, shares: float, current_price: float, 
         if actual_shares <= 0:
             logger.warning(f"[SELL] {slug[:40]}... actual_shares=0, position already sold")
             return False, best_bid, "already_sold"
-        res = subprocess.run(["pm-trader", "sell", slug, outcome, str(int(actual_shares))],
+
+        sell_res = subprocess.run(["pm-trader", "sell", slug, outcome, str(int(actual_shares))],
                              capture_output=True, text=True, timeout=20, start_new_session=True)
-        result = json.loads(res.stdout) if res.stdout else {}
+        result = json.loads(sell_res.stdout) if sell_res.stdout else {}
         if result.get("ok"):
             return True, best_bid, "market"
+
+        if not result.get("ok"):
+            limit_price = max(best_bid, 0.01)
+            ok, _reason = om._place_limit_sell(slug, outcome, actual_shares, limit_price)
+            if ok:
+                logger.info(f"[AGGRESSIVE-LIMIT] {slug[:40]}... market sell failed, placed limit at bid={limit_price:.4f}")
+                return False, limit_price, "limit_pending"
+            logger.warning(f"[SELL] {slug[:40]}... both market and limit failed: {result.get('error', 'unknown')}")
     except Exception as e:
         logger.warning(f"[market_sell] {type(e).__name__}: {e}")
     return False, best_bid, "market_failed"
@@ -475,12 +484,15 @@ def trailing_stop_check() -> None:
             try:
                 pos_data = positions.get(slug, {})
                 limit_attempts = pos_data.get(POS_LIMIT_SELL_ATTEMPTS, 0)
-                force = limit_attempts >= LIMIT_MAX_ATTEMPTS
+                safety_failures = pos_data.get("_safety_failures", 0)
+                force = limit_attempts >= LIMIT_MAX_ATTEMPTS or safety_failures >= 5
                 if not force:
                     safe, safe_reason, _sell_price = _check_sell_safety(slug, current_price, shares)
                     if not safe:
+                        pos_data["_safety_failures"] = safety_failures + 1
+                        positions_db.update(slug, pos_data)
                         logger.warning(
-                            f"[STOP-DELAYED] {slug[:40]}... sell unsafe: {safe_reason}. "
+                            f"[STOP-DELAYED] {slug[:40]}... sell unsafe ({safety_failures + 1}/5): {safe_reason}. "
                             f"mid={current_price:.4f} entry={entry_price:.4f}"
                         )
                         if sniper._tr():
