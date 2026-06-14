@@ -197,7 +197,16 @@ def _compute_signal_score(p_model: float, market_price: float, factors: list[dic
         if cascade_score > 0:
             logger.info(f"[CASCADE] {slug[:30]}... score=+{cascade_score}")
 
-    return signal_score + buzz_score + orderbook_score + sm_score + cascade_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days, orderbook_score, ob_reason
+    oracle_score = 0
+    with contextlib.suppress(Exception):
+        from external_oracles import compute_oracle_bonus
+        oracle_score, _oracle_breakdown = compute_oracle_bonus(
+            cluster, question, market_price, slug,
+        )
+        if oracle_score > 0:
+            logger.info(f"[ORACLE] {slug[:30]}... score=+{oracle_score}")
+
+    return signal_score + buzz_score + orderbook_score + sm_score + cascade_score + oracle_score, prob_ratio, supporting, high_weight, metaculus_alignment, buzz_score, ratio_score, factor_score, vol_score, time_score, ttl_days, orderbook_score, ob_reason
 
 
 def full_market_analysis(market: dict) -> dict:
