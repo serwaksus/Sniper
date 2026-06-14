@@ -24,12 +24,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from dotm_sniper import (
     parse_llm_json, normalize_probability,
-    detect_clusters, check_metaculus_gap,
+    detect_clusters,
     URL, HEADERS, MODEL_MAIN, ADVISOR_MODEL,
     MAX_P_MODEL_RATIO, MIN_P_MODEL, MIN_VOLUME,
     get_settings, MIN_CONFIDENCE, calibrate_prediction, _cluster_score_adjustment,
 )
 
+from manifold import check_manifold_gap
 from utils import load_env_file
 from config import SNIPER_LOG
 load_env_file()
@@ -439,9 +440,10 @@ def backtest_analyze_single(market: dict) -> dict:
 
     metaculus_gap = None
     try:
-        metaculus_gap = check_metaculus_gap(market, polymarket_prob)
+        from manifold import check_manifold_gap
+        metaculus_gap = check_manifold_gap(market, polymarket_prob)
     except Exception as e:
-        logger.warning(f"[BACKTEST] Metaculus gap error for {market['slug'][:30]}: {e}")
+        logger.warning(f"[BACKTEST] Manifold gap error for {market['slug'][:30]}: {e}")
 
     source_signal = "default"
     if metaculus_gap:

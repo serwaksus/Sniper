@@ -20,7 +20,8 @@ from config import MAX_P_MODEL_RATIO
 from schema import HYP_CLUSTERS, HYP_CONFIDENCE, HYP_FACTORS, HYP_P_MODEL, HYP_SLUG
 import hypotheses_db
 from db import load_settings as _db_load_settings
-from metaculus import normalize_probability, check_metaculus_gap
+from metaculus import normalize_probability
+from manifold import check_manifold_gap
 from model_council import council_single_consensus
 
 logger = logging.getLogger(__name__)
@@ -234,7 +235,7 @@ def full_market_analysis(market: dict) -> dict:
 
     metaculus_gap = None
     if market["price"] < 0.35:
-        metaculus_gap = check_metaculus_gap(market, polymarket_prob)
+        metaculus_gap = check_manifold_gap(market, polymarket_prob)
 
     source_signal = "default"
     if metaculus_gap:

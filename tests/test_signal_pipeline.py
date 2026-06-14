@@ -309,7 +309,7 @@ class TestGetTimeDecayThreshold(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# check_metaculus_gap
+# check_manifold_gap
 # ═══════════════════════════════════════════════════════════════════
 class TestCheckMetaculusGap(unittest.TestCase):
     def _make_market(self, price=0.10, question="Will X happen?", end_date=None):
@@ -850,7 +850,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
         }
 
     @patch("signal_scorer._cluster_score_adjustment", return_value=0)
-    @patch("signal_scorer.check_metaculus_gap", return_value=None)
+    @patch("signal_scorer.check_manifold_gap", return_value=None)
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
     @patch("signal_scorer.requests.post")
     @patch("calibration.get_calibrator")
@@ -881,7 +881,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
         self.assertGreater(result["signal_score"], 50)
 
     @patch("signal_scorer._cluster_score_adjustment", return_value=0)
-    @patch("signal_scorer.check_metaculus_gap", return_value=None)
+    @patch("signal_scorer.check_manifold_gap", return_value=None)
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=False)
     @patch("calibration.get_calibrator")
     @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
@@ -894,7 +894,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
         self.assertEqual(result["action"], "SKIP")
 
     @patch("signal_scorer._cluster_score_adjustment", return_value=0)
-    @patch("signal_scorer.check_metaculus_gap", return_value=None)
+    @patch("signal_scorer.check_manifold_gap", return_value=None)
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
     @patch("signal_scorer.requests.post")
     @patch("calibration.get_calibrator")
@@ -913,7 +913,7 @@ class TestFullMarketAnalysis(unittest.TestCase):
         self.assertEqual(result["action"], "SKIP")
 
     @patch("signal_scorer._cluster_score_adjustment", return_value=0)
-    @patch("signal_scorer.check_metaculus_gap")
+    @patch("signal_scorer.check_manifold_gap")
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
     @patch("signal_scorer.requests.post")
     @patch("calibration.get_calibrator")
@@ -1134,7 +1134,7 @@ class TestAdvisorPreCheck(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════
 class TestTimeScoreBranches(unittest.TestCase):
     @patch("signal_scorer._cluster_score_adjustment", return_value=0)
-    @patch("signal_scorer.check_metaculus_gap", return_value=None)
+    @patch("signal_scorer.check_manifold_gap", return_value=None)
     @patch("signal_pipeline._check_llm_circuit_breaker", return_value=True)
     @patch("signal_scorer.requests.post")
     @patch("calibration.get_calibrator")

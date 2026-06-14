@@ -186,11 +186,18 @@ def batch_analyze_markets(markets):
             slug = m.get(HYP_SLUG, "")
             question = m.get("question", "")
             end_date = m.get("end_date")
-            meta = get_metaculus_forecast(question, end_date)
-            if meta.get("found"):
-                metaculus_cache[slug] = meta.get("probability")
+            # Use Manifold Markets (Metaculus API aggregation data is broken)
+            from manifold import get_manifold_forecast
+            ext = get_manifold_forecast(question, end_date)
+            if ext.get("found"):
+                metaculus_cache[slug] = ext.get("probability")
             else:
-                metaculus_cache[slug] = None
+                # Fallback to Metaculus (in case API recovers)
+                meta = get_metaculus_forecast(question, end_date)
+                if meta.get("found"):
+                    metaculus_cache[slug] = meta.get("probability")
+                else:
+                    metaculus_cache[slug] = None
         else:
             metaculus_cache[m.get(HYP_SLUG)] = None
 

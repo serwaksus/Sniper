@@ -17,7 +17,7 @@ def _setup_dotm_sniper_mock():
     _sniper.parse_llm_json = MagicMock(return_value=None)
     _sniper.normalize_probability = MagicMock(side_effect=lambda x: min(max(float(x), 0.0), 1.0))
     _sniper.detect_clusters = MagicMock(return_value=["other"])
-    _sniper.check_metaculus_gap = MagicMock(return_value=None)
+    _sniper.check_manifold_gap = MagicMock(return_value=None)
     _sniper.URL = "https://example.com"
     _sniper.HEADERS = {}
     _sniper.MODEL_MAIN = "test-model"
@@ -121,7 +121,7 @@ class TestNormalizeKeys:
 
 
 class TestBacktestAnalyzeSingleSkip:
-    @patch("backtest_simulator.check_metaculus_gap", return_value=None)
+    @patch("backtest_simulator.check_manifold_gap", return_value=None)
     @patch("backtest_simulator.get_settings", return_value={"min_p_model": 999})
     def test_low_p_model_returns_skip(self, mock_settings, mock_metaculus, bt):
         market = {
@@ -133,7 +133,7 @@ class TestBacktestAnalyzeSingleSkip:
         assert result["action"] == "SKIP"
 
     @patch("backtest_simulator.requests.post")
-    @patch("backtest_simulator.check_metaculus_gap", return_value=None)
+    @patch("backtest_simulator.check_manifold_gap", return_value=None)
     @patch("backtest_simulator.get_settings", return_value={})
     def test_llm_failure_uses_fallback_p_model(self, mock_settings, mock_metaculus, mock_post, bt):
         mock_post.side_effect = Exception("network error")
