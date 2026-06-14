@@ -583,7 +583,11 @@ from signal_pipeline import (fetch_markets,  # noqa: F401
                              fetch_gamma_dotm_candidates, pre_filter_before_batching,
                              full_market_analysis, batch_analyze_markets,
                              advisor_pre_check, BATCH_SIZE,
-                             normalize_probability, calibrate_prediction)
+                             normalize_probability, calibrate_prediction,
+                             URL, HEADERS, MODEL_MAIN, ADVISOR_MODEL,
+                             MAX_P_MODEL_RATIO, MIN_VOLUME,
+                             _cluster_score_adjustment,
+                             )
 
 if __name__ == "__main__":
     single_run = len(sys.argv) > 1 and sys.argv[1] == "--once"

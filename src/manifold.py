@@ -284,7 +284,9 @@ def check_manifold_gap(market: dict, polymarket_prob: float | None = None) -> di
     )
 
     return {
+        "found": True,
         "source": "manifold",
+        "probability": manifold_prob,
         "manifold_prob": manifold_prob,
         "metaculus_prob": manifold_prob,  # Alias for downstream compatibility
         "polymarket_prob": price_to_use,

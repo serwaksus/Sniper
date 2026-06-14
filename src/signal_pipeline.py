@@ -296,12 +296,15 @@ CRITICAL REGULATION FOR CONFIDENCE SCORING: Do NOT default to a flat 0.65 confid
         parsed_arr = _parse_batch_json(content)
         if parsed_arr and len(parsed_arr) == len(batch_items):
             batch_slugs = [it[HYP_SLUG] for it in batch_items]
-            parsed_arr, council_meta = council_batch_consensus(prompt, batch_slugs, parsed_arr)
-            if council_meta.get("models_ok"):
-                logger.info(
-                    f"[COUNCIL] OVH models OK: {council_meta['models_ok']} "
-                    f"(failed: {council_meta.get('models_failed', [])})"
-                )
+            try:
+                parsed_arr, council_meta = council_batch_consensus(prompt, batch_slugs, parsed_arr)
+                if council_meta.get("models_ok"):
+                    logger.info(
+                        f"[COUNCIL] OVH models OK: {council_meta['models_ok']} "
+                        f"(failed: {council_meta.get('models_failed', [])})"
+                    )
+            except Exception as e:
+                logger.warning(f"[COUNCIL] Batch consensus failed, using DeepSeek only: {e}")
             batch_results = _build_batch_results(parsed_arr, batch_items, metaculus_cache)
             if batch_results and len(batch_results) == len(markets):
                 logger.info(f"[BATCH] Successfully parsed batch of {len(batch_results)} markets")
