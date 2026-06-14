@@ -923,10 +923,11 @@ class TestFullMarketAnalysis(unittest.TestCase):
         mock_cal.is_fitted = False
         mock_get_cal.return_value = mock_cal
         mock_gap.return_value = {
-            "metaculus_prob": 0.50,
+            "found": True,
+            "probability": 0.50,
             "polymarket_prob": 0.08,
-            "gap": 0.42,
             "signal_strength": 0.80,
+            "source": "manifold",
         }
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"choices": [{"message": {"content": "{}"}}]}

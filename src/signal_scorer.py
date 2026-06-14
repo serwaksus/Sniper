@@ -22,6 +22,7 @@ import hypotheses_db
 from db import load_settings as _db_load_settings
 from metaculus import normalize_probability
 from manifold import check_manifold_gap
+from metaforecast import check_metaforecast_gap
 from model_council import council_single_consensus
 
 logger = logging.getLogger(__name__)
@@ -235,7 +236,11 @@ def full_market_analysis(market: dict) -> dict:
 
     metaculus_gap = None
     if market["price"] < 0.35:
+        # Primary: Manifold Markets
         metaculus_gap = check_manifold_gap(market, polymarket_prob)
+        # Fallback: Metaforecast (cross-platform: GJO, Metaculus, Betfair, etc.)
+        if not metaculus_gap or not metaculus_gap.get("found"):
+            metaculus_gap = check_metaforecast_gap(market, polymarket_prob)
 
     source_signal = "default"
     if metaculus_gap:
@@ -250,8 +255,9 @@ def full_market_analysis(market: dict) -> dict:
     confidence = min(confidence, 0.95)
 
     gap_info = ""
-    if metaculus_gap:
-        gap_info = f"- Metaculus forecast: {metaculus_gap['metaculus_prob']:.0%} vs Polymarket {metaculus_gap['polymarket_prob']:.0%}\n"
+    if metaculus_gap and metaculus_gap.get("found"):
+        src = metaculus_gap.get("source", "external")
+        gap_info = f"- External forecast ({src}): {metaculus_gap['probability']:.0%} vs Polymarket {metaculus_gap['polymarket_prob']:.0%}\n"
 
     prompt = f"""Prediction market analyst. Your job is to find DOTM (deep out-the-money) events where the crowd SIGNIFICANTLY underestimates probability.
 
@@ -343,13 +349,14 @@ Rules:
             f"(estimates: {council_meta.get('estimates', {})})"
         )
 
-    if metaculus_gap and metaculus_gap.get("signal_strength", 0) > 0.3:
-        p_model_metaculus = metaculus_gap["metaculus_prob"]
+    if metaculus_gap and metaculus_gap.get("found") and metaculus_gap.get("signal_strength", 0) > 0.3:
+        p_model_metaculus = metaculus_gap.get("probability", metaculus_gap.get("metaculus_prob", 0))
         if p_model_metaculus > p_model_llm:
             p_model = p_model_metaculus
+            src = metaculus_gap.get("source", "external")
             logger.info(
-                f"[METACULUS-OVERRIDE] LLM={p_model_llm:.1%} < Metaculus={p_model_metaculus:.1%}, "
-                f"using Metaculus (gap={metaculus_gap['gap']:.1%}, signal={metaculus_gap['signal_strength']:.2f})"
+                f"[EXT-OVERRIDE] LLM={p_model_llm:.1%} < {src}={p_model_metaculus:.1%}, "
+                f"signal={metaculus_gap['signal_strength']:.2f})"
             )
         else:
             p_model = 0.6 * p_model_metaculus + 0.4 * p_model_llm

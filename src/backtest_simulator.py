@@ -440,13 +440,15 @@ def backtest_analyze_single(market: dict) -> dict:
 
     metaculus_gap = None
     try:
-        from manifold import check_manifold_gap
         metaculus_gap = check_manifold_gap(market, polymarket_prob)
+        if not metaculus_gap or not metaculus_gap.get("found"):
+            from metaforecast import check_metaforecast_gap
+            metaculus_gap = check_metaforecast_gap(market, polymarket_prob)
     except Exception as e:
-        logger.warning(f"[BACKTEST] Manifold gap error for {market['slug'][:30]}: {e}")
+        logger.warning(f"[BACKTEST] External forecast gap error for {market['slug'][:30]}: {e}")
 
     source_signal = "default"
-    if metaculus_gap:
+    if metaculus_gap and metaculus_gap.get("found"):
         source_signal = "metaculus"
 
     confidence = 0.60
@@ -457,8 +459,10 @@ def backtest_analyze_single(market: dict) -> dict:
     confidence = min(confidence, 0.95)
 
     gap_info = ""
-    if metaculus_gap:
-        gap_info = f"- Metaculus forecast: {metaculus_gap['metaculus_prob']:.0%} vs Polymarket {metaculus_gap['polymarket_prob']:.0%}\n"
+    if metaculus_gap and metaculus_gap.get("found"):
+        src = metaculus_gap.get("source", "external")
+        prob = metaculus_gap.get("probability", metaculus_gap.get("metaculus_prob", 0))
+        gap_info = f"- External forecast ({src}): {prob:.0%} vs Polymarket {metaculus_gap['polymarket_prob']:.0%}\n"
 
     historical_context = ""
     created_at = market.get("created_at", "")
@@ -534,8 +538,8 @@ Rules:
         p_model_llm = market["yes_price"] * 2
         factors = []
 
-    if metaculus_gap and metaculus_gap.get("signal_strength", 0) > 0.3:
-        p_model_metaculus = metaculus_gap["metaculus_prob"]
+    if metaculus_gap and metaculus_gap.get("found") and metaculus_gap.get("signal_strength", 0) > 0.3:
+        p_model_metaculus = metaculus_gap.get("probability", metaculus_gap.get("metaculus_prob", 0))
         p_model = max(p_model_llm, p_model_metaculus)
         source_signal = "metaculus_override"
         confidence = min(confidence + 0.10, 0.95)
@@ -546,7 +550,7 @@ Rules:
     if p_model > max_p_model:
         p_model = max_p_model
 
-    metaculus_prob_val = metaculus_gap.get("metaculus_prob") if metaculus_gap else None
+    metaculus_prob_val = metaculus_gap.get("probability", metaculus_gap.get("metaculus_prob")) if metaculus_gap and metaculus_gap.get("found") else None
     p_model_raw = p_model
 
     p_model, was_dampened = calibrate_prediction(p_model, market["yes_price"], metaculus_prob_val, cluster=cluster)
