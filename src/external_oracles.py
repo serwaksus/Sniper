@@ -13,10 +13,11 @@ Three independent oracle sources, each providing bonus points to the signal_scor
    - Cache: per market slug, 1 hour
    - Score: +15 if Manifold prob ≥ Polymarket price + 15% (strict)
 
-3. **DBnomics** (macroeconomic data — Fed Funds Rate, CPI)
+3. **DBnomics** (macroeconomic data — Fed Funds Rate, CPI, Unemployment, GDP Growth)
    - Endpoint: GET https://api.db.nomics.world/v22/series/{provider}/{dataset}/{series}
    - Cache: 24 hours
-   - Score: +10 if cluster ∈ {fed_fomc, us_economic} AND macro trend aligns with contract
+   - Score: +10 if cluster ∈ {fed_fomc, us_economic, usa_politics} AND macro trend aligns with contract
+   - Trend analysis: compares latest vs previous value (rising/falling/stable)
 
 All calls are wrapped in try/except — a failure in any oracle must NEVER
 crash the signal scoring pipeline.
@@ -252,29 +253,46 @@ def check_manifold_arbitrage(question: str, polymarket_price: float, slug: str =
 DBNOMICS_API = "https://api.db.nomics.world/v22/series"
 DBNOMICS_TIMEOUT = 15
 DBNOMICS_CACHE_TTL = 86400  # 24 hours
-DBNOMICS_CLUSTERS = {"fed_fomc", "us_economic"}
+DBNOMICS_CLUSTERS = {"fed_fomc", "us_economic", "usa_politics"}
 DBNOMICS_BONUS = 10
 
-# Fed Funds Rate: FRED, series FEDFUNDS
+# Fed Funds Rate: FRED, series FEDFUNDS (monthly, %)
 FED_FUNDS_PROVIDER = "FRED"
 FED_FUNDS_DATASET = "FEDFUNDS"
 FED_FUNDS_SERIES = "FEDFUNDS"
 
-# US CPI: FRED, series CPIAUCSL (Consumer Price Index for All Urban Consumers)
+# US CPI: FRED, series CPIAUCSL (Consumer Price Index for All Urban Consumers, monthly)
 CPI_PROVIDER = "FRED"
 CPI_DATASET = "CPIAUCSL"
 CPI_SERIES = "CPIAUCSL"
 
+# US Unemployment Rate: FRED, series UNRATE (monthly, %)
+UNEMP_PROVIDER = "FRED"
+UNEMP_DATASET = "UNRATE"
+UNEMP_SERIES = "UNRATE"
 
-def _fetch_dbnomics_series(provider: str, dataset: str, series: str, cache_file: str) -> float | None:
-    """Fetch the latest value from a DBnomics time series.
+# US GDP Growth: FRED, series A191RL1Q225SBEA (quarterly, % annualized rate)
+GDP_PROVIDER = "FRED"
+GDP_DATASET = "A191RL1Q225SBEA"
+GDP_SERIES = "A191RL1Q225SBEA"
 
-    Returns the latest period value, or None on failure.
-    Cached for 24 hours.
+
+def _fetch_dbnomics_series(provider: str, dataset: str, series: str, cache_file: str) -> dict[str, Any] | None:
+    """Fetch the latest value with trend info from a DBnomics time series.
+
+    Returns a dict with keys:
+        - latest: float — most recent value
+        - previous: float | None — second-most-recent value
+        - delta: float | None — latest - previous
+        - trend: str — "rising" | "falling" | "stable" | "unknown"
+        - period: str — latest period (e.g. "2024-06")
+
+    Returns None on failure. Cached for 24 hours.
     """
     cached = _load_cache(cache_file, DBNOMICS_CACHE_TTL)
-    if cached is not None:
+    if cached is not None and isinstance(cached, dict):
         return cached
+        # Old float format from previous version — falls through to refresh
 
     series_path = f"{provider}/{dataset}/{series}"
     try:
@@ -296,30 +314,53 @@ def _fetch_dbnomics_series(provider: str, dataset: str, series: str, cache_file:
             return None
 
         # Observations are in docs[0]["period"] and docs[0]["value"]
-        # Format: {"period": ["2024-01", "2024-02", ...], "value": [5.25, 5.5, ...]}
         values = docs[0].get("value", [])
         periods = docs[0].get("period", [])
 
-        # Find the latest non-"NA" value
-        latest_val: float | None = None
-        latest_period = ""
+        # Find the last N non-"NA" values (need at least 2 for trend)
+        valid: list[tuple[float, str]] = []
         for i in range(len(values) - 1, -1, -1):
             v = values[i]
             if v != "NA" and v is not None:
                 try:
-                    latest_val = float(v)
-                    latest_period = periods[i] if i < len(periods) else ""
-                    break
+                    val = float(v)
+                    period = periods[i] if i < len(periods) else ""
+                    valid.append((val, period))
+                    if len(valid) >= 2:
+                        break
                 except (ValueError, TypeError):
                     continue
 
-        if latest_val is not None:
-            logger.info(f"[DBNOMICS] {series}: {latest_val} (period={latest_period})")
-            _save_cache(cache_file, latest_val)
-            return latest_val
+        if not valid:
+            logger.warning(f"[DBNOMICS] No valid values for {series_path}")
+            return None
 
-        logger.warning(f"[DBNOMICS] No valid values for {series_path}")
-        return None
+        latest_val, latest_period = valid[0]
+        previous_val = valid[1][0] if len(valid) >= 2 else None
+        delta = round(latest_val - previous_val, 4) if previous_val is not None else None
+
+        if delta is None:
+            trend = "unknown"
+        elif abs(delta) < 0.001:
+            trend = "stable"
+        elif delta > 0:
+            trend = "rising"
+        else:
+            trend = "falling"
+
+        result: dict[str, Any] = {
+            "latest": latest_val,
+            "previous": previous_val,
+            "delta": delta,
+            "trend": trend,
+            "period": latest_period,
+        }
+        logger.info(
+            f"[DBNOMICS] {series}: {latest_val} "
+            f"(delta={delta}, trend={trend}, period={latest_period})"
+        )
+        _save_cache(cache_file, result)
+        return result
 
     except requests.exceptions.Timeout:
         logger.warning(f"[DBNOMICS] Timeout ({DBNOMICS_TIMEOUT}s) for {series_path}")
@@ -328,55 +369,120 @@ def _fetch_dbnomics_series(provider: str, dataset: str, series: str, cache_file:
     return None
 
 
-def get_fed_funds_rate() -> float | None:
-    """Get the latest US Federal Funds Rate (%). Cached 24h."""
+def get_fed_funds_rate() -> dict[str, Any] | None:
+    """Get the latest US Federal Funds Rate (%) with trend. Cached 24h."""
     return _fetch_dbnomics_series(
         FED_FUNDS_PROVIDER, FED_FUNDS_DATASET, FED_FUNDS_SERIES,
         "oracle_fed_funds.json",
     )
 
 
-def get_cpi_inflation() -> float | None:
-    """Get the latest US CPI index value. Cached 24h."""
+def get_cpi_inflation() -> dict[str, Any] | None:
+    """Get the latest US CPI index value with trend. Cached 24h."""
     return _fetch_dbnomics_series(
         CPI_PROVIDER, CPI_DATASET, CPI_SERIES,
         "oracle_cpi.json",
     )
 
 
-def _check_macro_alignment(question: str, fed_rate: float | None, cpi: float | None) -> bool:
-    """Check if the contract question aligns with the current macro trend.
+def get_unemployment_rate() -> dict[str, Any] | None:
+    """Get the latest US Unemployment Rate (%) with trend. Cached 24h."""
+    return _fetch_dbnomics_series(
+        UNEMP_PROVIDER, UNEMP_DATASET, UNEMP_SERIES,
+        "oracle_unemployment.json",
+    )
 
-    Heuristic alignment rules:
-    - If question mentions "rate cut", "rate decrease", "lower" → aligned when
-      Fed rate is high (≥ 4.0%) — rate cuts are likely.
-    - If question mentions "rate hike", "rate increase", "raise" → aligned when
-      Fed rate is low (≤ 2.0%) — rate hikes are possible.
-    - If question mentions "inflation", "CPI", "prices rise" → aligned when
-      CPI is trending high (we use absolute CPI > 300 as a proxy for high inflation).
-    - Default: if any macro data is available, consider it a soft alignment.
+
+def get_gdp_growth() -> dict[str, Any] | None:
+    """Get the latest US GDP Growth Rate (% annualized) with trend. Cached 24h."""
+    return _fetch_dbnomics_series(
+        GDP_PROVIDER, GDP_DATASET, GDP_SERIES,
+        "oracle_gdp.json",
+    )
+
+
+def _check_macro_alignment(
+    question: str,
+    fed_rate: dict[str, Any] | None,
+    cpi: dict[str, Any] | None,
+    unemployment: dict[str, Any] | None = None,
+    gdp: dict[str, Any] | None = None,
+) -> bool:
+    """Check if the contract question aligns with current macro trends.
+
+    Trend-based alignment rules (v2):
+    - Rate cut questions: aligned when Fed rate is falling OR high (≥4%) and not rising.
+    - Rate hike questions: aligned when Fed rate is rising OR low (≤2%) and not falling.
+    - Inflation questions: aligned when CPI is rising (delta > 0), not just absolute level.
+    - Recession questions: aligned when multiple negative signals (high+rising rates,
+      negative GDP, or rising unemployment ≥4%).
+    - Unemployment questions: aligned when unemployment is rising.
+    - GDP/economy questions: aligned when GDP growth is negative or slowing.
     """
     q_lower = question.lower()
 
-    # Rate cut alignment
-    if any(kw in q_lower for kw in ("rate cut", "rate decrease", "lower rate", "cut rate", "reduce rate")) and fed_rate is not None and fed_rate >= 4.0:
-        logger.info(f"[DBNOMICS] Rate-cut question aligned with high Fed rate={fed_rate}%")
+    # Extract trend info safely
+    fed_trend = fed_rate.get("trend", "unknown") if fed_rate else "unknown"
+    fed_latest = fed_rate.get("latest") if fed_rate else None
+    fed_delta = fed_rate.get("delta") if fed_rate else None
+
+    cpi_trend = cpi.get("trend", "unknown") if cpi else "unknown"
+    cpi_delta = cpi.get("delta") if cpi else None
+
+    unemp_trend = unemployment.get("trend", "unknown") if unemployment else "unknown"
+    unemp_latest = unemployment.get("latest") if unemployment else None
+
+    gdp_latest = gdp.get("latest") if gdp else None
+    gdp_trend = gdp.get("trend", "unknown") if gdp else "unknown"
+
+    # ── Rate cut alignment: rates falling OR high and stable ──────────
+    if any(kw in q_lower for kw in ("rate cut", "rate decrease", "lower rate", "cut rate", "reduce rate")):
+        if fed_trend == "falling" and fed_delta is not None and fed_delta < 0:
+            logger.info(f"[DBNOMICS] Rate-cut aligned: Fed falling (delta={fed_delta})")
+            return True
+        if fed_latest is not None and fed_latest >= 4.0 and fed_trend != "rising":
+            logger.info(f"[DBNOMICS] Rate-cut aligned: Fed high={fed_latest}% (trend={fed_trend})")
+            return True
+
+    # ── Rate hike alignment: rates rising OR low and stable ───────────
+    if any(kw in q_lower for kw in ("rate hike", "rate increase", "raise rate", "hike rate")):
+        if fed_trend == "rising" and fed_delta is not None and fed_delta > 0:
+            logger.info(f"[DBNOMICS] Rate-hike aligned: Fed rising (delta={fed_delta})")
+            return True
+        if fed_latest is not None and fed_latest <= 2.0 and fed_trend != "falling":
+            logger.info(f"[DBNOMICS] Rate-hike aligned: Fed low={fed_latest}% (trend={fed_trend})")
+            return True
+
+    # ── Inflation alignment: CPI actually rising (not just absolute level) ─
+    if any(kw in q_lower for kw in ("inflation", "cpi", "price rise", "prices rise", "prices increase")) and cpi_trend == "rising" and cpi_delta is not None and cpi_delta > 0:
+        logger.info(f"[DBNOMICS] Inflation aligned: CPI rising (delta={cpi_delta})")
         return True
 
-    # Rate hike alignment
-    if any(kw in q_lower for kw in ("rate hike", "rate increase", "raise rate", "hike rate")) and fed_rate is not None and fed_rate <= 2.0:
-        logger.info(f"[DBNOMICS] Rate-hike question aligned with low Fed rate={fed_rate}%")
+    # ── Recession alignment: multiple negative macro signals ──────────
+    if any(kw in q_lower for kw in ("recession", "economic downturn", "contraction")):
+        if fed_latest is not None and fed_latest >= 4.0 and fed_trend == "rising":
+            logger.info(f"[DBNOMICS] Recession aligned: Fed high={fed_latest}% AND rising")
+            return True
+        if gdp_latest is not None and gdp_latest < 0:
+            logger.info(f"[DBNOMICS] Recession aligned: GDP negative={gdp_latest}%")
+            return True
+        if unemp_latest is not None and unemp_trend == "rising" and unemp_latest >= 4.0:
+            logger.info(f"[DBNOMICS] Recession aligned: unemployment rising={unemp_latest}%")
+            return True
+
+    # ── Unemployment / jobless alignment ──────────────────────────────
+    if any(kw in q_lower for kw in ("unemployment", "jobless", "layoff", "fired")) and unemp_trend == "rising":
+        logger.info(f"[DBNOMICS] Unemployment aligned: rate rising={unemp_latest}%")
         return True
 
-    # Inflation alignment
-    if any(kw in q_lower for kw in ("inflation", "cpi", "price rise", "prices rise")) and cpi is not None and cpi > 300:
-        logger.info(f"[DBNOMICS] Inflation question aligned with high CPI={cpi}")
-        return True
-
-    # Recession alignment — high rates may cause recession
-    if any(kw in q_lower for kw in ("recession", "economic downturn", "contraction")) and fed_rate is not None and fed_rate >= 4.5:
-        logger.info(f"[DBNOMICS] Recession question aligned with high Fed rate={fed_rate}%")
-        return True
+    # ── GDP / economic growth alignment ───────────────────────────────
+    if any(kw in q_lower for kw in ("gdp", "economic growth", "economic slowdown", "stagnation")):
+        if gdp_latest is not None and gdp_latest < 1.0:
+            logger.info(f"[DBNOMICS] GDP aligned: weak growth={gdp_latest}%")
+            return True
+        if gdp_trend == "falling":
+            logger.info(f"[DBNOMICS] GDP aligned: growth decelerating (trend={gdp_trend})")
+            return True
 
     return False
 
@@ -384,8 +490,11 @@ def _check_macro_alignment(question: str, fed_rate: float | None, cpi: float | N
 def dbnomics_macro_bonus(cluster: str, question: str) -> int:
     """Return +10 if cluster is macro AND question aligns with macro trend.
 
+    Uses trend-based alignment (rising/falling/stable) across 4 series:
+    Fed Funds Rate, CPI, Unemployment Rate, GDP Growth.
+
     Args:
-        cluster: Market cluster name (e.g. 'fed_fomc', 'us_economic')
+        cluster: Market cluster name (e.g. 'fed_fomc', 'us_economic', 'usa_politics')
         question: Polymarket question text
 
     Returns:
@@ -396,8 +505,10 @@ def dbnomics_macro_bonus(cluster: str, question: str) -> int:
 
     fed_rate = get_fed_funds_rate()
     cpi = get_cpi_inflation()
+    unemployment = get_unemployment_rate()
+    gdp = get_gdp_growth()
 
-    if _check_macro_alignment(question, fed_rate, cpi):
+    if _check_macro_alignment(question, fed_rate, cpi, unemployment, gdp):
         return DBNOMICS_BONUS
 
     return 0
@@ -744,7 +855,7 @@ def compute_oracle_bonus(
     Sources:
     1. Fear & Greed Index (+5)  — crypto/tech sentiment
     2. Manifold Arbitrage (+15) — cross-platform probability gap
-    3. DBnomics Macro (+10)     — Fed rate / CPI alignment
+    3. DBnomics Macro (+10)     — Fed rate / CPI / Unemployment / GDP trend alignment
     4. Yahoo Finance (+8)       — stock/index price proximity to target
     5. Wikipedia Spike (+7)     — pageviews spike = breaking news
 

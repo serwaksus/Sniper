@@ -321,13 +321,13 @@ class TestKeywordExtraction(unittest.TestCase):
 
 
 class TestDBnomics(unittest.TestCase):
-    """DBnomics macroeconomic data tests."""
+    """DBnomics macroeconomic data tests (v2: trend-aware)."""
 
     @patch("external_oracles.requests.get")
     @patch("external_oracles._load_cache", return_value=None)
     @patch("external_oracles._save_cache")
-    def test_fetch_fed_funds_success(self, mock_save, mock_load, mock_get):
-        """Fed Funds Rate parses correctly."""
+    def test_fetch_fed_funds_success_with_trend(self, mock_save, mock_load, mock_get):
+        """Fed Funds Rate parses correctly with trend info."""
         import external_oracles
 
         mock_get.return_value = MagicMock(
@@ -337,12 +337,70 @@ class TestDBnomics(unittest.TestCase):
             }),
         )
         result = external_oracles.get_fed_funds_rate()
-        self.assertEqual(result, 5.5)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["latest"], 5.5)
+        self.assertEqual(result["previous"], 5.25)
+        self.assertAlmostEqual(result["delta"], 0.25)
+        self.assertEqual(result["trend"], "rising")
+        self.assertEqual(result["period"], "2024-02")
+
+    @patch("external_oracles.requests.get")
+    @patch("external_oracles._load_cache", return_value=None)
+    @patch("external_oracles._save_cache")
+    def test_fetch_trend_falling(self, mock_save, mock_load, mock_get):
+        """Trend is 'falling' when latest < previous."""
+        import external_oracles
+
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={
+                "series": {"docs": [{"period": ["2024-01", "2024-02"], "value": [5.5, 5.25]}]}
+            }),
+        )
+        result = external_oracles.get_fed_funds_rate()
+        self.assertEqual(result["trend"], "falling")
+        self.assertAlmostEqual(result["delta"], -0.25)
+
+    @patch("external_oracles.requests.get")
+    @patch("external_oracles._load_cache", return_value=None)
+    @patch("external_oracles._save_cache")
+    def test_fetch_trend_stable(self, mock_save, mock_load, mock_get):
+        """Trend is 'stable' when values are identical."""
+        import external_oracles
+
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={
+                "series": {"docs": [{"period": ["2024-01", "2024-02"], "value": [5.25, 5.25]}]}
+            }),
+        )
+        result = external_oracles.get_fed_funds_rate()
+        self.assertEqual(result["trend"], "stable")
+        self.assertAlmostEqual(result["delta"], 0.0)
+
+    @patch("external_oracles.requests.get")
+    @patch("external_oracles._load_cache", return_value=None)
+    @patch("external_oracles._save_cache")
+    def test_fetch_single_value_unknown_trend(self, mock_save, mock_load, mock_get):
+        """Single value → trend='unknown', previous=None."""
+        import external_oracles
+
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={
+                "series": {"docs": [{"period": ["2024-01"], "value": [5.5]}]}
+            }),
+        )
+        result = external_oracles.get_fed_funds_rate()
+        self.assertEqual(result["latest"], 5.5)
+        self.assertIsNone(result["previous"])
+        self.assertIsNone(result["delta"])
+        self.assertEqual(result["trend"], "unknown")
 
     @patch("external_oracles.requests.get")
     @patch("external_oracles._load_cache", return_value=None)
     def test_fetch_handles_na_values(self, mock_load, mock_get):
-        """NA values are skipped, latest valid value returned."""
+        """NA values are skipped, latest valid pair returned."""
         import external_oracles
 
         mock_get.return_value = MagicMock(
@@ -352,7 +410,8 @@ class TestDBnomics(unittest.TestCase):
             }),
         )
         result = external_oracles.get_fed_funds_rate()
-        self.assertEqual(result, 5.5)
+        self.assertEqual(result["latest"], 5.5)
+        self.assertEqual(result["previous"], 5.25)
 
     @patch("external_oracles.requests.get", side_effect=Exception("network"))
     @patch("external_oracles._load_cache", return_value=None)
@@ -390,41 +449,146 @@ class TestDBnomics(unittest.TestCase):
         result = external_oracles.get_fed_funds_rate()
         self.assertIsNone(result)
 
+    @patch("external_oracles._load_cache", return_value=None)
+    def test_fetch_unemployment_rate(self, mock_load):
+        """Unemployment rate getter calls correct series."""
+        import external_oracles
+
+        with patch("external_oracles.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                json=MagicMock(return_value={
+                    "series": {"docs": [{"period": ["2024-04", "2024-05"], "value": [3.9, 4.0]}]}
+                }),
+            )
+            result = external_oracles.get_unemployment_rate()
+            self.assertIsNotNone(result)
+            self.assertEqual(result["latest"], 4.0)
+            self.assertEqual(result["trend"], "rising")
+
+    @patch("external_oracles._load_cache", return_value=None)
+    def test_fetch_gdp_growth(self, mock_load):
+        """GDP growth getter calls correct series."""
+        import external_oracles
+
+        with patch("external_oracles.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                json=MagicMock(return_value={
+                    "series": {"docs": [{"period": ["2024-Q1", "2024-Q2"], "value": [2.5, -1.0]}]}
+                }),
+            )
+            result = external_oracles.get_gdp_growth()
+            self.assertIsNotNone(result)
+            self.assertEqual(result["latest"], -1.0)
+            self.assertEqual(result["trend"], "falling")
+
+
+# ── Helper dicts for alignment tests ──────────────────────────────────
+
+_FED_FALLING = {"latest": 4.5, "previous": 5.25, "delta": -0.75, "trend": "falling", "period": "2024-07"}
+_FED_RISING = {"latest": 5.5, "previous": 5.25, "delta": 0.25, "trend": "rising", "period": "2024-07"}
+_FED_STABLE_HIGH = {"latest": 5.25, "previous": 5.25, "delta": 0.0, "trend": "stable", "period": "2024-07"}
+_FED_STABLE_LOW = {"latest": 1.5, "previous": 1.5, "delta": 0.0, "trend": "stable", "period": "2024-07"}
+_CPI_RISING = {"latest": 315.0, "previous": 310.0, "delta": 5.0, "trend": "rising", "period": "2024-06"}
+_CPI_FALLING = {"latest": 310.0, "previous": 315.0, "delta": -5.0, "trend": "falling", "period": "2024-06"}
+_UNEMP_RISING = {"latest": 4.5, "previous": 3.8, "delta": 0.7, "trend": "rising", "period": "2024-06"}
+_UNEMP_STABLE = {"latest": 3.8, "previous": 3.8, "delta": 0.0, "trend": "stable", "period": "2024-06"}
+_GDP_NEGATIVE = {"latest": -2.5, "previous": 1.0, "delta": -3.5, "trend": "falling", "period": "2024-Q2"}
+_GDP_NORMAL = {"latest": 2.5, "previous": 2.0, "delta": 0.5, "trend": "rising", "period": "2024-Q2"}
+_GDP_SLOW = {"latest": 0.5, "previous": 2.0, "delta": -1.5, "trend": "falling", "period": "2024-Q2"}
+
 
 class TestMacroAlignment(unittest.TestCase):
-    """Macro trend alignment heuristics."""
+    """Macro trend alignment heuristics (v2: trend-based)."""
 
-    def test_rate_cut_aligned_with_high_rate(self):
-        from external_oracles import _check_macro_alignment
-        self.assertTrue(_check_macro_alignment("Will there be a rate cut in 2025?", 5.25, None))
+    # ── Rate cut alignment ────────────────────────────────────────────
 
-    def test_rate_cut_not_aligned_with_low_rate(self):
+    def test_rate_cut_aligned_falling(self):
         from external_oracles import _check_macro_alignment
-        self.assertFalse(_check_macro_alignment("Will there be a rate cut?", 1.5, None))
+        self.assertTrue(_check_macro_alignment("Will there be a rate cut?", _FED_FALLING, None))
 
-    def test_rate_hike_aligned_with_low_rate(self):
+    def test_rate_cut_aligned_high_stable(self):
         from external_oracles import _check_macro_alignment
-        self.assertTrue(_check_macro_alignment("Will the Fed hike rates?", 1.0, None))
+        self.assertTrue(_check_macro_alignment("Will there be a rate cut?", _FED_STABLE_HIGH, None))
 
-    def test_rate_hike_not_aligned_with_high_rate(self):
+    def test_rate_cut_not_aligned_rising(self):
         from external_oracles import _check_macro_alignment
-        self.assertFalse(_check_macro_alignment("Will the Fed hike rates?", 5.0, None))
+        self.assertFalse(_check_macro_alignment("Will there be a rate cut?", _FED_RISING, None))
 
-    def test_inflation_aligned_with_high_cpi(self):
+    def test_rate_cut_not_aligned_low_stable(self):
         from external_oracles import _check_macro_alignment
-        self.assertTrue(_check_macro_alignment("Will inflation increase?", None, 315.0))
+        self.assertFalse(_check_macro_alignment("Will there be a rate cut?", _FED_STABLE_LOW, None))
 
-    def test_inflation_not_aligned_with_low_cpi(self):
-        from external_oracles import _check_macro_alignment
-        self.assertFalse(_check_macro_alignment("Will inflation increase?", None, 250.0))
+    # ── Rate hike alignment ───────────────────────────────────────────
 
-    def test_recession_aligned_with_high_rate(self):
+    def test_rate_hike_aligned_rising(self):
         from external_oracles import _check_macro_alignment
-        self.assertTrue(_check_macro_alignment("Will there be a recession in 2025?", 5.0, None))
+        self.assertTrue(_check_macro_alignment("Will the Fed hike rates?", _FED_RISING, None))
+
+    def test_rate_hike_not_aligned_falling(self):
+        from external_oracles import _check_macro_alignment
+        self.assertFalse(_check_macro_alignment("Will the Fed hike rates?", _FED_FALLING, None))
+
+    # ── Inflation alignment ───────────────────────────────────────────
+
+    def test_inflation_aligned_cpi_rising(self):
+        from external_oracles import _check_macro_alignment
+        self.assertTrue(_check_macro_alignment("Will inflation increase?", None, _CPI_RISING))
+
+    def test_inflation_not_aligned_cpi_falling(self):
+        from external_oracles import _check_macro_alignment
+        self.assertFalse(_check_macro_alignment("Will inflation increase?", None, _CPI_FALLING))
+
+    def test_inflation_not_aligned_cpi_stable_high(self):
+        """CPI that was >300 in old test — now needs trend, not just level."""
+        from external_oracles import _check_macro_alignment
+        stable_cpi = {"latest": 315.0, "previous": 315.0, "delta": 0.0, "trend": "stable", "period": "2024-06"}
+        self.assertFalse(_check_macro_alignment("Will inflation increase?", None, stable_cpi))
+
+    # ── Recession alignment (multi-signal) ────────────────────────────
+
+    def test_recession_aligned_gdp_negative(self):
+        from external_oracles import _check_macro_alignment
+        self.assertTrue(_check_macro_alignment("Will there be a recession?", None, None, None, _GDP_NEGATIVE))
+
+    def test_recession_aligned_unemployment_rising(self):
+        from external_oracles import _check_macro_alignment
+        self.assertTrue(_check_macro_alignment("Will there be a recession?", None, None, _UNEMP_RISING, None))
+
+    def test_recession_aligned_high_rising_rates(self):
+        from external_oracles import _check_macro_alignment
+        self.assertTrue(_check_macro_alignment("Will there be a recession?", _FED_RISING, None, None, None))
+
+    def test_recession_not_aligned_normal(self):
+        from external_oracles import _check_macro_alignment
+        self.assertFalse(_check_macro_alignment("Will there be a recession?", _FED_STABLE_HIGH, None, _UNEMP_STABLE, _GDP_NORMAL))
+
+    # ── Unemployment alignment ────────────────────────────────────────
+
+    def test_unemployment_aligned_rising(self):
+        from external_oracles import _check_macro_alignment
+        self.assertTrue(_check_macro_alignment("Will unemployment claims rise?", None, None, _UNEMP_RISING))
+
+    def test_unemployment_not_aligned_stable(self):
+        from external_oracles import _check_macro_alignment
+        self.assertFalse(_check_macro_alignment("Will unemployment rise?", None, None, _UNEMP_STABLE))
+
+    # ── GDP alignment ─────────────────────────────────────────────────
+
+    def test_gdp_aligned_negative_growth(self):
+        from external_oracles import _check_macro_alignment
+        self.assertTrue(_check_macro_alignment("Will GDP growth slow down?", None, None, None, _GDP_NEGATIVE))
+
+    def test_gdp_aligned_decelerating(self):
+        from external_oracles import _check_macro_alignment
+        self.assertTrue(_check_macro_alignment("Will we see economic stagnation?", None, None, None, _GDP_SLOW))
+
+    # ── Edge cases ────────────────────────────────────────────────────
 
     def test_no_keywords_returns_false(self):
         from external_oracles import _check_macro_alignment
-        self.assertFalse(_check_macro_alignment("Will it rain?", 5.0, 300.0))
+        self.assertFalse(_check_macro_alignment("Will it rain?", _FED_STABLE_HIGH, _CPI_RISING))
 
     def test_none_data_returns_false(self):
         from external_oracles import _check_macro_alignment
@@ -432,32 +596,59 @@ class TestMacroAlignment(unittest.TestCase):
 
 
 class TestDBnomicsBonus(unittest.TestCase):
-    """DBnomics bonus computation."""
+    """DBnomics bonus computation (v2: trend-aware)."""
 
-    @patch("external_oracles.get_fed_funds_rate", return_value=5.25)
-    @patch("external_oracles.get_cpi_inflation", return_value=310.0)
-    def test_bonus_for_fed_fomc_rate_cut(self, mock_cpi, mock_fed):
+    @patch("external_oracles.get_gdp_growth", return_value=None)
+    @patch("external_oracles.get_unemployment_rate", return_value=None)
+    @patch("external_oracles.get_cpi_inflation", return_value=None)
+    @patch("external_oracles.get_fed_funds_rate", return_value=_FED_FALLING)
+    def test_bonus_for_fed_fomc_rate_cut(self, mock_fed, mock_cpi, mock_unemp, mock_gdp):
         from external_oracles import dbnomics_macro_bonus
         result = dbnomics_macro_bonus("fed_fomc", "Will the Fed cut rates in 2025?")
         self.assertEqual(result, 10)
 
-    @patch("external_oracles.get_fed_funds_rate", return_value=5.25)
-    @patch("external_oracles.get_cpi_inflation", return_value=310.0)
-    def test_bonus_for_us_economic_inflation(self, mock_cpi, mock_fed):
+    @patch("external_oracles.get_gdp_growth", return_value=None)
+    @patch("external_oracles.get_unemployment_rate", return_value=None)
+    @patch("external_oracles.get_cpi_inflation", return_value=_CPI_RISING)
+    @patch("external_oracles.get_fed_funds_rate", return_value=None)
+    def test_bonus_for_us_economic_inflation(self, mock_fed, mock_cpi, mock_unemp, mock_gdp):
         from external_oracles import dbnomics_macro_bonus
         result = dbnomics_macro_bonus("us_economic", "Will inflation rise further?")
         self.assertEqual(result, 10)
 
-    @patch("external_oracles.get_fed_funds_rate", return_value=5.25)
-    @patch("external_oracles.get_cpi_inflation", return_value=310.0)
-    def test_no_bonus_wrong_cluster(self, mock_cpi, mock_fed):
+    @patch("external_oracles.get_gdp_growth", return_value=_GDP_NEGATIVE)
+    @patch("external_oracles.get_unemployment_rate", return_value=_UNEMP_RISING)
+    @patch("external_oracles.get_cpi_inflation", return_value=None)
+    @patch("external_oracles.get_fed_funds_rate", return_value=None)
+    def test_bonus_for_usa_politics_recession(self, mock_fed, mock_cpi, mock_unemp, mock_gdp):
+        """usa_politics cluster now triggers DBnomics."""
+        from external_oracles import dbnomics_macro_bonus
+        result = dbnomics_macro_bonus("usa_politics", "Will the US enter a recession before the 2028 election?")
+        self.assertEqual(result, 10)
+
+    @patch("external_oracles.get_gdp_growth", return_value=None)
+    @patch("external_oracles.get_unemployment_rate", return_value=_UNEMP_RISING)
+    @patch("external_oracles.get_cpi_inflation", return_value=None)
+    @patch("external_oracles.get_fed_funds_rate", return_value=None)
+    def test_bonus_for_unemployment_question(self, mock_fed, mock_cpi, mock_unemp, mock_gdp):
+        from external_oracles import dbnomics_macro_bonus
+        result = dbnomics_macro_bonus("us_economic", "Will unemployment claims spike?")
+        self.assertEqual(result, 10)
+
+    @patch("external_oracles.get_gdp_growth", return_value=None)
+    @patch("external_oracles.get_unemployment_rate", return_value=None)
+    @patch("external_oracles.get_cpi_inflation", return_value=None)
+    @patch("external_oracles.get_fed_funds_rate", return_value=None)
+    def test_no_bonus_wrong_cluster(self, mock_fed, mock_cpi, mock_unemp, mock_gdp):
         from external_oracles import dbnomics_macro_bonus
         result = dbnomics_macro_bonus("crypto", "Will inflation rise?")
         self.assertEqual(result, 0)
 
-    @patch("external_oracles.get_fed_funds_rate", return_value=5.25)
-    @patch("external_oracles.get_cpi_inflation", return_value=310.0)
-    def test_no_bonus_no_alignment(self, mock_cpi, mock_fed):
+    @patch("external_oracles.get_gdp_growth", return_value=_GDP_NORMAL)
+    @patch("external_oracles.get_unemployment_rate", return_value=_UNEMP_STABLE)
+    @patch("external_oracles.get_cpi_inflation", return_value=None)
+    @patch("external_oracles.get_fed_funds_rate", return_value=_FED_RISING)
+    def test_no_bonus_no_alignment(self, mock_fed, mock_cpi, mock_unemp, mock_gdp):
         from external_oracles import dbnomics_macro_bonus
         result = dbnomics_macro_bonus("fed_fomc", "Will it snow in Alaska?")
         self.assertEqual(result, 0)
@@ -495,7 +686,7 @@ class TestComputeOracleBonus(unittest.TestCase):
     @patch("external_oracles.dbnomics_macro_bonus", return_value=0)
     def test_no_bonus_anywhere(self, mock_dbn, mock_mf, mock_fng):
         from external_oracles import compute_oracle_bonus
-        total, breakdown = compute_oracle_bonus(
+        total, _breakdown = compute_oracle_bonus(
             "other", "Random question", 0.10, "random",
         )
         self.assertEqual(total, 0)
@@ -577,8 +768,6 @@ class TestCacheInfrastructure(unittest.TestCase):
 
     def test_cache_save_and_load(self):
         from external_oracles import _save_cache, _load_cache
-        import tempfile as tf
-        import json
 
         # Use unique filename to avoid conflicts
         fname = f"test_cache_{int(time.time())}.json"
@@ -608,7 +797,7 @@ class TestCacheInfrastructure(unittest.TestCase):
         try:
             _save_cache(fname, 42)
             # Manually set the timestamp to 2 hours ago
-            with open(cache_path, "r") as f:
+            with open(cache_path) as f:
                 data = json.load(f)
             data["_cached_at"] = time.time() - 7200  # 2h ago
             with open(cache_path, "w") as f:
@@ -1053,7 +1242,7 @@ class TestComputeOracleBonusFiveSources(unittest.TestCase):
     def test_all_five_in_breakdown(self, mock_fng, mock_mf, mock_dbn, mock_yf, mock_wiki):
         """Breakdown dict has all 5 source keys."""
         from external_oracles import compute_oracle_bonus
-        total, breakdown = compute_oracle_bonus(
+        _total, breakdown = compute_oracle_bonus(
             "crypto", "Will BTC hit 200k?", 0.05, "test",
         )
         self.assertIn("fng", breakdown)
