@@ -70,9 +70,8 @@ def _check_llm_circuit_breaker():
 # ── Re-exports from extracted modules ────────────────────────
 from metaculus import (
     METACULUS_API_KEY,
-    METACULUS_URL,
+    METACULUS_POSTS_URL,
     METACULUS_HEADERS,
-    DISPERSION_PENALTY_THRESHOLD,
     METACULUS_GAP_THRESHOLD,
     DATE_WINDOW_DAYS,
     load_cache,
@@ -127,14 +126,13 @@ __all__ = [
     "CALIBRATION_METACULUS_LOW",
     "CLUSTER_SCORE_ADJUSTMENTS",
     "DATE_WINDOW_DAYS",
-    "DISPERSION_PENALTY_THRESHOLD",
     "HEADERS",
     "MAX_PRICE",
     "MAX_P_MODEL_RATIO",
     "METACULUS_API_KEY",
     "METACULUS_GAP_THRESHOLD",
     "METACULUS_HEADERS",
-    "METACULUS_URL",
+    "METACULUS_POSTS_URL",
     "MIN_CONFIDENCE",
     "MIN_PROB_RATIO",
     "MIN_P_MODEL",
@@ -188,23 +186,23 @@ def batch_analyze_markets(markets):
             end_date = m.get("end_date")
             # Multi-source external forecast cascade:
             # 1. Manifold Markets (primary — fast, free API)
-            # 2. Metaforecast cross-platform (GJO, Metaculus, Betfair, etc.)
-            # 3. Metaculus API direct (fallback — API aggregation data currently broken)
+            # 2. Metaculus (search via /api/posts + probability via Metaforecast)
+            # 3. Metaforecast cross-platform (GJO, Betfair, etc. — broadest coverage)
             from manifold import get_manifold_forecast
             ext = get_manifold_forecast(question, end_date)
             if ext.get("found"):
                 metaculus_cache[slug] = ext.get("probability")
             else:
-                # Try Metaforecast (cross-platform: GJO, Metaculus, Betfair, etc.)
-                from metaforecast import get_metaforecast_forecast
-                mf = get_metaforecast_forecast(question)
-                if mf and mf.get("found"):
-                    metaculus_cache[slug] = mf.get("probability")
+                # Try Metaculus (search posts + Metaforecast probability bridge)
+                meta = get_metaculus_forecast(question, end_date)
+                if meta.get("found"):
+                    metaculus_cache[slug] = meta.get("probability")
                 else:
-                    # Last resort: Metaculus API (in case it recovers)
-                    meta = get_metaculus_forecast(question, end_date)
-                    if meta.get("found"):
-                        metaculus_cache[slug] = meta.get("probability")
+                    # Fallback: Metaforecast cross-platform (GJO, Betfair, etc.)
+                    from metaforecast import get_metaforecast_forecast
+                    mf = get_metaforecast_forecast(question)
+                    if mf and mf.get("found"):
+                        metaculus_cache[slug] = mf.get("probability")
                     else:
                         metaculus_cache[slug] = None
         else:

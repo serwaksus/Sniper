@@ -236,9 +236,11 @@ def full_market_analysis(market: dict) -> dict:
 
     metaculus_gap = None
     if market["price"] < 0.35:
-        # Primary: Manifold Markets
+        # Cascade: Manifold → Metaculus → Metaforecast
         metaculus_gap = check_manifold_gap(market, polymarket_prob)
-        # Fallback: Metaforecast (cross-platform: GJO, Metaculus, Betfair, etc.)
+        if not metaculus_gap or not metaculus_gap.get("found"):
+            from metaculus import check_metaculus_gap as _check_meta_gap
+            metaculus_gap = _check_meta_gap(market, polymarket_prob)
         if not metaculus_gap or not metaculus_gap.get("found"):
             metaculus_gap = check_metaforecast_gap(market, polymarket_prob)
 

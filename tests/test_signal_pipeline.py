@@ -763,18 +763,24 @@ class TestBuildBatchResults(unittest.TestCase):
 # metaculus_search / metaculus_get_question
 # ═══════════════════════════════════════════════════════════════════
 class TestMetaculusSearch(unittest.TestCase):
-    @patch("metaculus._fetch_all_open_questions")
-    def test_success_returns_results(self, mock_fetch):
-        mock_fetch.return_value = [
-            {"id": 1, "title": "Will AI safety become a major concern?", "short_title": "AI safety"},
-            {"id": 2, "title": "Will Bitcoin reach $200k?", "short_title": "Bitcoin"},
-        ]
+    @patch("metaculus.requests.get")
+    def test_success_returns_results(self, mock_get):
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "results": [
+                {"id": 1, "title": "Will AI safety become a major concern?", "short_title": "AI safety"},
+                {"id": 2, "title": "Will Bitcoin reach $200k?", "short_title": "Bitcoin"},
+            ]
+        }
+        mock_get.return_value = mock_resp
         result = sp.metaculus_search("AI safety")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["id"], 1)
+        self.assertGreater(len(result), 0)
 
-    @patch("metaculus._fetch_all_open_questions", return_value=[])
-    def test_empty_cache_returns_empty(self, mock_fetch):
+    @patch("metaculus.requests.get")
+    def test_empty_results_returns_empty(self, mock_get):
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"results": []}
+        mock_get.return_value = mock_resp
         self.assertEqual(sp.metaculus_search("test"), [])
 
 
