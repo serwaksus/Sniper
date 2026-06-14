@@ -297,6 +297,7 @@ class TestRunHourlyReport:
             "_check_pm_trader_health": None, "_check_api_keys": None,
             "_check_memory": None, "_check_log_size": None,
             "_check_sqlite_integrity": None, "_check_trade_activity": None,
+            "_check_external_apis": None,
         }
         from unittest.mock import patch as _p
         mgrs = []
@@ -325,7 +326,7 @@ class TestRunHourlyReport:
             "_check_cron_health", "_check_llm_error_rate", "_check_screen_sessions",
             "_check_disk_inodes", "_check_pm_trader_health", "_check_api_keys",
             "_check_memory", "_check_log_size", "_check_sqlite_integrity",
-            "_check_trade_activity",
+            "_check_trade_activity", "_check_external_apis",
         ]
         from unittest.mock import patch as _p
         mgrs = [_p(f"health_monitor.{c}", return_value=None) for c in checks]
@@ -341,3 +342,108 @@ class TestRunHourlyReport:
         finally:
             for m in mgrs:
                 m.stop()
+
+
+class TestCheckExternalApis:
+    def setup_method(self):
+        hc._EXT_API_CACHE["ts"] = None
+        hc._EXT_API_CACHE["issues"] = None
+
+    @patch("utils.load_env_file")
+    @patch.dict("os.environ", {
+        "METACULUS_TOKEN": "test", "TAVILY_API_KEY": "test",
+        "TAVILY_API_KEY_BACKUP": "test", "POLYGONSCAN_API_KEY": "test",
+    })
+    @patch("health_checks.requests.get")
+    @patch("health_checks.requests.post")
+    def test_all_healthy(self, mock_post, mock_get, mock_env):
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            ok=True,
+            json=lambda: {"count": 100, "results": [
+                {"id": 1, "title": "T", "aggregations": {"recency_weighted": {"latest": {"means": [0.5]}}}},
+            ]},
+        )
+        mock_post.return_value = MagicMock(status_code=200, ok=True)
+        result = hc._check_external_apis({})
+        assert result is None
+
+    @patch("utils.load_env_file")
+    @patch.dict("os.environ", {
+        "METACULUS_TOKEN": "", "TAVILY_API_KEY": "",
+        "TAVILY_API_KEY_BACKUP": "", "POLYGONSCAN_API_KEY": "",
+    })
+    @patch("health_checks.requests.get")
+    @patch("health_checks.requests.post")
+    def test_missing_keys(self, mock_post, mock_get, mock_env):
+        mock_get.return_value = MagicMock(status_code=200, ok=True, json=lambda: {"count": 100, "results": []})
+        mock_post.return_value = MagicMock(status_code=200, ok=True)
+        result = hc._check_external_apis({})
+        assert result is not None
+        alert_key, msg = result
+        assert alert_key == "EXT_APIS"
+        assert "METACULUS_TOKEN missing" in msg
+        assert "TAVILY_API_KEY missing" in msg
+        assert "POLYGONSCAN_API_KEY missing" in msg
+
+    @patch("utils.load_env_file")
+    @patch.dict("os.environ", {"METACULUS_TOKEN": "test", "TAVILY_API_KEY": "test", "TAVILY_API_KEY_BACKUP": "test", "POLYGONSCAN_API_KEY": "test"})
+    @patch("health_checks.requests.get")
+    @patch("health_checks.requests.post")
+    def test_metaculus_401(self, mock_post, mock_get, mock_env):
+        mock_get.return_value = MagicMock(status_code=401, ok=False, json=lambda: {})
+        mock_post.return_value = MagicMock(status_code=200, ok=True)
+        result = hc._check_external_apis({})
+        assert result is not None
+        assert "Metaculus: 401" in result[1]
+
+    @patch("utils.load_env_file")
+    @patch.dict("os.environ", {"METACULUS_TOKEN": "test", "TAVILY_API_KEY": "test", "TAVILY_API_KEY_BACKUP": "test", "POLYGONSCAN_API_KEY": "test"})
+    @patch("health_checks.requests.get")
+    @patch("health_checks.requests.post")
+    def test_metaculus_no_aggregation(self, mock_post, mock_get, mock_env):
+        mock_get.return_value = MagicMock(
+            status_code=200, ok=True,
+            json=lambda: {"count": 100, "results": [
+                {"id": 1, "title": "Test", "aggregations": {"recency_weighted": {"latest": None}}},
+            ]},
+        )
+        mock_post.return_value = MagicMock(status_code=200, ok=True)
+        result = hc._check_external_apis({})
+        assert result is not None
+        assert "aggregation data" in result[1]
+
+    @patch("utils.load_env_file")
+    @patch.dict("os.environ", {"METACULUS_TOKEN": "test", "TAVILY_API_KEY": "test", "TAVILY_API_KEY_BACKUP": "test", "POLYGONSCAN_API_KEY": "test"})
+    @patch("health_checks.requests.get")
+    @patch("health_checks.requests.post")
+    def test_tavily_429(self, mock_post, mock_get, mock_env):
+        mock_get.return_value = MagicMock(status_code=200, ok=True,
+            json=lambda: {"count": 100, "results": [{"id": 1, "title": "T", "aggregations": {"recency_weighted": {"latest": {"means": [0.5]}}}}]})
+        mock_post.return_value = MagicMock(status_code=429, ok=False)
+        result = hc._check_external_apis({})
+        assert result is not None
+        assert "429" in result[1]
+
+    @patch("utils.load_env_file")
+    @patch.dict("os.environ", {"METACULUS_TOKEN": "test", "TAVILY_API_KEY": "test", "TAVILY_API_KEY_BACKUP": "test", "POLYGONSCAN_API_KEY": "test"})
+    @patch("health_checks.requests.get", side_effect=Exception("network error"))
+    @patch("health_checks.requests.post")
+    def test_network_error(self, mock_post, mock_get, mock_env):
+        mock_post.return_value = MagicMock(status_code=200, ok=True)
+        result = hc._check_external_apis({})
+        assert result is not None
+        assert "network error" in result[1]
+
+    def test_cached_results(self):
+        hc._EXT_API_CACHE["ts"] = datetime.now()
+        hc._EXT_API_CACHE["issues"] = ["Test: cached issue"]
+        result = hc._check_external_apis({})
+        assert result is not None
+        assert "Test: cached issue" in result[1]
+
+    def test_cached_no_issues(self):
+        hc._EXT_API_CACHE["ts"] = datetime.now()
+        hc._EXT_API_CACHE["issues"] = None
+        result = hc._check_external_apis({})
+        assert result is None

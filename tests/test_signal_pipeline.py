@@ -763,20 +763,18 @@ class TestBuildBatchResults(unittest.TestCase):
 # metaculus_search / metaculus_get_question
 # ═══════════════════════════════════════════════════════════════════
 class TestMetaculusSearch(unittest.TestCase):
-    @patch("metaculus.requests.get")
-    def test_success_returns_results(self, mock_get):
-        mock_get.return_value = MagicMock(status_code=200)
-        mock_get.return_value.json.return_value = {"results": [{"id": 1}]}
+    @patch("metaculus._fetch_all_open_questions")
+    def test_success_returns_results(self, mock_fetch):
+        mock_fetch.return_value = [
+            {"id": 1, "title": "Will AI safety become a major concern?", "short_title": "AI safety"},
+            {"id": 2, "title": "Will Bitcoin reach $200k?", "short_title": "Bitcoin"},
+        ]
         result = sp.metaculus_search("AI safety")
         self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], 1)
 
-    @patch("metaculus.requests.get")
-    def test_non_200_returns_empty(self, mock_get):
-        mock_get.return_value = MagicMock(status_code=404)
-        self.assertEqual(sp.metaculus_search("test"), [])
-
-    @patch("metaculus.requests.get", side_effect=Exception("timeout"))
-    def test_exception_returns_empty(self, mock_get):
+    @patch("metaculus._fetch_all_open_questions", return_value=[])
+    def test_empty_cache_returns_empty(self, mock_fetch):
         self.assertEqual(sp.metaculus_search("test"), [])
 
 
@@ -1193,7 +1191,7 @@ class TestTimeScoreBranches(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════
 class TestConstants(unittest.TestCase):
     def test_key_constants_exist(self):
-        self.assertEqual(sp.MIN_PROB_RATIO, 2.0)
+        self.assertEqual(sp.MIN_PROB_RATIO, 1.5)
         self.assertEqual(sp.MIN_P_MODEL, 0.03)
         self.assertEqual(sp.MAX_P_MODEL_RATIO, 2.0)
         self.assertEqual(sp.MIN_CONFIDENCE, 0.65)

@@ -238,7 +238,7 @@ class TestBayesianKelly:
         assert 0 < k_b < k_c
 
     def test_zero_std_converges_to_classical(self):
-        k_b, penalty = pm.bayesian_kelly(0.05, 0.12, 0.001)
+        k_b, _penalty = pm.bayesian_kelly(0.05, 0.12, 0.001)
         fee = 0.01
         b = (1 - 0.05 - fee) / 0.05
         k_c = (b * 0.12 - 0.88) / b

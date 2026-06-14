@@ -33,7 +33,7 @@ from health_checks import (
     _check_cron_health, _check_llm_error_rate, _check_screen_sessions,
     _check_disk_inodes, _check_pm_trader_health, _check_api_keys,
     _check_memory, _check_log_size, _check_sqlite_integrity,
-    _check_trade_activity,
+    _check_trade_activity, _check_external_apis,
     EQUITY_FILE,
 )
 
@@ -44,7 +44,7 @@ def _summarize_trading_activity(lines: list[str]) -> str:
     signals = sum(1 for line in lines if "=> BUY" in line)
     blocked = sum(1 for line in lines if "TRADE-BLOCKED" in line)
     executed = sum(1 for line in lines if "Bought:" in line and "Bought: 0" not in line)
-    diverge_overrides = sum(1 for line in lines if "diverge_" in line and "override" in line)
+    diverge_overrides = sum(1 for line in lines if "diverge_micro_override" in line or "diverge_direction_agrees" in line)
     return f"signals={signals} blocked={blocked} executed={executed} diverge_overrides={diverge_overrides}"
 
 
@@ -196,6 +196,7 @@ def run_health_check() -> list[tuple[str, str]] | None:
         lambda: _check_log_size(state),
         lambda: _check_sqlite_integrity(state),
         lambda: _check_trade_activity(state),
+        lambda: _check_external_apis(state),
     ]
 
     summaries = [
@@ -224,6 +225,7 @@ def run_health_check() -> list[tuple[str, str]] | None:
         lambda: "log_size=7_files_50mb",
         lambda: "sqlite=integrity_check",
         lambda: "trade_activity=cycle_counter",
+        lambda: "ext_apis=metaculus+tavily+polygonscan+clob+gamma",
     ]
 
     check_names = [
@@ -233,6 +235,7 @@ def run_health_check() -> list[tuple[str, str]] | None:
         "telegram", "crash_freq", "json_integrity", "cron_health",
         "llm_errors", "screen_sessions", "disk_inodes", "pm_trader",
         "api_keys", "memory", "log_size", "sqlite_integrity", "trade_activity",
+        "external_apis",
     ]
 
     issue_count = 0
@@ -264,7 +267,7 @@ def run_health_check() -> list[tuple[str, str]] | None:
     _save_state(state)
 
     if issue_count == 0:
-        logger.info("[HEALTH] All 25 checks passed")
+        logger.info("[HEALTH] All 26 checks passed")
         return None
 
     for alert_key, message in alerts:
@@ -305,6 +308,7 @@ def run_hourly_report() -> list[str]:
         lambda: _check_log_size(state),
         lambda: _check_sqlite_integrity(state),
         lambda: _check_trade_activity(state),
+        lambda: _check_external_apis(state),
     ]
 
     check_names = [
@@ -314,6 +318,7 @@ def run_hourly_report() -> list[str]:
         "telegram", "crash_freq", "json_integrity", "cron_health",
         "llm_errors", "screen_sessions", "disk_inodes", "pm_trader",
         "api_keys", "memory", "log_size", "sqlite_integrity", "trade_activity",
+        "external_apis",
     ]
 
     issues = []
@@ -340,7 +345,7 @@ def run_hourly_report() -> list[str]:
     msk_tz = pytz.timezone("Europe/Moscow")
     ts = datetime.now(msk_tz).strftime("%m/%d %H:%M MSK")
     if not issues:
-        logger.info(f"[HOURLY] ({ts}): All 25 checks OK")
+        logger.info(f"[HOURLY] ({ts}): All 26 checks OK")
         return []
 
     msg = f"\U0001f52c DOTM Hourly ({ts}): {len(issues)} issues / {ok_count} OK\n\n"

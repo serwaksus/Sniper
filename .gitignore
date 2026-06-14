@@ -41,3 +41,6 @@ sniper.db
 sniper.db-shm
 sniper.db-wal
 ml_models/
+logs/
+backups/
+equity_tracker.log*

@@ -37,6 +37,7 @@ class TestFetchRecentNews:
     @patch("news_scanner._fetch_ddg_news_fallback")
     def test_no_api_key_uses_fallback(self, mock_fallback):
         os.environ["TAVILY_API_KEY"] = ""
+        os.environ["TAVILY_API_KEY_BACKUP"] = ""
         mock_fallback.return_value = {"headlines": [], "sources": [], "query": "", "found": False}
         ns.fetch_recent_news(["AI"])
         mock_fallback.assert_called()
@@ -44,6 +45,7 @@ class TestFetchRecentNews:
     @patch("news_scanner._fetch_ddg_news_fallback")
     def test_placeholder_key_uses_fallback(self, mock_fallback):
         os.environ["TAVILY_API_KEY"] = "your_tavily_key_here"
+        os.environ["TAVILY_API_KEY_BACKUP"] = ""
         mock_fallback.return_value = {"headlines": [], "sources": [], "query": "", "found": False}
         ns.fetch_recent_news(["test"])
         mock_fallback.assert_called()

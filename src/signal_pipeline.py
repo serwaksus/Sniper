@@ -42,7 +42,7 @@ HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/js
 URL = "https://api.deepseek.com/v1/chat/completions"
 
 # ── Signal thresholds ────────────────────────────────────────
-MIN_PROB_RATIO = 2.0
+MIN_PROB_RATIO = 1.5
 MIN_P_MODEL = 0.03
 MIN_CONFIDENCE = 0.65
 BATCH_SIZE = 6
@@ -476,7 +476,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
                 logger.info(f"[META-OVERRIDE-BATCH] {slug[:30]}... p_model={p_model:.1%} from metaculus={metaculus_prob_val:.1%}")
 
         prob_ratio = p_model / market_price if market_price > 0 else 0
-        ratio_score = min(prob_ratio / 3.0, 1.0) * 30
+        ratio_score = min(prob_ratio / 5.0, 1.0) * 25
         sm_score_batch = 0
         ct_id = bi.get("condition_token_id", "")
         if ct_id:
@@ -488,7 +488,7 @@ def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
                     logger.info(f"[SMART_MONEY-BATCH] {slug[:30]}... score=+{sm_score_batch}")
             except Exception:
                 pass
-        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + buzz_score + orderbook_score + sm_score_batch + orderbook_score
+        signal_score = ratio_score + factor_score + vol_score + time_score + metaculus_alignment + _cluster_score_adjustment(cluster, settings) + buzz_score + orderbook_score + sm_score_batch
 
         action = "BUY" if signal_score >= min_signal and confidence >= settings.get("min_confidence", MIN_CONFIDENCE) and prob_ratio >= MIN_PROB_RATIO else "SKIP"
 

@@ -24,7 +24,7 @@ from metaculus import normalize_probability, check_metaculus_gap
 
 logger = logging.getLogger(__name__)
 
-MIN_PROB_RATIO = 2.0
+MIN_PROB_RATIO = 1.5
 DOTM_PRICE_FLOOR = 0.05
 MIN_P_MODEL = 0.03
 MIN_CONFIDENCE = 0.65

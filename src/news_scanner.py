@@ -34,23 +34,10 @@ def load_env() -> None:
 
 load_env()
 
-def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_days: int | None = None) -> dict:
-    """
-    Search for recent news headlines based on market keywords.
-    Returns dict with headlines, sources, and timestamps.
-    max_age_days: only return news published within this many days (default 30).
-    """
-    if max_age_days is None:
-        max_age_days = MAX_NEWS_AGE_DAYS_DEFAULT
-
-    tavily_key = os.environ.get("TAVILY_API_KEY", "")
-
-    if not tavily_key or tavily_key == "your_tavily_key_here":
-        return _fetch_ddg_news_fallback(market_keywords, max_results, max_age_days)
-
-    query = " ".join(market_keywords[:5])
+def _tavily_search(api_key: str, query: str, max_results: int, max_age_days: int) -> dict | None:
+    """Try a single Tavily API key. Returns result dict on success, None on failure/quota."""
     params = {
-        "api_key": tavily_key,
+        "api_key": api_key,
         "query": query,
         "search_depth": "basic",
         "max_results": max_results,
@@ -60,7 +47,6 @@ def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_
         "include_raw_content": False,
         "include_images": False
     }
-
     try:
         response = requests.post(TAVILY_API_URL, json=params, timeout=20)
         if response.ok:
@@ -76,8 +62,32 @@ def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_
             }
         else:
             logger.warning(f"[news_scanner] Tavily HTTP {response.status_code}: {response.text[:100]}")
+            return None
     except Exception as e:
         logger.warning(f"[news_scanner] Tavily error: {type(e).__name__}: {e}")
+        return None
+
+
+def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_days: int | None = None) -> dict:
+    """
+    Search for recent news headlines based on market keywords.
+    Chain: Tavily (primary) -> Tavily (backup) -> DuckDuckGo fallback.
+    """
+    if max_age_days is None:
+        max_age_days = MAX_NEWS_AGE_DAYS_DEFAULT
+
+    query = " ".join(market_keywords[:5])
+
+    tavily_primary = os.environ.get("TAVILY_API_KEY", "")
+    tavily_backup = os.environ.get("TAVILY_API_KEY_BACKUP", "")
+
+    for label, key in [("primary", tavily_primary), ("backup", tavily_backup)]:
+        if not key or key == "your_tavily_key_here":
+            continue
+        result = _tavily_search(key, query, max_results, max_age_days)
+        if result is not None:
+            return result
+        logger.info(f"[news_scanner] Tavily {label} exhausted, trying next source...")
 
     return _fetch_ddg_news_fallback(market_keywords, max_results, max_age_days)
 

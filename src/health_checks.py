@@ -11,6 +11,7 @@ import sys
 import subprocess
 import logging
 import shutil
+import requests
 from datetime import datetime, timedelta
 from typing import Any
 import positions_db
@@ -125,7 +126,7 @@ def _check_no_trades(lines: list[str], state: dict) -> tuple[str, str] | None:
     trade_signals = sum(1 for line in lines if "=> BUY" in line)
     blocked = sum(1 for line in lines if "TRADE-BLOCKED" in line)
     slippage_blocked = sum(1 for line in lines if "Slippage guard" in line)
-    diverge_overrides = sum(1 for line in lines if "DIVERGE override" in line or "micro-position" in line)
+    diverge_overrides = sum(1 for line in lines if "diverge_micro_override" in line or "diverge_direction_agrees" in line)
     executed = sum(1 for line in lines if "[JOURNAL] BUY:" in line)
     liquidity_skipped = sum(1 for line in lines if "LIQUIDITY-SKIP" in line)
 
@@ -791,3 +792,154 @@ def _check_trade_activity(state: dict) -> tuple[str, str] | None:
     except Exception as e:
         logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
         return None
+
+
+# ── Check 26: External API connectivity ─────────────────────────
+_EXT_API_CACHE: dict[str, Any] = {"ts": None, "issues": None}
+
+
+def _check_external_apis(state: dict) -> tuple[str, str] | None:
+    """Active ping for Metaculus, Tavily, Polygonscan, CLOB, Gamma APIs."""
+    now = datetime.now()
+    if _EXT_API_CACHE["ts"] is not None:
+        try:
+            if (now - _EXT_API_CACHE["ts"]).total_seconds() < 6 * 3600:
+                if _EXT_API_CACHE["issues"]:
+                    return ("EXT_APIS",
+                            "🌐 <b>External API issues</b>\n" +
+                            "\n".join(f"• {i}" for i in _EXT_API_CACHE["issues"]))
+                return None
+        except Exception as e:
+            logger.debug(f"[health_monitor] {type(e).__name__}: {e}")
+            pass
+
+    _src_dir = os.path.dirname(os.path.abspath(__file__))
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    try:
+        from utils import load_env_file
+        load_env_file()
+    except Exception as e:
+        logger.debug(f"[health_monitor] load_env_file: {type(e).__name__}: {e}")
+
+    issues: list[str] = []
+
+    # --- Metaculus ---
+    meta_token = os.environ.get("METACULUS_TOKEN", "")
+    if not meta_token:
+        issues.append("Metaculus: METACULUS_TOKEN missing")
+    else:
+        try:
+            resp = requests.get(
+                "https://www.metaculus.com/api2/questions/",
+                headers={"Authorization": f"Token {meta_token}"},
+                params={"limit": 5, "status": "open"},
+                timeout=15,
+            )
+            if resp.status_code == 401:
+                issues.append("Metaculus: 401 Unauthorized (token invalid)")
+            elif resp.status_code == 403:
+                issues.append("Metaculus: 403 Forbidden (token expired?)")
+            elif not resp.ok:
+                issues.append(f"Metaculus: HTTP {resp.status_code}")
+            else:
+                count = resp.json().get("count", 0)
+                if count == 0:
+                    issues.append("Metaculus: 0 open questions (API broken?)")
+                else:
+                    has_agg = 0
+                    for q in resp.json().get("results", []):
+                        qd = q.get("question", q) if isinstance(q.get("question"), dict) else q
+                        agg = qd.get("aggregations", {}) or {}
+                        rw = agg.get("recency_weighted", {}) if isinstance(agg, dict) else {}
+                        latest = rw.get("latest") if isinstance(rw, dict) else None
+                        if latest and isinstance(latest, dict) and latest.get("means"):
+                            has_agg += 1
+                    if has_agg == 0:
+                        issues.append(f"Metaculus: 0/{min(count, 5)} sampled questions have aggregation data (API degraded)")
+        except requests.exceptions.Timeout:
+            issues.append("Metaculus: timeout (15s)")
+        except Exception as e:
+            issues.append(f"Metaculus: {str(e)[:60]}")
+
+    # --- Tavily (both keys) ---
+    for key_name in ("TAVILY_API_KEY", "TAVILY_API_KEY_BACKUP"):
+        tavily_key = os.environ.get(key_name, "")
+        if not tavily_key:
+            issues.append(f"Tavily: {key_name} missing")
+            continue
+        try:
+            resp = requests.post(
+                "https://api.tavily.com/search",
+                json={"api_key": tavily_key, "query": "test", "max_results": 1},
+                timeout=15,
+            )
+            if resp.status_code in (401, 403):
+                issues.append(f"Tavily {key_name}: {resp.status_code} (key invalid)")
+            elif resp.status_code in (429, 432):
+                issues.append(f"Tavily {key_name}: {resp.status_code} (quota exhausted)")
+            elif not resp.ok:
+                issues.append(f"Tavily {key_name}: HTTP {resp.status_code}")
+        except requests.exceptions.Timeout:
+            issues.append(f"Tavily {key_name}: timeout (15s)")
+        except Exception as e:
+            issues.append(f"Tavily {key_name}: {str(e)[:50]}")
+
+    # --- Polygonscan (Etherscan v2 API) ---
+    poly_key = os.environ.get("POLYGONSCAN_API_KEY", "")
+    if not poly_key:
+        issues.append("Polygonscan: POLYGONSCAN_API_KEY missing")
+    else:
+        try:
+            resp = requests.get(
+                "https://api.etherscan.io/v2/api",
+                params={"chainid": "137", "module": "account", "action": "balance",
+                        "address": "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
+                        "apikey": poly_key, "tag": "latest"},
+                timeout=15,
+            )
+            if resp.status_code == 401:
+                issues.append("Polygonscan: 401 (key invalid)")
+            elif not resp.ok:
+                issues.append(f"Polygonscan: HTTP {resp.status_code}")
+            else:
+                data = resp.json()
+                if data.get("status") == "0" and "Invalid API Key" in str(data.get("message", "")):
+                    issues.append("Polygonscan: Invalid API Key")
+        except requests.exceptions.Timeout:
+            issues.append("Polygonscan: timeout (15s)")
+        except Exception as e:
+            issues.append(f"Polygonscan: {str(e)[:50]}")
+
+    # --- CLOB API (no key needed) ---
+    try:
+        resp = requests.get("https://clob.polymarket.com/markets", timeout=15)
+        if not resp.ok:
+            issues.append(f"CLOB API: HTTP {resp.status_code}")
+    except requests.exceptions.Timeout:
+        issues.append("CLOB API: timeout (15s)")
+    except Exception as e:
+        issues.append(f"CLOB API: {str(e)[:50]}")
+
+    # --- Gamma API (no key needed) ---
+    try:
+        resp = requests.get(
+            "https://gamma-api.polymarket.com/markets",
+            params={"limit": 1},
+            timeout=15,
+        )
+        if not resp.ok:
+            issues.append(f"Gamma API: HTTP {resp.status_code}")
+    except requests.exceptions.Timeout:
+        issues.append("Gamma API: timeout (15s)")
+    except Exception as e:
+        issues.append(f"Gamma API: {str(e)[:50]}")
+
+    _EXT_API_CACHE["ts"] = now
+    _EXT_API_CACHE["issues"] = issues if issues else None
+
+    if issues:
+        return ("EXT_APIS",
+                "🌐 <b>External API issues</b>\n" +
+                "\n".join(f"• {i}" for i in issues))
+    return None

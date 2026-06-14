@@ -18,9 +18,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-POLYGONSCAN_API = "https://api.polygonscan.com/api"
+POLYGONSCAN_API = "https://api.etherscan.io/v2/api"
 CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
 POLYSCAN_KEY_ENV = "POLYGONSCAN_API_KEY"
+POLYGON_CHAIN_ID = "137"
 
 _smart_money_cache: dict[str, dict] = {}
 CACHE_TTL = 600
@@ -53,6 +54,7 @@ def discover_profitable_wallets(days: int = 180, min_profit: float = 1000, min_w
         return []
     try:
         params = {
+            "chainid": POLYGON_CHAIN_ID,
             "module": "account",
             "action": "txlist",
             "address": CTF_EXCHANGE,
@@ -110,6 +112,7 @@ def check_smart_money_activity(condition_token_id: str) -> dict[str, Any]:
 
     try:
         params = {
+            "chainid": POLYGON_CHAIN_ID,
             "module": "account",
             "action": "token1155tx",
             "address": CTF_EXCHANGE,

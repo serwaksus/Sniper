@@ -16,7 +16,7 @@ from schema import (
     HYP_DB_HYPOTHESES,
     HYP_DB_RESOLVED, HYP_EXIT_PRICE, HYP_EXIT_TYPE, HYP_FACTORS,
     HYP_MARKET_PRICE, HYP_OUTCOME, HYP_P_MODEL, HYP_PNL_AT_EXIT,
-    HYP_QUESTION, HYP_RESOLUTION_NOTE, HYP_RESOLVED,
+    HYP_QUESTION, HYP_RESOLVED,
     HYP_RESOLVED_AT, HYP_SLUG, HYP_SOLD_PNL_PCT,
     HYP_SOURCE_SIGNAL,
     SETTINGS_CALIBRATION_BRIER, SETTINGS_CLUSTER_WEIGHTS,
@@ -314,6 +314,20 @@ def resolve_hypothesis_immediately(slug: str, current_price: float, entry_price:
             break
 
 
+def _gamma_lookup(slug: str) -> dict | None:
+    """Fetch a single market from Gamma API by slug. Returns None if not found."""
+    try:
+        import requests as _req
+        resp = _req.get(f"https://gamma-api.polymarket.com/markets?slug={slug}", timeout=10)
+        if resp.ok:
+            data = resp.json()
+            if data and isinstance(data, list) and len(data) > 0:
+                return data[0]
+    except Exception as e:
+        logger.debug(f"[gamma_lookup] {slug[:30]}... {type(e).__name__}: {e}")
+    return None
+
+
 def resolve_hypotheses() -> None:
     get_settings, save_settings, load_hypothesis_db, save_hypothesis_db = _get_sniper_deps()
     from order_manager import get_portfolio
@@ -345,26 +359,29 @@ def resolve_hypotheses() -> None:
         market_data = market_map.get(slug)
 
         if not market_data:
-            h[HYP_RESOLVED] = True
-            h[HYP_RESOLVED_AT] = datetime.now().isoformat()
-            h[HYP_OUTCOME] = "UNKNOWN"
-            h[HYP_RESOLUTION_NOTE] = "market_not_found_in_api"
-            db[HYP_DB_RESOLVED].append(h)
-            new_resolved += 1
-            continue
+            market_data = _gamma_lookup(slug)
+            if not market_data:
+                logger.debug(f"[resolve] {slug[:40]}... not found in pm-trader or Gamma, skipping")
+                continue
 
-        if not market_data.get("closed"):
+        if not market_data.get("closed") and not market_data.get("closedTime"):
             continue
 
         h[HYP_RESOLVED] = True
         h[HYP_RESOLVED_AT] = datetime.now().isoformat()
 
         outcome = "UNKNOWN"
-        if market_data.get("resolution") in ("YES", "NO"):
-            outcome = market_data.get("resolution")
-        elif market_data.get("outcome_prices"):
-            yes_price = market_data.get("outcome_prices", [0.5])[0]
-            outcome = "YES" if yes_price > 0.5 else "NO"
+        resolution = market_data.get("resolution")
+        if resolution in ("YES", "NO"):
+            outcome = resolution
+        else:
+            outcome_prices = market_data.get("outcomePrices") or market_data.get("outcome_prices")
+            if outcome_prices:
+                try:
+                    yes_price = float(outcome_prices[0])
+                    outcome = "YES" if yes_price > 0.5 else "NO"
+                except (ValueError, TypeError, IndexError):
+                    pass
 
         h[HYP_OUTCOME] = outcome
 

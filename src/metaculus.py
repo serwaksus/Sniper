@@ -29,6 +29,10 @@ DISPERSION_PENALTY_THRESHOLD = 0.25
 METACULUS_GAP_THRESHOLD = 0.08
 DATE_WINDOW_DAYS = 7
 
+_QUESTIONS_CACHE: list[dict] = []
+_QUESTIONS_CACHE_TIME: float = 0.0
+_QUESTIONS_CACHE_TTL = 6 * 3600  # 6 hours
+
 
 def load_cache():
     cache = load_json(CACHE_FILE, {"metaculus": {}, "news": {}, "last_update": None})
@@ -48,9 +52,62 @@ def save_cache(cache: dict) -> None:
     save_json(CACHE_FILE, cache)
 
 
-def normalize_probability(p: float | None) -> float:
+def _fetch_all_open_questions() -> list[dict]:
+    """Fetch all open questions via pagination. API search is broken server-side,
+    so we bulk-download and search client-side."""
+    import time as _t
+
+    global _QUESTIONS_CACHE, _QUESTIONS_CACHE_TIME
+
+    if _QUESTIONS_CACHE and (_t.time() - _QUESTIONS_CACHE_TIME < _QUESTIONS_CACHE_TTL):
+        return _QUESTIONS_CACHE
+
+    all_questions: list[dict] = []
+    offset = 0
+    page_size = 100
+    max_pages = 30
+
+    for _page in range(max_pages):
+        try:
+            resp = requests.get(
+                METACULUS_URL,
+                headers=METACULUS_HEADERS,
+                params={"limit": page_size, "offset": offset, "status": "open"},
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"[_fetch_all_open_questions] HTTP {resp.status_code} at offset={offset}")
+                break
+            results = resp.json().get("results", [])
+            if not results:
+                break
+            all_questions.extend(results)
+            if len(results) < page_size:
+                break
+            offset += page_size
+            _t.sleep(0.3)
+        except requests.exceptions.Timeout:
+            logger.warning(f"[_fetch_all_open_questions] Timeout at offset={offset}")
+            break
+        except Exception as e:
+            logger.warning(f"[_fetch_all_open_questions] {type(e).__name__}: {e}")
+            break
+
+    if all_questions:
+        _QUESTIONS_CACHE = all_questions
+        _QUESTIONS_CACHE_TIME = _t.time()
+        logger.info(f"[METACULUS] Bulk-fetched {len(all_questions)} open questions")
+
+    return all_questions
+
+
+def normalize_probability(p: float | str | None) -> float:
     if p is None:
         return 0
+    if isinstance(p, str):
+        p = p.strip().rstrip("%").strip()
+        if not p:
+            return 0
     p = float(p)
     if p > 1.0:
         p = p / 100.0
@@ -58,27 +115,42 @@ def normalize_probability(p: float | None) -> float:
 
 
 def metaculus_search(query: str, limit: int = 10) -> list[dict]:
-    for attempt in range(3):
-        try:
-            resp = requests.get(METACULUS_URL, headers=METACULUS_HEADERS,
-                              params={"search": query, "limit": limit, "status": "open"},  # type: ignore[arg-type]
-                              timeout=30)
-            if resp.status_code == 200:
-                return resp.json().get("results", [])
-            if resp.status_code >= 500 and attempt < 2:
-                import time as _t
-                _t.sleep(2 ** attempt)
-                continue
-        except requests.exceptions.Timeout:
-            if attempt < 2:
-                import time as _t
-                _t.sleep(2 ** attempt)
-                continue
-            logger.warning(f"[metaculus_search] Timeout after {attempt + 1} attempts")
-        except Exception as e:
-            logger.warning(f"[metaculus_search] {type(e).__name__}: {e}")
-            break
-    return []
+    """Search open questions. API `search` param is broken server-side,
+    so we bulk-fetch all questions and match client-side."""
+    all_qs = _fetch_all_open_questions()
+    if not all_qs:
+        return []
+
+    query_lower = query.lower()
+    query_words = set(re.sub(r"[^\w\s]", " ", query_lower).split())
+
+    stop = {"will", "the", "a", "an", "be", "by", "of", "in", "on", "at",
+            "to", "for", "is", "are", "was", "were", "before", "after",
+            "any", "this", "that", "there"}
+    query_keywords = query_words - stop
+    if not query_keywords:
+        query_keywords = query_words
+
+    scored: list[tuple[float, dict]] = []
+    for q in all_qs:
+        title = (q.get("title", "") or q.get("short_title", "")).lower()
+        title_words = set(re.sub(r"[^\w\s]", " ", title).split())
+
+        overlap = len(query_keywords & title_words)
+        if overlap == 0:
+            continue
+
+        score = overlap / max(len(query_keywords), 1)
+
+        from fuzzywuzzy import fuzz
+        similarity = fuzz.partial_ratio(query_lower, title) / 100.0
+        if similarity > 0.5:
+            score += similarity * 0.3
+
+        scored.append((score, q))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [q for _, q in scored[:limit]]
 
 
 def metaculus_get_question(qid: int) -> dict | None:
@@ -133,16 +205,31 @@ def dates_match(date1: str, date2: str, window_days: int = DATE_WINDOW_DAYS) -> 
 
 
 def _generate_search_queries(question: str) -> list[str]:
-    words = question.replace("?", " ").replace(",", " ").split()
+    stop = {"will", "the", "a", "an", "be", "by", "of", "in", "on", "at",
+            "to", "for", "is", "are", "was", "were", "before", "after",
+            "any", "this", "that", "there"}
+    words = [w for w in re.sub(r"[^\w\s]", " ", question.lower()).split()
+             if w not in stop and len(w) >= 3]
+    if not words:
+        return []
+
     queries = []
-    for i in range(len(words)):
-        for j in range(i+1, min(i+5, len(words)+1)):
-            phrase = " ".join(words[i:j])
-            if len(phrase) >= 4:
-                queries.append(phrase)
-                if len(queries) >= 5:
-                    return queries
-    return queries
+    mid = len(words) // 2
+    if len(words) >= 6:
+        queries.append(" ".join(words[:3]))
+        queries.append(" ".join(words[mid:mid+3]))
+        queries.append(" ".join(words[-3:]))
+    elif len(words) >= 3:
+        queries.append(" ".join(words[:3]))
+        queries.append(" ".join(words[-2:]))
+    else:
+        queries.append(" ".join(words))
+
+    nums = [w for w in words if any(c.isdigit() for c in w)]
+    if nums:
+        queries.append(" ".join(nums[:2]))
+
+    return queries[:5]
 
 
 def _calculate_metaculus_match(pm_question: str, result: dict) -> float:
@@ -255,17 +342,17 @@ def get_metaculus_forecast(pm_question: str, pm_resolve_date: str | None = None)
     if prob is None:
         pred = q_data.get("prediction") or best_match.get("prediction")
         if pred and isinstance(pred, dict):
-            prob = pred.get("number")
-            if prob is None:
-                prob = pred.get("p_above")
-            if prob is None:
-                prob = pred.get("p_below")
-            prob = float(prob) if prob is not None else 0.0
+            raw = pred.get("number")
+            if raw is None:
+                raw = pred.get("p_above")
+            if raw is None:
+                raw = pred.get("p_below")
+            prob = float(raw) if raw is not None else None
 
     if prob is None:
         vote = best_match.get("vote", {})
-        if vote and isinstance(vote, dict):
-            prob = float(vote.get("prediction", 0))
+        if vote and isinstance(vote, dict) and "prediction" in vote:
+            prob = float(vote["prediction"])
 
     if prob is None:
         return {"found": False, "probability": None, "reason": "no_aggregation", "best_match_title": meta_title}

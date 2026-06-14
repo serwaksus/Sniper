@@ -68,7 +68,7 @@ class TestBuildGraph:
 
     def test_empty_slug_skipped(self):
         a = MarketGraphAnalyzer()
-        markets = _make_markets() + [{"slug": "", "question": "No slug"}]
+        markets = [*_make_markets(), {"slug": "", "question": "No slug"}]
         a.build_graph(markets, force=True)
         assert a.graph.number_of_nodes() == 8
 

@@ -109,10 +109,11 @@ class TestPrediction:
     def test_high_p_model_predicts_higher(self):
         from online_learner import OnlineSignalLearner
         learner = OnlineSignalLearner()
-        for _ in range(20):
-            learner.partial_fit(_make_market(p_model=0.20), target=1.0)
-        for _ in range(20):
-            learner.partial_fit(_make_market(p_model=0.03), target=0.0)
+        for _ in range(5):
+            for _ in range(20):
+                learner.partial_fit(_make_market(p_model=0.20), target=1.0)
+            for _ in range(20):
+                learner.partial_fit(_make_market(p_model=0.03), target=0.0)
         high = learner.predict_probability(_make_market(p_model=0.20))
         low = learner.predict_probability(_make_market(p_model=0.03))
         assert high is not None and low is not None

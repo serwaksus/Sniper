@@ -1,5 +1,4 @@
 """Tests for orderbook_analyzer.py — CLOB API order book depth analysis."""
-import json
 import os
 import sys
 import time
@@ -65,7 +64,7 @@ class TestDetectBidWall(unittest.TestCase):
 
     def test_small_bids_no_wall(self):
         bids = [{"price": "0.10", "size": "100"}] * 3
-        has_wall, wall_size = ob.detect_bid_wall(bids, 0.10)
+        has_wall, _wall_size = ob.detect_bid_wall(bids, 0.10)
         self.assertFalse(has_wall)
 
     def test_empty_bids_no_wall(self):
@@ -75,7 +74,7 @@ class TestDetectBidWall(unittest.TestCase):
 
     def test_zero_price_no_wall(self):
         bids = [{"price": "0.10", "size": "60000"}]
-        has_wall, wall_size = ob.detect_bid_wall(bids, 0.0)
+        has_wall, _wall_size = ob.detect_bid_wall(bids, 0.0)
         self.assertFalse(has_wall)
 
     def test_top_three_aggregate_wall(self):
