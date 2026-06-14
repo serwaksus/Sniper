@@ -403,7 +403,335 @@ def dbnomics_macro_bonus(cluster: str, question: str) -> int:
     return 0
 
 
-# ─── Unified Entry Point ─────────────────────────────────────────────
+# ─── 4. Yahoo Finance (yfinance) ─────────────────────────────────────
+
+YFINANCE_BONUS = 8
+YFINANCE_CACHE_TTL = 3600  # 1 hour
+YFINANCE_PROXIMITY_THRESHOLD = 0.10  # Within 10% of target = "in play"
+
+# Map keywords in Polymarket questions to Yahoo Finance tickers
+TICKER_MAP: dict[str, str] = {
+    "s&p 500": "SPY",
+    "s&p": "SPY",
+    "sp500": "SPY",
+    "sp 500": "SPY",
+    "nasdaq": "QQQ",
+    "dow jones": "DIA",
+    "dow": "DIA",
+    "bitcoin": "BTC-USD",
+    "btc": "BTC-USD",
+    "ethereum": "ETH-USD",
+    "eth": "ETH-USD",
+    "tesla": "TSLA",
+    "nvidia": "NVDA",
+    "apple": "AAPL",
+    "google": "GOOGL",
+    "microsoft": "MSFT",
+    "meta ": "META",
+    "facebook": "META",
+    "amazon": "AMZN",
+    "gold": "GLD",
+    "oil": "CL=F",
+    "crude": "CL=F",
+    "vix": "^VIX",
+    "russell": "IWM",
+    "goldman": "GS",
+    "jpmorgan": "JPM",
+    "jpm": "JPM",
+}
+
+
+def _detect_ticker(question: str) -> str | None:
+    """Detect the most relevant Yahoo Finance ticker from a Polymarket question."""
+    q_lower = question.lower()
+    for keyword, ticker in TICKER_MAP.items():
+        if keyword in q_lower:
+            return ticker
+    return None
+
+
+def _extract_price_target(question: str) -> float | None:
+    """Extract a price target from a Polymarket question.
+
+    Matches patterns like:
+      - "below 5000", "under $200", "drop to 4,000"
+      - "above 5000", "over $200", "reach 4000"
+      - "5000 level", "$200 mark"
+    """
+    q_lower = question.lower()
+    # Remove commas from numbers (e.g., "5,000" → "5000")
+    q_clean = q_lower.replace(",", "")
+
+    patterns = [
+        # "below/under/drop to/fall to X" or "above/over/reach X"
+        r"(?:below|under|drop\s+to|fall\s+to|decline\s+to|dip\s+below|sink\s+below)\s+\$?([\d]+\.?\d*)",
+        r"(?:above|over|reach|hit|rally\s+to|surge\s+to|climb\s+above|break\s+above)\s+\$?([\d]+\.?\d*)",
+        # "$X level/mark/level"
+        r"\$([\d]+\.?\d*)\s*(?:level|mark|threshold|barrier)",
+        # Bare "$XXXX" in the question
+        r"\$([\d]+\.?\d*)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, q_clean)
+        if match:
+            try:
+                return float(match.group(1))
+            except (ValueError, IndexError):
+                continue
+    return None
+
+
+# In-memory cache: ticker → (timestamp, current_price)
+_yf_cache: dict[str, tuple[float, float]] = {}
+
+
+def _get_current_price(ticker: str) -> float | None:
+    """Fetch the current/latest price for a ticker via yfinance.
+
+    Cached for 1 hour per ticker.
+    """
+    with _CACHE_LOCK:
+        cached = _yf_cache.get(ticker)
+        if cached and (time.time() - cached[0]) < YFINANCE_CACHE_TTL:
+            return cached[1]
+
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).fast_info
+        price = info.get("last_price") or info.get("lastPrice") or info.get("previous_close")
+        if price and price > 0:
+            with _CACHE_LOCK:
+                _yf_cache[ticker] = (time.time(), float(price))
+            logger.info(f"[YFINANCE] {ticker} = ${float(price):.2f}")
+            return float(price)
+    except Exception as e:
+        logger.warning(f"[YFINANCE] {ticker} error: {type(e).__name__}: {e}")
+    return None
+
+
+def yfinance_bonus(cluster: str, question: str) -> int:
+    """Return +8 if the question mentions a stock/index AND current price
+    is within 10% of the contract's price target.
+
+    Logic: If SPY is at $498 and the contract asks "Will S&P 500 drop below
+    5000 by Friday?", the contract is "live" — the target is only 0.4% away.
+    This means the contract is realistically achievable → boost the signal.
+
+    Returns 0 if no ticker or price target detected, or if price is far from target.
+    """
+    ticker = _detect_ticker(question)
+    if not ticker:
+        return 0
+
+    target = _extract_price_target(question)
+    if not target or target <= 0:
+        return 0
+
+    current = _get_current_price(ticker)
+    if not current or current <= 0:
+        return 0
+
+    # Compute proximity: how close is current price to target?
+    proximity = abs(current - target) / target if target > 0 else 1.0
+
+    if proximity <= YFINANCE_PROXIMITY_THRESHOLD:
+        logger.info(
+            f"[YFINANCE-BONUS] {ticker}=${current:.2f} vs target=${target:.2f} "
+            f"(proximity={proximity:.1%} ≤ {YFINANCE_PROXIMITY_THRESHOLD:.0%}) → +{YFINANCE_BONUS}"
+        )
+        return YFINANCE_BONUS
+
+    logger.debug(
+        f"[YFINANCE] {ticker}=${current:.2f} vs target=${target:.2f} "
+        f"(proximity={proximity:.1%} > {YFINANCE_PROXIMITY_THRESHOLD:.0%}), no bonus"
+    )
+    return 0
+
+
+# ─── 5. Wikipedia Pageviews Spike ────────────────────────────────────
+
+WIKI_PAGEVIEWS_API = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia/all-access/user"
+WIKI_SEARCH_API = "https://en.wikipedia.org/w/api.php"
+WIKI_TIMEOUT = 10
+WIKI_CACHE_TTL = 21600  # 6 hours
+WIKI_BONUS = 7
+WIKI_SPIKE_MULTIPLIER = 2.0  # Recent views > 2x baseline = spike
+WIKI_BASELINE_DAYS = 20
+WIKI_RECENT_DAYS = 3
+
+# In-memory cache: entity → (timestamp, spike_detected)
+_wiki_cache: dict[str, tuple[float, bool]] = {}
+
+
+def _extract_entities(question: str) -> list[str]:
+    """Extract potential Wikipedia article titles from a Polymarket question.
+
+    Looks for capitalized multi-word phrases (e.g., "Donald Trump", "Federal Reserve").
+    Returns up to 3 candidates.
+    """
+    # Remove leading "Will " and trailing "?"
+    clean = re.sub(r"^(Will|Is|Are|Does|Did|Has|Have|Can|Could|Would|Should|May|Might)\s+", "", question.strip("? "))
+
+    # Find capitalized sequences (1-3 words)
+    entities = re.findall(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}", clean)
+
+    # Filter out common false positives
+    stop_entities = {
+        "The", "This", "That", "These", "Those", "Will", "January", "February",
+        "March", "April", "May", "June", "July", "August", "September",
+        "October", "November", "December", "Yes", "No",
+    }
+    filtered = [e for e in entities if e.split()[0] not in stop_entities]
+
+    # Deduplicate
+    seen: set[str] = set()
+    unique: list[str] = []
+    for e in filtered:
+        key = e.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(e)
+
+    return unique[:3]
+
+
+def _search_wikipedia(entity: str) -> str | None:
+    """Search Wikipedia for the best matching article title for an entity."""
+    try:
+        resp = requests.get(
+            WIKI_SEARCH_API,
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": entity,
+                "srlimit": 1,
+                "format": "json",
+            },
+            timeout=WIKI_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        results = data.get("query", {}).get("search", [])
+        if results:
+            title = results[0]["title"]
+            logger.debug(f"[WIKI] Search '{entity}' → '{title}'")
+            return title
+    except Exception as e:
+        logger.debug(f"[WIKI] Search error: {type(e).__name__}: {e}")
+    return None
+
+
+def _fetch_pageviews(article: str, days: int) -> list[int]:
+    """Fetch daily pageview counts for a Wikipedia article.
+
+    Returns a list of daily view counts (most recent last).
+    """
+    from datetime import datetime, timedelta, UTC
+
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+
+    start_str = start.strftime("%Y%m%d")
+    end_str = end.strftime("%Y%m%d")
+
+    # URL-encode the article title (spaces → underscores)
+    article_encoded = article.replace(" ", "_")
+
+    try:
+        resp = requests.get(
+            f"{WIKI_PAGEVIEWS_API}/{article_encoded}/daily/{start_str}00/{end_str}00",
+            timeout=WIKI_TIMEOUT,
+            headers={"User-Agent": "DOTM-Sniper-Bot/1.0 (research)"},
+        )
+        if resp.status_code != 200:
+            logger.debug(f"[WIKI] Pageviews HTTP {resp.status_code} for '{article}'")
+            return []
+        data = resp.json()
+        items = data.get("items", [])
+        views = [item.get("views", 0) for item in items]
+        return views
+    except Exception as e:
+        logger.debug(f"[WIKI] Pageviews error: {type(e).__name__}: {e}")
+    return []
+
+
+def _detect_wiki_spike(article: str) -> bool:
+    """Detect if a Wikipedia article has a recent pageviews spike.
+
+    Compares the last WIKI_RECENT_DAYS to the WIKI_BASELINE_DAYS median.
+    Spike = recent median > WIKI_SPIKE_MULTIPLIER x baseline median.
+    """
+    # Check cache
+    with _CACHE_LOCK:
+        cached = _wiki_cache.get(article)
+        if cached and (time.time() - cached[0]) < WIKI_CACHE_TTL:
+            return cached[1]
+
+    total_days = WIKI_BASELINE_DAYS + WIKI_RECENT_DAYS
+    views = _fetch_pageviews(article, total_days)
+    if len(views) < WIKI_BASELINE_DAYS + 1:
+        # Not enough data
+        with _CACHE_LOCK:
+            _wiki_cache[article] = (time.time(), False)
+        return False
+
+    # Split into baseline and recent
+    baseline = views[:WIKI_BASELINE_DAYS]
+    recent = views[WIKI_BASELINE_DAYS:]
+
+    # Compute medians (robust to outliers)
+    baseline_sorted = sorted(baseline)
+    baseline_median = baseline_sorted[len(baseline_sorted) // 2] if baseline_sorted else 0
+
+    recent_sorted = sorted(recent)
+    recent_median = recent_sorted[len(recent_sorted) // 2] if recent_sorted else 0
+
+    if baseline_median < 10:
+        # Very low baseline — not enough interest to be meaningful
+        with _CACHE_LOCK:
+            _wiki_cache[article] = (time.time(), False)
+        return False
+
+    spike = recent_median > (baseline_median * WIKI_SPIKE_MULTIPLIER)
+
+    if spike:
+        logger.info(
+            f"[WIKI-SPIKE] '{article}' baseline={baseline_median}/d → recent={recent_median}/d "
+            f"({recent_median / baseline_median:.1f}x > {WIKI_SPIKE_MULTIPLIER}x) → spike!"
+        )
+
+    with _CACHE_LOCK:
+        _wiki_cache[article] = (time.time(), spike)
+    return spike
+
+
+def wikipedia_bonus(question: str) -> int:
+    """Return +7 if any entity in the question has a Wikipedia pageviews spike.
+
+    Extracts entity names, searches Wikipedia, and checks for pageview spikes
+    indicating breaking news / heightened public interest.
+    """
+    entities = _extract_entities(question)
+    if not entities:
+        return 0
+
+    for entity in entities:
+        article = _search_wikipedia(entity)
+        if not article:
+            continue
+        if _detect_wiki_spike(article):
+            logger.info(
+                f"[WIKI-BONUS] '{article}' spike detected for question "
+                f"'{question[:50]}...' → +{WIKI_BONUS}"
+            )
+            return WIKI_BONUS
+
+    return 0
+
+
+# ─── Unified Entry Point (updated) ────────────────────────────────────
 
 def compute_oracle_bonus(
     cluster: str,
@@ -411,9 +739,14 @@ def compute_oracle_bonus(
     polymarket_price: float,
     slug: str = "",
 ) -> tuple[int, dict[str, int]]:
-    """Compute total bonus from all three external oracles.
+    """Compute total bonus from all five external oracles.
 
-    This is the main entry point called by signal_scorer._compute_signal_score.
+    Sources:
+    1. Fear & Greed Index (+5)  — crypto/tech sentiment
+    2. Manifold Arbitrage (+15) — cross-platform probability gap
+    3. DBnomics Macro (+10)     — Fed rate / CPI alignment
+    4. Yahoo Finance (+8)       — stock/index price proximity to target
+    5. Wikipedia Spike (+7)     — pageviews spike = breaking news
 
     Args:
         cluster: Market cluster name
@@ -422,13 +755,13 @@ def compute_oracle_bonus(
         slug: Market slug for caching
 
     Returns:
-        (total_bonus, breakdown) where breakdown is {"fng": int, "manifold_arb": int, "dbnomics": int}
+        (total_bonus, breakdown) where breakdown maps source name → points
     """
     # Test/CI guard: skip all HTTP calls when disabled
     if os.environ.get("ORACLES_DISABLED") == "1":
-        return 0, {"fng": 0, "manifold_arb": 0, "dbnomics": 0}
+        return 0, {"fng": 0, "manifold_arb": 0, "dbnomics": 0, "yfinance": 0, "wiki": 0}
 
-    breakdown: dict[str, int] = {"fng": 0, "manifold_arb": 0, "dbnomics": 0}
+    breakdown: dict[str, int] = {"fng": 0, "manifold_arb": 0, "dbnomics": 0, "yfinance": 0, "wiki": 0}
 
     try:
         breakdown["fng"] = fear_greed_bonus(cluster)
@@ -445,12 +778,24 @@ def compute_oracle_bonus(
     except Exception as e:
         logger.warning(f"[ORACLE] DBnomics failed: {type(e).__name__}: {e}")
 
+    try:
+        breakdown["yfinance"] = yfinance_bonus(cluster, question)
+    except Exception as e:
+        logger.warning(f"[ORACLE] Yahoo Finance failed: {type(e).__name__}: {e}")
+
+    try:
+        breakdown["wiki"] = wikipedia_bonus(question)
+    except Exception as e:
+        logger.warning(f"[ORACLE] Wikipedia failed: {type(e).__name__}: {e}")
+
     total = sum(breakdown.values())
     if total > 0:
         logger.info(
             f"[ORACLE-BONUS] {slug[:30]}... fng={breakdown['fng']} "
             f"manifold_arb={breakdown['manifold_arb']} "
-            f"dbnomics={breakdown['dbnomics']} → total=+{total}"
+            f"dbnomics={breakdown['dbnomics']} "
+            f"yfinance={breakdown['yfinance']} "
+            f"wiki={breakdown['wiki']} → total=+{total}"
         )
 
     return total, breakdown

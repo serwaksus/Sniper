@@ -627,5 +627,457 @@ class TestCacheInfrastructure(unittest.TestCase):
         self.assertIsNone(result)
 
 
+# ═══════════════════════════════════════════════════════════════════
+# YAHOO FINANCE (yfinance) TESTS
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestTickerDetection(unittest.TestCase):
+    """Ticker extraction from Polymarket questions."""
+
+    def test_detect_spy(self):
+        from external_oracles import _detect_ticker
+        self.assertEqual(_detect_ticker("Will the S&P 500 drop below 5000?"), "SPY")
+
+    def test_detect_qqq(self):
+        from external_oracles import _detect_ticker
+        self.assertEqual(_detect_ticker("Will Nasdaq hit a new high?"), "QQQ")
+
+    def test_detect_btc(self):
+        from external_oracles import _detect_ticker
+        self.assertEqual(_detect_ticker("Will Bitcoin reach $200k?"), "BTC-USD")
+
+    def test_detect_eth(self):
+        from external_oracles import _detect_ticker
+        self.assertEqual(_detect_ticker("Will Ethereum 2.0 launch successfully?"), "ETH-USD")
+
+    def test_detect_tesla(self):
+        from external_oracles import _detect_ticker
+        self.assertEqual(_detect_ticker("Will Tesla stock fall below $150?"), "TSLA")
+
+    def test_detect_gold(self):
+        from external_oracles import _detect_ticker
+        self.assertEqual(_detect_ticker("Will gold prices surge?"), "GLD")
+
+    def test_detect_vix(self):
+        from external_oracles import _detect_ticker
+        self.assertEqual(_detect_ticker("Will the VIX spike above 30?"), "^VIX")
+
+    def test_no_ticker_found(self):
+        from external_oracles import _detect_ticker
+        self.assertIsNone(_detect_ticker("Will it rain in London?"))
+
+    def test_no_ticker_generic_economic(self):
+        from external_oracles import _detect_ticker
+        self.assertIsNone(_detect_ticker("Will GDP growth exceed 3%?"))
+
+
+class TestPriceTargetExtraction(unittest.TestCase):
+    """Price target extraction from question text."""
+
+    def test_below_pattern(self):
+        from external_oracles import _extract_price_target
+        self.assertAlmostEqual(_extract_price_target("Will S&P 500 drop below 5000?"), 5000.0)
+
+    def test_under_pattern(self):
+        from external_oracles import _extract_price_target
+        self.assertAlmostEqual(_extract_price_target("Will Tesla fall under $150?"), 150.0)
+
+    def test_above_pattern(self):
+        from external_oracles import _extract_price_target
+        self.assertAlmostEqual(_extract_price_target("Will Bitcoin surge above 100000?"), 100000.0)
+
+    def test_dollar_amount(self):
+        from external_oracles import _extract_price_target
+        self.assertAlmostEqual(_extract_price_target("Will BTC hit $200000?"), 200000.0)
+
+    def test_comma_numbers(self):
+        from external_oracles import _extract_price_target
+        self.assertAlmostEqual(_extract_price_target("Will S&P 500 drop below 5,000?"), 5000.0)
+
+    def test_no_target_found(self):
+        from external_oracles import _extract_price_target
+        self.assertIsNone(_extract_price_target("Will the market crash?"))
+
+    def test_drop_to_pattern(self):
+        from external_oracles import _extract_price_target
+        self.assertAlmostEqual(_extract_price_target("Will SPY drop to 450?"), 450.0)
+
+    def test_bare_dollar_no_keyword(self):
+        from external_oracles import _extract_price_target
+        self.assertAlmostEqual(_extract_price_target("Will it reach $500 level?"), 500.0)
+
+
+class TestYFinanceBonus(unittest.TestCase):
+    """yfinance_bonus integration tests."""
+
+    @patch("external_oracles._get_current_price", return_value=495.0)
+    def test_bonus_price_near_target(self, mock_price):
+        """+8 when current price is within 10% of target."""
+        from external_oracles import yfinance_bonus
+        # SPY at $495, target = $500 (from "below 500") → proximity = 1% → +8
+        result = yfinance_bonus("us_economic", "Will the S&P 500 drop below 500 by Friday?")
+        self.assertEqual(result, 8)
+
+    @patch("external_oracles._get_current_price", return_value=400.0)
+    def test_no_bonus_price_far_from_target(self, mock_price):
+        """0 when price is far from target (>10%)."""
+        from external_oracles import yfinance_bonus
+        # SPY at $400, target = $500 → proximity = 20% → 0
+        result = yfinance_bonus("us_economic", "Will the S&P 500 drop below 5000?")
+        self.assertEqual(result, 0)
+
+    @patch("external_oracles._get_current_price", return_value=None)
+    def test_no_bonus_price_fetch_failed(self, mock_price):
+        """0 when price fetch fails."""
+        from external_oracles import yfinance_bonus
+        result = yfinance_bonus("us_economic", "Will the S&P 500 drop below 5000?")
+        self.assertEqual(result, 0)
+
+    def test_no_bonus_no_ticker(self):
+        """0 when no ticker detected."""
+        from external_oracles import yfinance_bonus
+        result = yfinance_bonus("other", "Will it rain in London?")
+        self.assertEqual(result, 0)
+
+    def test_no_bonus_no_target(self):
+        """0 when ticker found but no price target."""
+        from external_oracles import yfinance_bonus
+        result = yfinance_bonus("us_economic", "Will the S&P 500 do something?")
+        self.assertEqual(result, 0)
+
+    @patch("external_oracles._get_current_price", return_value=505.0)
+    def test_bonus_boundary_within_10pct(self, mock_price):
+        """+8 at exactly 10% proximity boundary."""
+        from external_oracles import yfinance_bonus
+        # target = 550 (from "below 550"), current = 505 → proximity = 8.2% → +8
+        result = yfinance_bonus("us_economic", "Will the S&P 500 drop below 550?")
+        self.assertEqual(result, 8)
+
+    @patch("external_oracles._get_current_price", return_value=195000.0)
+    def test_bonus_btc_near_target(self, mock_price):
+        """+8 for Bitcoin near target."""
+        from external_oracles import yfinance_bonus
+        # BTC at $195k, target = $200k → proximity = 2.5% → +8
+        result = yfinance_bonus("crypto", "Will Bitcoin reach $200000?")
+        self.assertEqual(result, 8)
+
+
+class TestYFinanceCurrentPrice(unittest.TestCase):
+    """_get_current_price caching and fault tolerance."""
+
+    def test_cache_hit_no_yf_call(self):
+        """Second call uses cache, no yfinance import needed."""
+        import external_oracles
+        external_oracles._yf_cache.clear()
+        external_oracles._yf_cache["SPY"] = (time.time(), 495.0)
+
+        result = external_oracles._get_current_price("SPY")
+        self.assertEqual(result, 495.0)
+
+    def test_cache_expired_refetches(self):
+        """Expired cache triggers refetch."""
+        import external_oracles
+        external_oracles._yf_cache["TEST"] = (time.time() - 7200, 100.0)  # 2h ago
+
+        # Will try to fetch (and fail), returns None
+        with patch("external_oracles.yfinance", create=True):
+            result = external_oracles._get_current_price("NONEXISTENT_TICKER_XYZ")
+        self.assertIsNone(result)
+
+    def test_yfinance_import_error_returns_none(self):
+        """yfinance not installed → returns None, not crash."""
+        import external_oracles
+
+        external_oracles._yf_cache.clear()
+
+        # Simulate import failure
+        import builtins
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "yfinance":
+                raise ImportError("not installed")
+            return original_import(name, *args, **kwargs)
+
+        with patch.object(builtins, "__import__", side_effect=mock_import):
+            result = external_oracles._get_current_price("SPY")
+        self.assertIsNone(result)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WIKIPEDIA PAGEVIEWS SPIKE TESTS
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestEntityExtraction(unittest.TestCase):
+    """Entity extraction from Polymarket questions."""
+
+    def test_extract_politician_name(self):
+        from external_oracles import _extract_entities
+        entities = _extract_entities("Will Donald Trump win the election?")
+        self.assertIn("Donald Trump", entities)
+
+    def test_extract_company_name(self):
+        from external_oracles import _extract_entities
+        entities = _extract_entities("Will Tesla announce bankruptcy?")
+        self.assertIn("Tesla", entities)
+
+    def test_extract_multi_word_entity(self):
+        from external_oracles import _extract_entities
+        entities = _extract_entities("Will the Federal Reserve cut rates?")
+        self.assertTrue(any("Federal Reserve" in e for e in entities))
+
+    def test_no_entities_for_generic_question(self):
+        from external_oracles import _extract_entities
+        entities = _extract_entities("Will it rain tomorrow?")
+        # Should find no meaningful entities
+        self.assertEqual(len(entities), 0)
+
+    def test_strips_leading_will(self):
+        from external_oracles import _extract_entities
+        entities = _extract_entities("Will Elon Musk buy Twitter?")
+        self.assertIn("Elon Musk", entities)
+        # "Will" should NOT be an entity
+        self.assertNotIn("Will", entities)
+
+    def test_max_three_entities(self):
+        from external_oracles import _extract_entities
+        entities = _extract_entities("Will Joe Biden meet Vladimir Putin and Xi Jinping?")
+        self.assertLessEqual(len(entities), 3)
+
+    def test_strips_month_names(self):
+        from external_oracles import _extract_entities
+        entities = _extract_entities("Will Donald Trump resign January 2025?")
+        # January should not appear as entity
+        for e in entities:
+            self.assertNotIn("January", e)
+
+
+class TestWikipediaSearch(unittest.TestCase):
+    """Wikipedia article search tests."""
+
+    @patch("external_oracles.requests.get")
+    def test_search_success(self, mock_get):
+        """Search returns article title."""
+        import external_oracles
+
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={
+                "query": {"search": [{"title": "Donald Trump"}]}
+            }),
+        )
+        result = external_oracles._search_wikipedia("Donald Trump")
+        self.assertEqual(result, "Donald Trump")
+
+    @patch("external_oracles.requests.get")
+    def test_search_no_results(self, mock_get):
+        """No results returns None."""
+        import external_oracles
+
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"query": {"search": []}}),
+        )
+        result = external_oracles._search_wikipedia("nonexistent xyzzy 123")
+        self.assertIsNone(result)
+
+    @patch("external_oracles.requests.get")
+    def test_search_http_error(self, mock_get):
+        """HTTP error returns None."""
+        import external_oracles
+
+        mock_get.return_value = MagicMock(status_code=500)
+        result = external_oracles._search_wikipedia("test")
+        self.assertIsNone(result)
+
+    @patch("external_oracles.requests.get", side_effect=Exception("network"))
+    def test_search_exception_returns_none(self, mock_get):
+        """Exception returns None."""
+        import external_oracles
+        result = external_oracles._search_wikipedia("test")
+        self.assertIsNone(result)
+
+
+class TestPageviewSpikeDetection(unittest.TestCase):
+    """Pageviews spike detection tests."""
+
+    @patch("external_oracles._fetch_pageviews")
+    def test_spike_detected(self, mock_fetch):
+        """Spike when recent median > 2x baseline median."""
+        import external_oracles
+        external_oracles._wiki_cache.clear()
+
+        # 20 days baseline at ~100/day, 3 days recent at ~300/day
+        baseline = [100] * 20
+        recent = [300, 350, 280]
+        mock_fetch.return_value = baseline + recent
+
+        result = external_oracles._detect_wiki_spike("Donald_Trump")
+        self.assertTrue(result)
+
+    @patch("external_oracles._fetch_pageviews")
+    def test_no_spike_stable(self, mock_fetch):
+        """No spike when views are stable."""
+        import external_oracles
+        external_oracles._wiki_cache.clear()
+
+        # All days at ~100/day → no spike
+        mock_fetch.return_value = [100] * 23
+        result = external_oracles._detect_wiki_spike("Some_Article")
+        self.assertFalse(result)
+
+    @patch("external_oracles._fetch_pageviews")
+    def test_no_spike_low_baseline(self, mock_fetch):
+        """No spike when baseline is very low (<10 views/day)."""
+        import external_oracles
+        external_oracles._wiki_cache.clear()
+
+        # Low baseline → not meaningful even with spike
+        baseline = [5] * 20
+        recent = [50, 60, 40]
+        mock_fetch.return_value = baseline + recent
+        result = external_oracles._detect_wiki_spike("Obscure_Article")
+        self.assertFalse(result)
+
+    @patch("external_oracles._fetch_pageviews")
+    def test_insufficient_data(self, mock_fetch):
+        """No spike when insufficient data returned."""
+        import external_oracles
+        external_oracles._wiki_cache.clear()
+
+        mock_fetch.return_value = [100, 200]  # Only 2 data points
+        result = external_oracles._detect_wiki_spike("Test_Article")
+        self.assertFalse(result)
+
+    @patch("external_oracles._fetch_pageviews", return_value=[])
+    def test_empty_pageviews(self, mock_fetch):
+        """Empty pageviews → no spike."""
+        import external_oracles
+        external_oracles._wiki_cache.clear()
+        result = external_oracles._detect_wiki_spike("Test_Article")
+        self.assertFalse(result)
+
+    def test_cache_hit_skips_fetch(self):
+        """Cache hit returns without fetching."""
+        import external_oracles
+        external_oracles._wiki_cache.clear()
+        external_oracles._wiki_cache["Cached_Article"] = (time.time(), True)
+
+        with patch("external_oracles._fetch_pageviews") as mock_fetch:
+            result = external_oracles._detect_wiki_spike("Cached_Article")
+            self.assertTrue(result)
+            mock_fetch.assert_not_called()
+
+
+class TestWikipediaBonus(unittest.TestCase):
+    """wikipedia_bonus end-to-end tests."""
+
+    @patch("external_oracles._detect_wiki_spike", return_value=True)
+    @patch("external_oracles._search_wikipedia", return_value="Donald Trump")
+    @patch("external_oracles._extract_entities", return_value=["Donald Trump"])
+    def test_bonus_with_spike(self, mock_extract, mock_search, mock_spike):
+        """+7 when entity has pageviews spike."""
+        from external_oracles import wikipedia_bonus
+        result = wikipedia_bonus("Will Donald Trump win the election?")
+        self.assertEqual(result, 7)
+
+    @patch("external_oracles._detect_wiki_spike", return_value=False)
+    @patch("external_oracles._search_wikipedia", return_value="Donald Trump")
+    @patch("external_oracles._extract_entities", return_value=["Donald Trump"])
+    def test_no_bonus_no_spike(self, mock_extract, mock_search, mock_spike):
+        """0 when no spike detected."""
+        from external_oracles import wikipedia_bonus
+        result = wikipedia_bonus("Will Donald Trump win the election?")
+        self.assertEqual(result, 0)
+
+    @patch("external_oracles._extract_entities", return_value=[])
+    def test_no_bonus_no_entities(self, mock_extract):
+        """0 when no entities extracted."""
+        from external_oracles import wikipedia_bonus
+        result = wikipedia_bonus("Will it rain?")
+        self.assertEqual(result, 0)
+
+    @patch("external_oracles._search_wikipedia", return_value=None)
+    @patch("external_oracles._extract_entities", return_value=["Some Entity"])
+    def test_no_bonus_article_not_found(self, mock_extract, mock_search):
+        """0 when Wikipedia article not found."""
+        from external_oracles import wikipedia_bonus
+        result = wikipedia_bonus("Will Some Entity do something?")
+        self.assertEqual(result, 0)
+
+    @patch("external_oracles._detect_wiki_spike", side_effect=[False, True])
+    @patch("external_oracles._search_wikipedia", side_effect=["Entity One", "Entity Two"])
+    @patch("external_oracles._extract_entities", return_value=["Entity One", "Entity Two"])
+    def test_checks_multiple_entities(self, mock_extract, mock_search, mock_spike):
+        """Checks multiple entities until one has a spike."""
+        from external_oracles import wikipedia_bonus
+        result = wikipedia_bonus("Will Entity One or Entity Two win?")
+        self.assertEqual(result, 7)
+
+
+class TestComputeOracleBonusFiveSources(unittest.TestCase):
+    """Updated unified entry point with all 5 sources."""
+
+    def setUp(self):
+        self._old_val = os.environ.get("ORACLES_DISABLED")
+        os.environ["ORACLES_DISABLED"] = "0"
+
+    def tearDown(self):
+        if self._old_val is None:
+            os.environ.pop("ORACLES_DISABLED", None)
+        else:
+            os.environ["ORACLES_DISABLED"] = self._old_val
+
+    @patch("external_oracles.wikipedia_bonus", return_value=7)
+    @patch("external_oracles.yfinance_bonus", return_value=8)
+    @patch("external_oracles.dbnomics_macro_bonus", return_value=0)
+    @patch("external_oracles.check_manifold_arbitrage", return_value=0)
+    @patch("external_oracles.fear_greed_bonus", return_value=0)
+    def test_yfinance_and_wiki_combined(self, mock_fng, mock_mf, mock_dbn, mock_yf, mock_wiki):
+        """yfinance + Wikipedia combined = 15."""
+        from external_oracles import compute_oracle_bonus
+        total, breakdown = compute_oracle_bonus(
+            "us_economic", "Will the S&P 500 drop below 5000?", 0.08, "test",
+        )
+        self.assertEqual(total, 15)
+        self.assertEqual(breakdown["yfinance"], 8)
+        self.assertEqual(breakdown["wiki"], 7)
+
+    @patch("external_oracles.wikipedia_bonus", return_value=0)
+    @patch("external_oracles.yfinance_bonus", return_value=0)
+    @patch("external_oracles.dbnomics_macro_bonus", return_value=0)
+    @patch("external_oracles.check_manifold_arbitrage", return_value=0)
+    @patch("external_oracles.fear_greed_bonus", return_value=5)
+    def test_all_five_in_breakdown(self, mock_fng, mock_mf, mock_dbn, mock_yf, mock_wiki):
+        """Breakdown dict has all 5 source keys."""
+        from external_oracles import compute_oracle_bonus
+        total, breakdown = compute_oracle_bonus(
+            "crypto", "Will BTC hit 200k?", 0.05, "test",
+        )
+        self.assertIn("fng", breakdown)
+        self.assertIn("manifold_arb", breakdown)
+        self.assertIn("dbnomics", breakdown)
+        self.assertIn("yfinance", breakdown)
+        self.assertIn("wiki", breakdown)
+
+    @patch("external_oracles.wikipedia_bonus", side_effect=Exception("crash"))
+    @patch("external_oracles.yfinance_bonus", return_value=8)
+    @patch("external_oracles.dbnomics_macro_bonus", return_value=0)
+    @patch("external_oracles.check_manifold_arbitrage", return_value=0)
+    @patch("external_oracles.fear_greed_bonus", return_value=5)
+    def test_wiki_crash_doesnt_break_others(self, mock_fng, mock_mf, mock_dbn, mock_yf, mock_wiki):
+        """Wikipedia crash → 0, but other oracles still work."""
+        from external_oracles import compute_oracle_bonus
+        total, breakdown = compute_oracle_bonus(
+            "crypto", "Will BTC hit 200k?", 0.05, "test",
+        )
+        self.assertEqual(breakdown["wiki"], 0)
+        self.assertEqual(breakdown["yfinance"], 8)
+        self.assertEqual(breakdown["fng"], 5)
+        self.assertEqual(total, 13)
+
+
 if __name__ == "__main__":
     unittest.main()

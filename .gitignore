@@ -44,3 +44,4 @@ ml_models/
 logs/
 backups/
 equity_tracker.log*
+.opencode/

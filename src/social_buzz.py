@@ -5,10 +5,11 @@ Aggregates social/news attention signals from multiple sources
 to detect emerging interest in prediction market topics.
 
 Sources (by weight):
-1. GDELT DOC API v2 (50%) — global news monitoring
-2. Google News RSS (35%) — English-language news
-3. Reddit JSON API (15%) — community discussion
+1. GDELT DOC API v2 (60%) — global news monitoring
+2. Google News RSS (40%) — English-language news
 
+Reddit removed: 403 Forbidden on all IPs since 2023 (OAuth2 now required).
+Wikipedia pageviews spike handled separately in external_oracles.py (+7 bonus).
 Telegram removed: blocked on Russian IP, Telethon input() hangs process.
 """
 from __future__ import annotations
@@ -37,7 +38,6 @@ DEFAULT_TELEGRAM_CHANNELS = [
 
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 GOOGLE_NEWS_URL = "https://news.google.com/rss/search"
-REDDIT_URL = "https://www.reddit.com/search.json"
 
 
 from utils import load_env_file
@@ -264,27 +264,6 @@ def fetch_google_news(keywords: list[str]) -> dict:
         return {"count": 0, "status": f"error: {e}"}
 
 
-def fetch_reddit(keywords: list[str]) -> dict:
-    query = " ".join(keywords[:3])
-    try:
-        resp = requests.get(REDDIT_URL, params={  # type: ignore[arg-type]
-            "q": query,
-            "sort": "new",
-            "t": "day",
-            "limit": 100,
-        }, timeout=10, headers={"User-Agent": "DotmSniper/1.0"})
-
-        if resp.status_code != 200:
-            return {"count": 0, "status": f"error_{resp.status_code}"}
-
-        data = resp.json()
-        posts = data.get("data", {}).get("children", [])
-        return {"count": len(posts), "status": "ok"}
-    except Exception as e:
-        logger.debug(f"[BUZZ-REDDIT] Error: {e}")
-        return {"count": 0, "status": f"error: {e}"}
-
-
 def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
     if not force:
         cached = _get_cached(slug)
@@ -296,25 +275,20 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
 
     gdelt = fetch_gdelt(keywords)
     google = fetch_google_news(keywords)
-    reddit = fetch_reddit(keywords)
 
-    sources_active = sum(1 for s in [gdelt, google, reddit]
+    sources_active = sum(1 for s in [gdelt, google]
                         if s.get("status") == "ok")
 
     gdelt_norm = min(gdelt.get("count", 0) / 50, 1.0)
     google_norm = min(google.get("count", 0) / 50, 1.0)
-    reddit_norm = min(reddit.get("count", 0) / 20, 1.0)
 
     total_buzz = 0.0
 
     if gdelt.get("status") == "ok":
-        total_buzz += 0.50 * gdelt_norm
+        total_buzz += 0.60 * gdelt_norm
 
     if google.get("status") == "ok":
-        total_buzz += 0.35 * google_norm
-
-    if reddit.get("status") == "ok":
-        total_buzz += 0.15 * reddit_norm
+        total_buzz += 0.40 * google_norm
 
     if sources_active == 1:
         total_buzz = total_buzz * 0.7
@@ -333,7 +307,6 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
         "sources": {
             "gdelt": {"count": gdelt.get("count", 0), "status": gdelt.get("status")},
             "google": {"count": google.get("count", 0), "status": google.get("status")},
-            "reddit": {"count": reddit.get("count", 0), "status": reddit.get("status")},
         },
         "sources_active": sources_active,
     }
@@ -341,7 +314,7 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
     logger.info(
         f"[BUZZ] {slug[:40]}... score={buzz_score:.1f}/20 "
         f"(G:{gdelt.get('count', 0)} Go:{google.get('count', 0)} "
-        f"R:{reddit.get('count', 0)} sentiment={sentiment})"
+        f"sentiment={sentiment})"
     )
 
     _set_cached(slug, result)
