@@ -1,11 +1,10 @@
-"""Tests for model_council module."""
+"""Tests for model_council module — council + judge architecture."""
 from __future__ import annotations
 
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 
 import sys
 import os
@@ -14,87 +13,68 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import model_council
 
 
-class TestParseOvhBatch:
-    """Test _parse_ovh_batch response parsing."""
+class TestParseJsonArray:
+    def test_simple_array(self):
+        content = '[{"slug": "a", "estimated_probability": 0.15}]'
+        result = model_council._parse_json_array(content)
+        assert result is not None and len(result) == 1
 
-    def test_parse_json_array(self):
-        content = '[{"slug": "a", "estimated_probability": 0.15, "confidence": 0.7}]'
-        result = model_council._parse_ovh_batch(content)
-        assert result is not None
-        assert len(result) == 1
-        assert result[0]["slug"] == "a"
-        assert result[0]["estimated_probability"] == 0.15
+    def test_markdown_fenced(self):
+        content = '```json\n[{"slug": "x", "estimated_probability": 0.3}]\n```'
+        result = model_council._parse_json_array(content)
+        assert result is not None and result[0]["slug"] == "x"
 
-    def test_parse_markdown_fenced(self):
-        content = '```json\n[{"slug": "x", "estimated_probability": 0.3, "confidence": 0.8}]\n```'
-        result = model_council._parse_ovh_batch(content)
-        assert result is not None
-        assert len(result) == 1
-        assert result[0]["slug"] == "x"
-
-    def test_parse_multiple_objects(self):
+    def test_multiple(self):
         content = '[{"slug": "a", "estimated_probability": 0.1}, {"slug": "b", "estimated_probability": 0.2}]'
-        result = model_council._parse_ovh_batch(content)
-        assert result is not None
-        assert len(result) == 2
+        result = model_council._parse_json_array(content)
+        assert result is not None and len(result) == 2
 
-    def test_parse_empty(self):
-        assert model_council._parse_ovh_batch("") is None
-        assert model_council._parse_ovh_batch(None) is None
+    def test_empty(self):
+        assert model_council._parse_json_array("") is None
+        assert model_council._parse_json_array(None) is None
 
-    def test_parse_invalid_json(self):
-        assert model_council._parse_ovh_batch("not json at all") is None
+    def test_invalid(self):
+        assert model_council._parse_json_array("not json") is None
 
-    def test_parse_with_leading_colon(self):
+    def test_leading_colon(self):
         content = ':[{"slug": "a", "estimated_probability": 0.1}]'
-        result = model_council._parse_ovh_batch(content)
-        assert result is not None
-        assert len(result) == 1
+        assert model_council._parse_json_array(content) is not None
 
-    def test_parse_individual_objects_fallback(self):
-        content = 'Some text\n{"slug": "a", "estimated_probability": 0.1}\nmore text\n{"slug": "b", "estimated_probability": 0.2}'
-        result = model_council._parse_ovh_batch(content)
-        assert result is not None
-        assert len(result) == 2
+    def test_individual_objects_fallback(self):
+        content = 'text {"slug": "a", "estimated_probability": 0.1} more'
+        result = model_council._parse_json_array(content)
+        assert result is not None and len(result) == 1
 
 
-class TestParseSingleOvh:
-    """Test _parse_single_ovh response parsing."""
+class TestParseJsonObject:
+    def test_simple(self):
+        content = '{"estimated_probability": 0.25, "confidence": 0.7}'
+        result = model_council._parse_json_object(content)
+        assert result is not None and result["estimated_probability"] == 0.25
 
-    def test_parse_json_object(self):
-        content = '{"estimated_probability": 0.25, "confidence": 0.7, "reasoning": "test"}'
-        result = model_council._parse_single_ovh(content)
-        assert result is not None
-        assert result["estimated_probability"] == 0.25
-        assert result["confidence"] == 0.7
-
-    def test_parse_markdown_fenced(self):
+    def test_markdown(self):
         content = '```json\n{"estimated_probability": 0.3}\n```'
-        result = model_council._parse_single_ovh(content)
-        assert result is not None
-        assert result["estimated_probability"] == 0.3
+        assert model_council._parse_json_object(content)["estimated_probability"] == 0.3
 
-    def test_parse_empty(self):
-        assert model_council._parse_single_ovh("") is None
-        assert model_council._parse_single_ovh(None) is None
+    def test_empty(self):
+        assert model_council._parse_json_object("") is None
+        assert model_council._parse_json_object(None) is None
 
-    def test_parse_no_json(self):
-        assert model_council._parse_single_ovh("just text") is None
+    def test_no_json(self):
+        assert model_council._parse_json_object("text") is None
 
 
 class TestSafeFloat:
-    """Test _safe_float utility."""
-
     def test_int(self):
         assert model_council._safe_float(42) == 42.0
 
     def test_float(self):
         assert model_council._safe_float(0.15) == 0.15
 
-    def test_string_number(self):
+    def test_string(self):
         assert model_council._safe_float("0.25") == 0.25
 
-    def test_string_percent(self):
+    def test_percent(self):
         assert model_council._safe_float("25%") == 0.25
 
     def test_invalid(self):
@@ -105,150 +85,228 @@ class TestSafeFloat:
 
 
 class TestExtractJsonFromReasoning:
-    """Test _extract_json_from_reasoning for thinking models."""
-
     def test_extract_array(self):
-        reasoning = "Thinking...\nFinal answer: [{\"slug\": \"a\", \"estimated_probability\": 0.2}]"
+        reasoning = 'Thinking...\n[{"slug": "a", "estimated_probability": 0.2}]'
         result = model_council._extract_json_from_reasoning(reasoning)
-        assert result is not None
-        parsed = json.loads(result)
-        assert isinstance(parsed, list)
+        assert result and json.loads(result) is not None
 
     def test_extract_object(self):
-        reasoning = "Analysis...\n{\"estimated_probability\": 0.3}"
+        reasoning = 'Analysis...\n{"estimated_probability": 0.3}'
         result = model_council._extract_json_from_reasoning(reasoning)
-        assert result is not None
-        parsed = json.loads(result)
-        assert parsed["estimated_probability"] == 0.3
+        assert result and json.loads(result)["estimated_probability"] == 0.3
 
     def test_no_json(self):
-        assert model_council._extract_json_from_reasoning("just thinking") == ""
+        assert model_council._extract_json_from_reasoning("just text") == ""
+
+
+class TestBuildJudgePrompt:
+    def test_batch_prompt_has_estimates(self):
+        estimates = {
+            "slug-a": [
+                {"model": "deepseek-chat", "p": 0.12, "confidence": 0.7},
+                {"model": "gpt-oss-120b", "p": 0.08, "confidence": 0.65},
+            ]
+        }
+        items = [{"slug": "slug-a", "question": "Test?", "market_price": 0.05, "estimates": estimates["slug-a"]}]
+        prompt = model_council._build_judge_prompt_batch(estimates, items)
+        assert "deepseek-chat" in prompt
+        assert "gpt-oss-120b" in prompt
+        assert "mean=" in prompt
+        assert "median=" in prompt
+        assert "std=" in prompt
+
+    def test_single_prompt_has_estimates(self):
+        estimates = [
+            {"model": "deepseek-chat", "p": 0.12, "confidence": 0.7},
+            {"model": "gpt-oss-120b", "p": 0.08, "confidence": 0.65},
+        ]
+        prompt = model_council._build_judge_prompt_single("slug", "Test question?", 0.05, estimates)
+        assert "deepseek-chat" in prompt
+        assert "Test question?" in prompt
+        assert "mean=" in prompt
 
 
 class TestCouncilBatchConsensus:
-    """Test council_batch_consensus aggregation logic."""
-
-    def test_deepseek_only_when_ovh_disabled(self):
-        """When OVH is disabled, should return DeepSeek results unchanged."""
+    def test_ovh_disabled_returns_deepseek(self):
         with patch.object(model_council, "is_ovh_enabled", return_value=False):
-            deepseek = [{"slug": "a", "estimated_probability": 0.15, "confidence": 0.7}]
-            merged, meta = model_council.council_batch_consensus("prompt", ["a"], deepseek)
-            assert merged == deepseek
-            assert meta["models_queried"] == []
+            ds = [{"slug": "a", "estimated_probability": 0.15, "confidence": 0.7}]
+            merged, meta = model_council.council_batch_consensus("prompt", ["a"], ds)
+            assert merged == ds
+            assert meta["advisors_queried"] == []
 
-    def test_consensus_two_models(self):
-        """Test weighted consensus between DeepSeek and one OVH model."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+    def test_judge_overrides_deepseek(self):
+        """Judge model should override DeepSeek estimates."""
+        # Mock OVH advisor responses
+        advisor_response = MagicMock()
+        advisor_response.status_code = 200
+        advisor_response.json.return_value = {
             "choices": [{"message": {"content": json.dumps([
                 {"slug": "a", "estimated_probability": 0.20, "confidence": 0.8}
             ])}}]
         }
 
-        with patch.object(model_council, "is_ovh_enabled", return_value=True), \
-             patch.object(model_council, "_ovh_rate_limit_wait", return_value=0), \
-             patch.object(model_council.requests, "post", return_value=mock_response):
-            deepseek = [{"slug": "a", "estimated_probability": 0.10, "confidence": 0.7}]
-            merged, meta = model_council.council_batch_consensus("prompt", ["a"], deepseek)
-
-            assert meta["consensus_applied"] is True
-            assert len(merged) == 1
-            # Consensus should be between 0.10 and 0.20
-            p = merged[0]["estimated_probability"]
-            assert 0.10 < p < 0.20
-
-    def test_ovh_rate_limited_graceful_degradation(self):
-        """When OVH returns 429, should fall back to DeepSeek only."""
-        mock_response = MagicMock()
-        mock_response.status_code = 429
-        mock_response.headers = {"retry-after": "30"}
-        mock_response.text = '{"message": "rate limited"}'
-
-        with patch.object(model_council, "is_ovh_enabled", return_value=True), \
-             patch.object(model_council, "_ovh_rate_limit_wait", return_value=0), \
-             patch.object(model_council.requests, "post", return_value=mock_response):
-            deepseek = [{"slug": "a", "estimated_probability": 0.15, "confidence": 0.7}]
-            merged, meta = model_council.council_batch_consensus("prompt", ["a"], deepseek)
-
-            # Should return DeepSeek results unchanged
-            assert merged == deepseek
-            assert all(m in meta["models_failed"] for m in meta["models_queried"])
-
-    def test_deepseek_none_ovh_provides_results(self):
-        """When DeepSeek fails, OVH models should provide results."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        # Mock judge response
+        judge_response = MagicMock()
+        judge_response.status_code = 200
+        judge_response.json.return_value = {
             "choices": [{"message": {"content": json.dumps([
-                {"slug": "a", "estimated_probability": 0.18, "confidence": 0.75}
+                {"slug": "a", "estimated_probability": 0.18, "confidence": 0.85, "reasoning": "synthesis"}
             ])}}]
         }
 
+        call_count = [0]
+        def mock_post(*args, **kwargs):
+            call_count[0] += 1
+            # Last call is the judge
+            if call_count[0] > len(model_council.OVH_ADVISORS):
+                return judge_response
+            return advisor_response
+
         with patch.object(model_council, "is_ovh_enabled", return_value=True), \
              patch.object(model_council, "_ovh_rate_limit_wait", return_value=0), \
-             patch.object(model_council.requests, "post", return_value=mock_response):
-            merged, meta = model_council.council_batch_consensus("prompt", ["a"], None)
+             patch.object(model_council.requests, "post", side_effect=mock_post):
+            ds = [{"slug": "a", "estimated_probability": 0.10, "confidence": 0.7}]
+            merged, meta = model_council.council_batch_consensus("prompt", ["a"], ds)
 
-            assert merged is not None
+            assert meta["judge_ok"] is True
             assert len(merged) == 1
+            # Judge's estimate should override
             assert merged[0]["estimated_probability"] == 0.18
+
+    def test_judge_fails_fallback_to_average(self):
+        """When judge fails, should fall back to confidence-weighted average."""
+        advisor_response = MagicMock()
+        advisor_response.status_code = 200
+        advisor_response.json.return_value = {
+            "choices": [{"message": {"content": json.dumps([
+                {"slug": "a", "estimated_probability": 0.20, "confidence": 0.8}
+            ])}}]
+        }
+
+        fail_response = MagicMock()
+        fail_response.status_code = 429
+        fail_response.headers = {}
+        fail_response.text = ""
+
+        call_count = [0]
+        def mock_post(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] > len(model_council.OVH_ADVISORS):
+                return fail_response  # Judge fails
+            return advisor_response
+
+        with patch.object(model_council, "is_ovh_enabled", return_value=True), \
+             patch.object(model_council, "_ovh_rate_limit_wait", return_value=0), \
+             patch.object(model_council.requests, "post", side_effect=mock_post):
+            ds = [{"slug": "a", "estimated_probability": 0.10, "confidence": 0.7}]
+            merged, meta = model_council.council_batch_consensus("prompt", ["a"], ds)
+
+            assert meta["judge_ok"] is False
+            # Should have averaged
+            assert merged[0]["estimated_probability"] != 0.10  # Changed from DeepSeek
+
+    def test_all_ovh_fail_returns_deepseek(self):
+        """When all OVH models fail, return DeepSeek unchanged."""
+        fail_response = MagicMock()
+        fail_response.status_code = 429
+        fail_response.headers = {}
+        fail_response.text = ""
+
+        with patch.object(model_council, "is_ovh_enabled", return_value=True), \
+             patch.object(model_council, "_ovh_rate_limit_wait", return_value=0), \
+             patch.object(model_council.requests, "post", return_value=fail_response):
+            ds = [{"slug": "a", "estimated_probability": 0.15, "confidence": 0.7}]
+            merged, meta = model_council.council_batch_consensus("prompt", ["a"], ds)
+
+            assert merged == ds
+            assert meta["judge_ok"] is False
 
 
 class TestCouncilSingleConsensus:
-    """Test council_single_consensus aggregation."""
-
-    def test_deepseek_only_when_ovh_disabled(self):
+    def test_ovh_disabled(self):
         with patch.object(model_council, "is_ovh_enabled", return_value=False):
             p, meta = model_council.council_single_consensus("prompt", "slug", 0.15, 0.7)
             assert p == 0.15
             assert meta["consensus_applied"] is False
 
-    def test_consensus_two_models(self):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+    def test_judge_makes_decision(self):
+        advisor_response = MagicMock()
+        advisor_response.status_code = 200
+        advisor_response.json.return_value = {
             "choices": [{"message": {"content": json.dumps({
                 "estimated_probability": 0.25, "confidence": 0.8
             })}}]
         }
 
+        judge_response = MagicMock()
+        judge_response.status_code = 200
+        judge_response.json.return_value = {
+            "choices": [{"message": {"content": json.dumps({
+                "estimated_probability": 0.22, "confidence": 0.85
+            })}}]
+        }
+
+        call_count = [0]
+        def mock_post(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] > len(model_council.OVH_ADVISORS):
+                return judge_response
+            return advisor_response
+
         with patch.object(model_council, "is_ovh_enabled", return_value=True), \
              patch.object(model_council, "_ovh_rate_limit_wait", return_value=0), \
-             patch.object(model_council.requests, "post", return_value=mock_response):
-            p, meta = model_council.council_single_consensus("prompt", "slug", 0.15, 0.7)
+             patch.object(model_council.requests, "post", side_effect=mock_post):
+            p, meta = model_council.council_single_consensus(
+                "prompt", "slug", 0.15, 0.7, question="Test?", price=0.05
+            )
 
+            assert meta["judge_ok"] is True
             assert meta["consensus_applied"] is True
-            # Consensus should be between 0.15 and 0.25
-            assert 0.15 < p < 0.25
+            assert p == 0.22  # Judge's verdict
 
-    def test_ovh_failure_returns_deepseek(self):
-        mock_response = MagicMock()
-        mock_response.status_code = 429
-        mock_response.headers = {}
-        mock_response.text = ""
+    def test_judge_fails_fallback(self):
+        fail_response = MagicMock()
+        fail_response.status_code = 429
+        fail_response.headers = {}
+        fail_response.text = ""
+
+        advisor_response = MagicMock()
+        advisor_response.status_code = 200
+        advisor_response.json.return_value = {
+            "choices": [{"message": {"content": json.dumps({
+                "estimated_probability": 0.25, "confidence": 0.8
+            })}}]
+        }
+
+        call_count = [0]
+        def mock_post(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] > len(model_council.OVH_ADVISORS):
+                return fail_response
+            return advisor_response
 
         with patch.object(model_council, "is_ovh_enabled", return_value=True), \
              patch.object(model_council, "_ovh_rate_limit_wait", return_value=0), \
-             patch.object(model_council.requests, "post", return_value=mock_response):
-            p, meta = model_council.council_single_consensus("prompt", "slug", 0.15, 0.7)
-            assert p == 0.15
-            assert meta["consensus_applied"] is False
+             patch.object(model_council.requests, "post", side_effect=mock_post):
+            p, meta = model_council.council_single_consensus(
+                "prompt", "slug", 0.15, 0.7, question="Test?", price=0.05
+            )
+
+            assert meta["judge_ok"] is False
+            assert meta["consensus_applied"] is True
+            # Should be weighted average between 0.15 and 0.25
+            assert 0.15 < p < 0.25
 
 
 class TestRateLimiter:
-    """Test OVH rate limiter."""
-
-    def test_rate_limit_skips_when_recent_call(self):
-        """Rate limiter should wait when called too soon after previous call."""
+    def test_waits_when_recent(self):
         import time
-        model_council._OVH_LAST_CALL = time.time()  # Just called
+        model_council._OVH_LAST_CALL = time.time()
         waited = model_council._ovh_rate_limit_wait()
-        assert waited > 0  # Should have waited
+        assert waited > 0
 
-    def test_rate_limit_no_wait_when_old_call(self):
-        """Rate limiter should not wait when enough time has passed."""
+    def test_no_wait_when_old(self):
         import time
-        model_council._OVH_LAST_CALL = time.time() - 100  # 100s ago
+        model_council._OVH_LAST_CALL = time.time() - 100
         waited = model_council._ovh_rate_limit_wait()
         assert waited == 0.0

@@ -330,7 +330,8 @@ Rules:
 
     # ── Model council: merge with OVH model estimates ──────────
     council_p, council_meta = council_single_consensus(
-        prompt, market.get(HYP_SLUG, ""), p_model_llm, confidence
+        prompt, market.get(HYP_SLUG, ""), p_model_llm, confidence,
+        question=market.get("question", ""), price=market.get("price", 0.0),
     )
     if council_meta.get("consensus_applied"):
         old_p = p_model_llm
