@@ -153,16 +153,25 @@ def _extract_keywords_simple(question: str) -> list[str]:
 
 _GDELT_LOCK = threading.RLock()
 _GDELT_LAST_FAIL = 0.0
-_GDELT_COOLDOWN = 600
+_GDELT_COOLDOWN = 60
 _GDELT_FAIL_COUNT = 0
+_GDELT_LAST_CALL = 0.0
+_GDELT_MIN_INTERVAL = 5.5  # GDELT rate limit: 1 request per 5 seconds + margin
 
 
 def fetch_gdelt(keywords: list[str]) -> dict:
-    global _GDELT_LAST_FAIL, _GDELT_FAIL_COUNT
+    global _GDELT_LAST_FAIL, _GDELT_FAIL_COUNT, _GDELT_LAST_CALL
     with _GDELT_LOCK:
-        cooldown = min(_GDELT_COOLDOWN * (2 ** _GDELT_FAIL_COUNT), 3600)
+        cooldown = min(_GDELT_COOLDOWN * (2 ** _GDELT_FAIL_COUNT), 600)
         if (time.time() - _GDELT_LAST_FAIL) < cooldown:
             return {"count": 0, "tone": 0, "status": "cooldown"}
+        elapsed = time.time() - _GDELT_LAST_CALL
+        if elapsed < _GDELT_MIN_INTERVAL:
+            wait = _GDELT_MIN_INTERVAL - elapsed
+            logger.debug(f"[BUZZ-GDELT] Rate limiter: sleeping {wait:.1f}s")
+            time.sleep(wait)
+
+    _GDELT_LAST_CALL = time.time()
 
     query = " ".join(keywords[:3])
     try:
@@ -285,9 +294,7 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
     keywords = extract_keywords_llm(question)
     logger.info(f"[BUZZ] Keywords for {slug[:40]}...: {keywords}")
 
-    time.sleep(0.5)
     gdelt = fetch_gdelt(keywords)
-    time.sleep(0.5)
     google = fetch_google_news(keywords)
     reddit = fetch_reddit(keywords)
 
