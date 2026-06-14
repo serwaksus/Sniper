@@ -374,7 +374,7 @@ class TestCalibratePrediction(unittest.TestCase):
     def test_dotm_aggressive_low_metaculus_dampened(self):
         p, dampened = self.module.calibrate_prediction(0.35, 0.05, metaculus_prob=0.08)
         self.assertTrue(dampened)
-        self.assertAlmostEqual(p, 0.35)
+        self.assertAlmostEqual(p, 0.3675)
 
     def test_dotm_aggressive_high_metaculus_not_dampened(self):
         p, dampened = self.module.calibrate_prediction(0.30, 0.08, metaculus_prob=0.15)
@@ -384,7 +384,7 @@ class TestCalibratePrediction(unittest.TestCase):
     def test_non_dotm_no_dampening(self):
         p, dampened = self.module.calibrate_prediction(0.40, 0.15, metaculus_prob=None)
         self.assertTrue(dampened)
-        self.assertAlmostEqual(p, 0.35)
+        self.assertAlmostEqual(p, 0.42)
 
     def test_conservative_pmodel_no_dampening(self):
         p, dampened = self.module.calibrate_prediction(0.20, 0.08, metaculus_prob=None)

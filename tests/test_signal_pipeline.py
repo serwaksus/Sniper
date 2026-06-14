@@ -405,7 +405,7 @@ class TestCalibratePrediction(unittest.TestCase):
         mock_cal.is_fitted = False
         with patch("calibration.get_calibrator", return_value=mock_cal):
             p, calibrated = sp.calibrate_prediction(0.80, 0.10)
-        self.assertAlmostEqual(p, 0.35)
+        self.assertAlmostEqual(p, 0.50)
         self.assertTrue(calibrated)
 
     @patch("signal_scorer._count_resolved_hypotheses", return_value=0)
@@ -457,7 +457,7 @@ class TestCalibratePrediction(unittest.TestCase):
         mock_cal.is_fitted = False
         with patch("calibration.get_calibrator", return_value=mock_cal):
             p, _ = sp.calibrate_prediction(0.40, 0.50)
-        self.assertAlmostEqual(p, 0.35)
+        self.assertAlmostEqual(p, 0.42)
 
 
 # ═══════════════════════════════════════════════════════════════════

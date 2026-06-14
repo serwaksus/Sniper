@@ -84,7 +84,7 @@ def calibrate_prediction(p_model: float, market_price: float, metaculus_prob: fl
 
     if method == "raw":
         if resolved_count < 50:
-            p_calibrated = min(p_model * 1.05, 0.35)
+            p_calibrated = min(p_model * 1.05, 0.50)
             method = "soft_extremize"
         else:
             p_calibrated = p_model
