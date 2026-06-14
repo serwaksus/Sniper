@@ -21,6 +21,7 @@ from schema import HYP_CLUSTERS, HYP_CONFIDENCE, HYP_FACTORS, HYP_P_MODEL, HYP_S
 import hypotheses_db
 from db import load_settings as _db_load_settings
 from metaculus import normalize_probability, check_metaculus_gap
+from model_council import council_single_consensus
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,19 @@ Rules:
         logger.error(f"[ANALYSIS] LLM error: {e}")
         p_model_llm = market["price"] * 2
         factors = []
+
+    # ── Model council: merge with OVH model estimates ──────────
+    council_p, council_meta = council_single_consensus(
+        prompt, market.get(HYP_SLUG, ""), p_model_llm, confidence
+    )
+    if council_meta.get("consensus_applied"):
+        old_p = p_model_llm
+        p_model_llm = council_p
+        logger.info(
+            f"[COUNCIL-SINGLE] {market.get(HYP_SLUG, '')[:30]}.. "
+            f"p_model_llm: {old_p:.3f} → {p_model_llm:.3f} "
+            f"(estimates: {council_meta.get('estimates', {})})"
+        )
 
     if metaculus_gap and metaculus_gap.get("signal_strength", 0) > 0.3:
         p_model_metaculus = metaculus_gap["metaculus_prob"]

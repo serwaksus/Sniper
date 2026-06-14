@@ -20,6 +20,7 @@ from config import MAX_P_MODEL_RATIO, SNIPER_LOG
 from schema import HYP_CLUSTERS, HYP_CONFIDENCE, HYP_FACTORS, HYP_P_MODEL, HYP_SLUG
 from utils import load_env_file
 from db import load_settings as _db_load_settings
+from model_council import council_batch_consensus
 
 load_env_file()
 
@@ -278,12 +279,21 @@ CRITICAL REGULATION FOR CONFIDENCE SCORING: Do NOT default to a flat 0.65 confid
         if not content:
             content = msg.get("reasoning") or ""
 
-        batch_results = _parse_batch_response(content, batch_items, metaculus_cache)
-        if batch_results and len(batch_results) == len(markets):
-            logger.info(f"[BATCH] Successfully parsed batch of {len(batch_results)} markets")
-            return batch_results
+        parsed_arr = _parse_batch_json(content)
+        if parsed_arr and len(parsed_arr) == len(batch_items):
+            batch_slugs = [it[HYP_SLUG] for it in batch_items]
+            parsed_arr, council_meta = council_batch_consensus(prompt, batch_slugs, parsed_arr)
+            if council_meta.get("models_ok"):
+                logger.info(
+                    f"[COUNCIL] OVH models OK: {council_meta['models_ok']} "
+                    f"(failed: {council_meta.get('models_failed', [])})"
+                )
+            batch_results = _build_batch_results(parsed_arr, batch_items, metaculus_cache)
+            if batch_results and len(batch_results) == len(markets):
+                logger.info(f"[BATCH] Successfully parsed batch of {len(batch_results)} markets")
+                return batch_results
         else:
-            logger.warning(f"[BATCH] Batch parse returned {len(batch_results) if batch_results else 0}/{len(markets)} items, falling back to individual")
+            logger.warning(f"[BATCH] Batch parse returned {len(parsed_arr) if parsed_arr else 0}/{len(batch_items)} items, falling back to individual")
     except Exception as e:
         logger.error(f"[BATCH] LLM error: {e}, falling back to individual analysis")
 
@@ -293,10 +303,12 @@ CRITICAL REGULATION FOR CONFIDENCE SCORING: Do NOT default to a flat 0.65 confid
     return results
 
 
-def _parse_batch_response(content, batch_items, metaculus_cache=None):
-    if metaculus_cache is None:
-        metaculus_cache = {}
+def _parse_batch_json(content):
+    """Parse raw LLM response text into JSON array of dicts.
 
+    Handles markdown fences, leading colons, and multiple fallback strategies.
+    Returns list of dicts or None.
+    """
     cleaned = content.strip()
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
@@ -341,7 +353,7 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
                 try:
                     arr = json.loads(candidate)
                     if isinstance(arr, list):
-                        return _build_batch_results(arr, batch_items, metaculus_cache)
+                        return arr
                 except json.JSONDecodeError:
                     pass
                 for end in range(i, len(cleaned)):
@@ -349,7 +361,7 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
                         try:
                             arr = json.loads(cleaned[start:end + 1])
                             if isinstance(arr, list):
-                                return _build_batch_results(arr, batch_items, metaculus_cache)
+                                return arr
                         except json.JSONDecodeError:
                             continue
                 break
@@ -359,7 +371,7 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
         try:
             arr = json.loads(fallback.group(0))
             if isinstance(arr, list):
-                return _build_batch_results(arr, batch_items, metaculus_cache)
+                return arr
         except json.JSONDecodeError:
             pass
 
@@ -370,13 +382,22 @@ def _parse_batch_response(content, batch_items, metaculus_cache=None):
             arr = [a for a in arr if isinstance(a, dict)]
             if arr:
                 logger.info(f"[BATCH-PARSE] Recovered {len(arr)} individual objects from failed batch")
-                return _build_batch_results(arr, batch_items, metaculus_cache)
+                return arr
         except json.JSONDecodeError:
             pass
 
     logger.warning(f"[BATCH-PARSE] All parsing methods failed. Response preview: {content[:300]}")
-
     return None
+
+
+def _parse_batch_response(content, batch_items, metaculus_cache=None):
+    if metaculus_cache is None:
+        metaculus_cache = {}
+
+    arr = _parse_batch_json(content)
+    if arr is None:
+        return None
+    return _build_batch_results(arr, batch_items, metaculus_cache)
 
 
 def _build_batch_results(parsed_array, batch_items, metaculus_cache=None):
