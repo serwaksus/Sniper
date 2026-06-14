@@ -45,6 +45,17 @@ load_env_file()
 
 
 
+def _parse_ts_safe(ts_str: str) -> datetime:
+    """Parse ISO timestamp, treating naive timestamps as UTC."""
+    try:
+        ts = datetime.fromisoformat(ts_str)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return ts
+    except (ValueError, TypeError):
+        return datetime.now(UTC)
+
+
 def _get_cache() -> dict:
     return load_json(BUZZ_CACHE_FILE, {"entries": {}})
 
@@ -60,9 +71,11 @@ def _get_cached(slug: str) -> dict | None:
         return None
     try:
         ts = datetime.fromisoformat(entry["timestamp"])
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
         if (datetime.now(UTC) - ts).total_seconds() < BUZZ_CACHE_TTL:
             return entry
-    except (ValueError, KeyError):
+    except (ValueError, KeyError, TypeError):
         pass
     return None
 
@@ -78,7 +91,7 @@ def _set_cached(slug: str, result: dict) -> None:
     entries = cache.get("entries", {})
     stale = [k for k, v in entries.items()
              if isinstance(v, dict) and v.get("timestamp")
-             and datetime.fromisoformat(v["timestamp"]) < cutoff]
+             and _parse_ts_safe(v["timestamp"]) < cutoff]
     for k in stale:
         del entries[k]
     _save_cache(cache)
@@ -160,7 +173,7 @@ def fetch_gdelt(keywords: list[str]) -> dict:
             "timespan": "24h",
             "format": "json",
             "sourcelang": "english",
-        }, timeout=8, headers={"User-Agent": "DotmSniper/1.0"})
+        }, timeout=15, headers={"User-Agent": "DotmSniper/1.0"})
         if resp.status_code == 429:
             logger.warning("[BUZZ-GDELT] Rate limited")
             with _GDELT_LOCK:
@@ -221,7 +234,7 @@ def fetch_google_news(keywords: list[str]) -> dict:
             return {"count": 0, "status": f"error_{resp.status_code}"}
 
         feed = feedparser.parse(resp.text)
-        cutoff = datetime.now(UTC) - timedelta(hours=24)
+        cutoff = datetime.now(UTC) - timedelta(hours=72)
         count = 0
         for entry in feed.entries:
             try:
@@ -282,7 +295,7 @@ def compute_buzz_score(slug: str, question: str, force: bool = False) -> dict:
                         if s.get("status") == "ok")
 
     gdelt_norm = min(gdelt.get("count", 0) / 50, 1.0)
-    google_norm = min(google.get("count", 0) / 30, 1.0)
+    google_norm = min(google.get("count", 0) / 50, 1.0)
     reddit_norm = min(reddit.get("count", 0) / 20, 1.0)
 
     total_buzz = 0.0
