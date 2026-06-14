@@ -1,53 +1,19 @@
-# DOTM Sniper — Торговая система на Polymarket
+# DOTM Sniper — Полная техническая документация
 
-## 1. Простыми словами: что мы делаем
+## 1. Что мы делаем (простыми словами)
 
-Мы покупаем **дешёвые контракты** на сайте Polymarket (рынок прогнозов), которые стоят **от 5 до 40 центов**, и ждём, пока их цена вырастет в несколько раз.
+Мы покупаем **дешёвые контракты** на Polymarket (рынок прогнозов), которые стоят **от 5 до 40 центов**, и продаём когда цена вырастает в 2-3 раза.
 
 **Пример:**
 - На Polymarket есть контракт «США выйдут из НАТО до 2027 года?»
-- Рынок оценивает это событие как маловероятное — цена контракта «ДА» всего **8.5 центов**
-- Это означает: толпа считает, что шанс выхода из НАТО — 8.5%
-- Наша система анализирует событие и решает: «Нет, шанс больше — около 18%»
+- Цена контракта «ДА» — **8.5 центов** (толпа оценивает шанс в 8.5%)
+- Наша система анализирует событие и решает: «Шанс больше — около 18%»
 - Мы покупаем контракт за 8.5 центов
 - Если цена вырастет до 75 центов — мы продаём и зарабатываем **+782%**
 
-Мы не пытаемся угадать, произойдёт событие или нет. Нам достаточно, чтобы **рынок пересмотрел свою оценку** — цена может вырасти с 8 центов до 30 просто потому, что появились новые данные, даже если событие в итоге не произойдёт.
+Нам не нужно, чтобы событие произошло. Достаточно, чтобы **рынок пересмотрел оценку** — цена может вырасти с 8 до 30 центов просто из-за одной новости.
 
----
-
-## 2. Что такое Polymarket
-
-Polymarket — это биржа прогнозов. Пользователи торгуют контрактами на исходы реальных событий:
-- Политика («Кто выиграет выборы?»)
-- Экономика («Понизит ли ФРС ставку?»)
-- Спорт («Выиграют ли Кливленд Браунс?»)
-- Технологии («Будет ли принят закон об ИИ?»)
-
-Каждый контракт стоит от $0.01 до $0.99 и отражает вероятность события по мнению рынка. Если контракт «ДА» стоит $0.08 — рынок считает шанс 8%.
-
-Если событие происходит — контракт «ДА» выплачивает $1.00. Если нет — обесценивается до $0.
-
----
-
-## 3. Что такое DOTM и почему это работает
-
-**DOTM** = Deep Out-The-Money = «Глубоко вне денег». Это контракты с ценой **до 40 центов**, то есть рынки, где большинство не верит в наступление события.
-
-### Почему мы покупаем то, во что никто не верит?
-
-Потому что **рынок часто ошибается в оценке маловероятных событий**. Причины:
-
-1. **Люди не любят делать ставки на маловероятное** — это психологически неприятно. Большинство предпочитает ставить на «верняки» за 70-90 центов
-2. **Рынок недооценивает хвостовые риски** — редкие, но возможные события (выход из НАТО, переворот, неожиданное политическое решение)
-3. **Для роста цены с 5 до 15 центов нужен небольшой сдвиг мнения** — достаточно одной новости, одного комментария политика
-4. **Потолок роста огромный** — если мы купили за 5 центов, а событие произошло — мы получаем $1, то есть **+1900%**
-
-### Жёсткий ценовой фильтр (обновлено)
-
-Мы **не покупаем** контракты дешевле **$0.05**. На суб-5-центовых рынках истинная вероятность практически неизмерима, а LLM систематически завышает p_model. Это привело к 0% winrate (0 выигрышей из 19 разрешённых позиций) и потребовало пересмотра параметров.
-
-### Математика на простом примере
+### Математика
 
 Допустим, мы делаем 10 покупок по 10 центов:
 
@@ -57,337 +23,637 @@ Polymarket — это биржа прогнозов. Пользователи т
 | 3 сделки дают средний рост в 3 раза | 30% | +$2.00 × 3 = +$6.00 |
 | **Итого** | | **+$3.90 с $10 вложений (+39%)** |
 
-Нам не нужно угадывать каждый раз. Достаточно угадывать **3 из 10**, и мы в большом плюсе, потому что прибыль от удачных сделок в несколько раз больше убытка от неудачных.
-
 ---
 
-## 4. Как работает наша система
+## 2. Архитектура системы
 
-Система состоит из **трёх сервисов**, работающих параллельно 24/7 под systemd.
+### 2.1. Три сервиса systemd (24/7)
 
-### 4.1. Снайпер (Dotm Sniper) — основная программа
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    DOTM SNIPER (main loop, 30 мин)            │
+│  Поиск рынков → Анализ → Сигнал → Размер → Покупка → TP      │
+└──────────────────┬──────────────────────────┬────────────────┘
+                   │                          │
+    ┌──────────────▼──────────┐  ┌────────────▼──────────────┐
+    │  HERMES ADVISOR (10мин)  │  │  METRICS SERVER (:8765)   │
+    │  Риск-менеджер:          │  │  HTTP API:                 │
+    │  • Сверка позиций        │  │  • /metrics (JSON)         │
+    │  • Новости → экстренный  │  │  • /metrics/prometheus     │
+    │    выход                 │  │  • /health (25 проверок)   │
+    │  • Стоп-лоссы            │  │  • /dashboard (HTML)       │
+    │  • Разрешение рынков     │  │                            │
+    └──────────────────────────┘  └────────────────────────────┘
+```
 
-Работает циклами каждые 30 минут. Каждый цикл:
+### 2.2. Главный цикл (Dotm Sniper)
+
+Каждые 30 минут:
 
 ```
 Шаг 1: ПОИСК КАНДИДАТОВ
 ┌─────────────────────────────────────────────┐
 │ Источники:                                   │
 │  • pm-trader CLI: до 200 рынков             │
-│  • Gamma API (gamma-api.polymarket.com):    │
-│    до 100 дополнительных DOTM рынков        │
+│  • Gamma API: до 100 дополнительных DOTM   │
 │                                              │
 │ Фильтры:                                     │
-│  • Только активные (не закрытые)             │
-│  • Цена ≥ $0.05 (PRICE_FLOOR) и ≤ $0.40    │
-│  • Объём торгов ≥ $25,000                   │
-│  • До закрытия рынка минимум 48 часов        │
-│  • Не криптовалюта                           │
+│  • Цена: $0.05 – $0.40                      │
+│  • Объём: ≥ $25,000                         │
+│  • До закрытия: ≥ 48 часов                  │
+│  • Кластер other: объём ≥ $100,000          │
+│  • ALLOWED: ai_tech, russia_ukraine,        │
+│    usa_politics, fed_fomc, sports_nba,      │
+│    sports_ufc                                │
+│  • BANNED: crypto                            │
 │  • Без дубликатов (включая resolved!)        │
-│  • Кластер «other»: объём ≥ $100,000        │
 │                                              │
-│ Результат: до 300 кандидатов на анализ       │
+│ Результат: до 300 кандидатов                 │
 └─────────────────────────────────────────────┘
                     ↓
-Шаг 2: ОЦЕНКА КАЖДОГО КАНДИДАТА
+Шаг 2: FORECAST CASCADE (3 источника, p_model override)
 ┌─────────────────────────────────────────────┐
-│ Pre-check: LIQUIDITY                         │
-│  Если ask > 10× price (для DOTM < $0.10):   │
-│  → SKIP (не тратим LLM на неликвид)         │
+│ Для каждого кандидата (price < $0.35):       │
 │                                              │
-│ Искусственный интеллект (DeepSeek) анализи-  │
-│ рует вопрос рынка и выдаёт:                  │
-│  • p_model — наша оценка вероятности (0-100%)│
-│  • confidence — уверенность в оценке (0-100%) │
-│  • factors — список аргументов за и против    │
+│ 1. MANIFOLD MARKETS (src/manifold.py)        │
+│    • search-markets API, fuzzy matching      │
+│    • 5713 вопросов, бесплатный API           │
+│    → Если найден матч и gap > порога:        │
+│      p_model = manifold_prob (OVERRIDE)      │
 │                                              │
-│ Также проверяется:                           │
-│  • Прогноз Metaculus (30s timeout, 3 retry) │
-│  • Категория рынка (политика, спорт и т.д.)  │
+│ 2. METACULUS (src/metaculus.py)              │
+│    • Двухшаговый bridge:                     │
+│      a) /api/posts/?search= (поиск вопроса)  │
+│      b) Metaforecast GraphQL (probability)   │
+│    • Metaculus /api/ aggregation = null      │
+│      (by design, не баг)                     │
+│    → Если Manifold не нашёл:                 │
+│      проверяем Metaculus                     │
 │                                              │
-│ ML blending (если модели обучены):           │
-│  • LightGBM (нужно 50+ resolved)             │
-│  • SGD online (работает с 1-го sample)       │
-│  • Weights: LGBM+SGD+LLM = 0.3+0.3+0.4     │
+│ 3. METAFORECAST (src/metaforecast.py)        │
+│    • GraphQL: metaforecast.org/api/graphql   │
+│    • 6275 вопросов с 8 платформ:             │
+│      Manifold(5713), Good Judgment(285),     │
+│      GiveWell(163), Betfair(16), и др.       │
+│    • Local cache: data/metaforecast_index    │
+│      .json (24h TTL)                         │
+│    → Fallback если оба выше не нашли         │
 │                                              │
-│ Metaculus override: если metaculus > price   │
-│ и разрыв > 30%, то p_model = metaculus,     │
-│ confidence +0.10, порог −10 (мин 35)        │
+│Cascade logic: первый нашёл → override,       │
+│остальные пропускаются                        │
 └─────────────────────────────────────────────┘
                     ↓
-Шаг 3: РАСЧЁТ СИГНАЛА (от 0 до ~130 баллов)
+Шаг 3: LIQUIDITY PRE-CHECK
 ┌─────────────────────────────────────────────┐
-│ Соотношение цен (ratio_score)     до 25 б.  │
-│   min(prob_ratio / 5.0, 1.0) × 25          │
+│ Если price < $0.35:                          │
+│   get_best_ask(slug) → real ask price        │
 │                                              │
-│ Качество аргументов (factor_score) до 20 б. │
-│   min((supporting + high_weight) / 4, 1.0)  │
-│   × 20                                      │
-│                                              │
-│ Объём торгов (vol_score)          до 20 б.  │
-│   min(volume / $500,000, 1.0) × 20          │
-│                                              │
-│ Время до закрытия (time_score)    до 20 б.  │
-│   >180д=20, >90д=15, >30д=12, >14д=8,      │
-│   >2д=5, else=0                              │
-│                                              │
-│ Совпадение с Metaculus         до ±30 б.    │
-│   +10 если p_model ~ metaculus (diff<5%)    │
-│   −20 если p_model>>metaculus но            │
-│      metaculus~price                         │
-│                                              │
-│ Корректировка кластера        ±15 баллов    │
-│   other=+15, sports_nba=−15                 │
-│                                              │
-│ Социальный Buzz                до +20 б.    │
-│ Order Book Depth               до +15 б.    │
-│ Smart Money                    до +20 б.    │
-│ Cascade Detector               до +10 б.    │
-│                                              │
-│ Порог: signal=50                             │
-│ MIN_PROB_RATIO = 2.0, MIN_CONFIDENCE = 0.65 │
-│ min_p_model = 10%                            │
-│ DOTM_PRICE_FLOOR = $0.05                     │
-│ Если набрал Enough → СИГНАЛ «ПОКУПАТЬ»       │
+│ Если price < $0.10 AND ask > 10× price:      │
+│   → SKIP (нет ликвидности, экономим LLM)     │
 └─────────────────────────────────────────────┘
                     ↓
-Шаг 4: РАСЧЁТ РАЗМЕРА СТАВКИ
+Шаг 4: LLM ANALYSIS (DeepSeek)
 ┌─────────────────────────────────────────────┐
-│ Bayesian Kelly (uncertainty-aware):          │
+│ DeepSeek анализирует вопрос:                 │
+│  • p_model — оценка вероятности (0-100%)     │
+│  • confidence — уверенность (0-100%)         │
+│  • factors — аргументы за/против             │
 │                                              │
-│   kelly_full = (b × p − q) / b              │
-│     где b = (1−price)/price, p = p_model,   │
-│     q = 1 − p                               │
+│ Retry: 3 попытки с backoff (2,4 секунды)     │
+│ Circuit breaker: 60 calls/hour               │
+│ Fallback: p_model = price × 2               │
+└─────────────────────────────────────────────┘
+                    ↓
+Шаг 5: MODEL COUNCIL (9 советников + судья)
+┌─────────────────────────────────────────────┐
+│ Round 1: 9 моделей оценивают вопрос          │
+│  • DeepSeek (основной)                       │
+│  • 8 OVH моделей (Qwen, Mistral, и др.)      │
+│  • Rate limit: 2 req/min → 31s между вызовами│
+│  • Каждый вызов в try/except                 │
 │                                              │
-│   Интегрирование Kelly по Beta(p_mean,      │
-│   p_std) вместо точечной оценки             │
+│ Round 2: Судья Qwen3.5-397B-A17B             │
+│  • Синтезирует 9 оценок → финальное решение  │
+│  • Анализирует расхождения между моделями    │
+│                                              │
+│ Fallback:                                    │
+│  • Судья недоступен → confidence-weighted    │
+│    average                                   │
+│  • Все OVH недоступны → DeepSeek only        │
+│                                              │
+│ env: COUNCIL_DISABLED=1 отключает council    │
+└─────────────────────────────────────────────┘
+                    ↓
+Шаг 6: P_MODEL BLENDING
+┌─────────────────────────────────────────────┐
+│ Если forecast cascade нашёл override:        │
+│   p_model = cascade_prob (если > LLM)        │
+│   ИЛИ blend: 0.6×cascade + 0.4×LLM           │
+│   source_signal = "metaculus_override"       │
+│   confidence += 0.10 (cap 0.95)              │
+│                                              │
+│ MAX_P_MODEL_RATIO = 2.0                      │
+│   p_model не может быть > 2× цену            │
+│                                              │
+│ Калибровка:                                  │
+│   1. Platt scaling (≥30 resolved per cluster)│
+│   2. Isotonic regression (≥50 resolved)      │
+│   3. soft_extremize: p × 1.05, cap 0.50      │
+│                                              │
+│ ML Blending (если обучено):                   │
+│   • LightGBM (нужно 50+ resolved)            │
+│   • SGD online learner (работает с 1 sample)  │
+│   • Blend: 0.3×SGD + 0.3×LGBM + 0.4×LLM     │
+└─────────────────────────────────────────────┘
+                    ↓
+Шаг 7: РАСЧЁТ СИГНАЛА (0 до ~150 баллов)
+┌─────────────────────────────────────────────┐
+│ БАЗОВЫЕ (до 85 б.):                          │
+│                                              │
+│ ratio_score    min(ratio/5, 1) × 25     25  │
+│ factor_score   min((sup+high)/4, 1)×20  20  │
+│ vol_score      min(volume/$500k, 1)×20  20  │
+│ time_score     >180d=20, >90d=15, ...   20  │
+│ metaculus_alignment  +10 / −20          ±30 │
+│ cluster_adj    other=+15, sports=−15    ±15 │
+│                                              │
+│ ДОПОЛНИТЕЛЬНЫЕ (до +45 б.):                  │
+│                                              │
+│ buzz_score     GDELT(60%)+Google(40%)   20   │
+│ orderbook      bid/ask imbalance         15  │
+│ smart_money    Polygon on-chain          20  │
+│ cascade_det    laggard markets           10  │
+│                                              │
+│ EXTERNAL ORACLES (до +45 б.):                │
+│                                              │
+│ fear_greed     cluster∈{crypto,ai_tech}  +5  │
+│                AND FNG index < 30            │
+│ manifold_arb   Manifold prob ≥ PM+15%   +15  │
+│ dbnomics       Fed rate/CPI alignment   +10  │
+│ yfinance       price within 10% target   +8  │
+│ wikipedia      pageviews > 2× baseline   +7  │
+│                                              │
+│ ПОРОГ: signal_score ≥ min_signal (40-65)     │
+│   base_threshold = 55 (settings)             │
+│   long_horizon (>90d): +10                   │
+│   medium (31-90d): +5                        │
+│   metaculus_override: −10 (min 35)           │
+│                                              │
+│ BUY если: score ≥ threshold                  │
+│           AND confidence ≥ 0.65              │
+│           AND prob_ratio ≥ 1.5               │
+└─────────────────────────────────────────────┘
+                    ↓
+Шаг 8: РАЗМЕР СТАВКИ (Bayesian Kelly)
+┌─────────────────────────────────────────────┐
+│ kelly_full = (b×p − q) / b                  │
+│   b = (1−price)/price, p = p_model          │
+│                                              │
+│ Интегрирование по Beta(p_mean, p_std):       │
 │   uncertainty_penalty = 1/(1 + aversion ×   │
 │   std/mean)                                  │
 │                                              │
-│   При conf=0.72: −25% размер ставки         │
-│   При conf=0.55: −33%                       │
+│ kelly_fraction = kelly × tier_kelly ×       │
+│   uncertainty × conviction                   │
 │                                              │
-│   kelly_fraction = kelly_full × tier_kelly  │
-│                    × uncertainty_penalty     │
-│                    × conviction              │
+│ Лимиты:                                      │
+│  • max_pct на сделку (10-15%)                │
+│  • max_cluster% в кластере (35-45%)          │
+│  • Graph correlation r>0.4 → размер ×0.5    │
+│  • Bid liquidity cap: bid_liquidity × 0.20  │
+│  • Минимум $20 (DOTM ratio≥2x)              │
 │                                              │
-│ Проверки:                                    │
-│  • Не больше max_pct на одну сделку          │
-│  • Не больше max_cluster% в кластере         │
-│  • Граф корреляций: r>0.4 → размер ×0.5     │
-│  • Bid liquidity cap: max bid_liquidity×0.20 │
-│  • Минимум $20 для DOTM с ratio≥2x          │
+│ Conviction:                                  │
+│  • ≥1.5× threshold → 100%                    │
+│  • ≥1.2× threshold → 60%                     │
+│  • Остальные → 30%                           │
 └─────────────────────────────────────────────┘
                     ↓
-Шаг 5: ПОКУПКА
+Шаг 9: ФИНАЛЬНОЕ ОДОБРЕНИЕ + ПОКУПКА
 ┌─────────────────────────────────────────────┐
-│ Проверка новостей на рынке                   │
-│ (DuckDuckGo fallback если Tavily исчерпан)  │
-│ Советник (DeepSeek Reasoner) даёт финальное  │
-│ одобрение или вето                           │
+│ High-conviction skip:                        │
+│   score ≥ 1.5× threshold → auto-approve      │
+│   (без LLM вызова)                           │
 │                                              │
-│ Advisor override: advisor_p ≥ 0.5 × p_model │
-│ High-conviction skip: score ≥ 1.5× threshold │
-│ → auto-approve без LLM вызова               │
+│ Иначе: Advisor (DeepSeek Reasoner)           │
+│   • Проверка новостей (DuckDuckGo + Tavily)  │
+│   • advisor_p ≥ 0.5 × p_model → одобрить    │
+│   • Иначе → вето                             │
 │                                              │
-│ Если все проверки пройдены → ПОКУПКА         │
+│ Покупка → Bayesian init_posterior()          │
 │                                              │
-│ После покупки автоматически ставятся         │
-│ лимитные ордера на продажу (TP ladder):      │
-│  • 50% акций по entry_price × 2              │
-│  • 50% акций по entry_price × 3              │
-│  (Последняя ступень = остаток, не max 1)     │
-│                                              │
-│ Bayesian init_posterior() на каждой покупке  │
+│ После покупки — TP ladder (лимитные ордера): │
+│   • 50% акций по entry × 2                   │
+│   • 50% акций по entry × 3                   │
 └─────────────────────────────────────────────┘
 ```
 
-### 4.2. Гермес (Hermes Advisor) — наблюдатель
+### 2.3. Hermes Advisor — риск-менеджер
 
-Работает параллельно, проверяет открытые позиции каждые 10-30 минут.
+Параллельный сервис, проверяет позиции каждые 10-30 минут:
 
-**Что делает Гермес:**
-
-1. **Сверка позиций** — сравнивает SQLite с реальным портфелем Polymarket, исправляет расхождения
-2. **Проверка новостей** — DuckDuckGo (duckduckgo-search library) + Tavily (если доступен) для каждого рынка
-3. **Экстренный выход** — если новости однозначно доказывают, что событие невозможно — продаём немедленно
-4. **Отслеживание частичных продаж** — если сработала только часть лимитного ордера, Гермес это заметит
-5. **Байесовское обновление** — обновляет апостериорную вероятность по категории новости (LR cap ±1.5)
-6. **Разрешение рынков** — проверяет, не закрылся ли рынок, фиксирует P&L
-7. **Портфель запрашивается 1 раз за цикл** (не N раз)
-8. **Использует `pm-trader` CLI** для ордеров (JSON responses)
-
-### 4.3. Metrics сервер
-
-HTTP на `127.0.0.1:8765`:
-- `/metrics` — JSON метрики
-- `/metrics/prometheus` — Prometheus format (6 gauges)
-- `/health` — Health check (25 проверок)
-- `/dashboard` — HTML dashboard (dark theme, auto-refresh 30s)
-
-### 4.4. Отчётность
-
-| Что | Когда | Куда |
-|-----|-------|------|
-| Снимок капитала | Каждые 30 минут | SQLite + equity_curve.json |
-| Ежедневный отчёт | 08:00 UTC (1 раз/день) | Telegram |
-| Уведомление о покупке | Моментально | Telegram |
-| Уведомление о продаже | Моментально | Telegram |
-| Health alerts | Каждый час (при наличии) | Telegram |
-| Cluster PnL отчёт | В daily report | Telegram |
+1. **Сверка позиций** — SQLite vs реальный портфель Polymarket, исправление расхождений
+2. **Проверка новостей** — DuckDuckGo + Tavily для каждого рынка
+3. **Экстренный выход** — новости доказывают невозможность → продажа немедленно
+4. **Байесовское обновление** — posterior по категориям новостей (LR cap ±1.5)
+5. **Стоп-лоссы** — hard −50%, ATR, trailing, time-decay
+6. **Разрешение рынков** — проверка закрытия, фиксация P&L
+7. **Self-learning memory** — гипотезы с p_model → resolved outcome → калибровка
 
 ---
 
-## 5. Стратегия выхода (когда продаём)
+## 3. Forecast Cascade — 3 источника внешних прогнозов
 
-Это **самая важная часть** системы. Мы не держим до последнего.
+Каскадная система: **первый нашёл → override**, остальные пропускаются.
+
+### 3.1. Manifold Markets (`src/manifold.py`, 302 строки)
+
+| Параметр | Значение |
+|----------|----------|
+| API | `https://manifold.markets/api/v0/search-markets` |
+| Ключ | Не требуется (бесплатно) |
+| Вопросов | 5713 |
+| Cache | 1 час в памяти |
+| Timeout | 15 секунд |
+
+**Логика:**
+- Поиск по ключевым словам из вопроса Polymarket
+- Fuzzy matching (токены, даты, числа)
+- Если найден матч (score ≥ 0.25) и probability выше цены Polymarket
+- Time-decay: дальние рынки требуют большего gap
+- → **p_model override**
+
+### 3.2. Metaculus (`src/metaculus.py`, 550 строк)
+
+| Параметр | Значение |
+|----------|----------|
+| API | `/api/posts/?search=` + Metaforecast GraphQL bridge |
+| Ключ | METACULUS_TOKEN (в .env) |
+| Cache | В памяти + файловая |
+| Timeout | 30 секунд, 3 retry |
+
+**Двухшаговый bridge (обход сломанного API):**
+1. **Поиск**: `GET /api/posts/?search=<query>` → находим ID вопроса
+2. **Вероятность**: Metaforecast GraphQL `question(id: "metaculus-{N}")` → probability
+
+Metaculus `/api/` и `/api2/` возвращают `aggregations.*.latest = null` для ВСЕХ вопросов (by design). Probability получается только через Metaforecast bridge.
+
+### 3.3. Metaforecast (`src/metaforecast.py`, 466 строк)
+
+| Параметр | Значение |
+|----------|----------|
+| API | `https://metaforecast.org/api/graphql` |
+| Ключ | Не требуется |
+| Вопросов | 6275 с 8 платформ |
+| Cache | `data/metaforecast_index.json`, 24h TTL |
+
+**Платформы в индексе:**
+
+| Платформа | Вопросов | Тип |
+|-----------|----------|-----|
+| Manifold Markets | 5713 | Crowdsourced |
+| **Good Judgment Open** | **285** | Проф. суперфоркастеры |
+| GiveWell/OpenPhilanthropy | 163 | Благотворительность |
+| Foretold | 40 | Crowdsourced |
+| Insight Prediction | 27 | Crypto |
+| FantasySCOTUS | 21 | Верховный суд |
+| **Betfair** | **16** | Real money |
+| Infer | 10 | Manifold affiliate |
+
+**Логика:**
+- Weighted consensus across platforms
+- Fuzzy matching (`_fuzzy_score`)
+- Dispersion penalty (высокий разброс между платформами → штраф)
+- → **p_model override** (fallback если Manifold/Metaculus не нашли)
+
+---
+
+## 4. Model Council — 9 советников + судья
+
+**Модуль:** `src/model_council.py` (742 строки)
+
+### Архитектура
+
+```
+Round 1: 9 независимых оценок
+┌──────────────────────────────────────┐
+│ 1. DeepSeek (основной)               │
+│ 2. Qwen-72B (OVH)                    │
+│ 3. Mistral-Large (OVH)               │
+│ 4. Mixtral-8x22B (OVH)               │
+│ 5. Qwen-32B (OVH)                    │
+│ 6. Codestral (OVH)                   │
+│ 7. Aya-23 (OVH)                      │
+│ 8. Llama-3-70B (OVH)                 │
+│ 9. Qwen3.5-397B (OVH)                │
+│                                      │
+│ Rate limit: 2 req/min → 31s между    │
+│ Batch: ~280 секунд на полный цикл    │
+│ Каждый вызов в try/except            │
+└──────────────┬───────────────────────┘
+               ↓
+Round 2: Судья синтезирует
+┌──────────────────────────────────────┐
+│ Qwen3.5-397B-A17B (судья)             │
+│  • Анализирует 9 оценок              │
+│  • Выявляет расхождения              │
+│  • Взвешивает по уверенности         │
+│  → Финальное p_model                 │
+└──────────────────────────────────────┘
+```
+
+### Fallback chain
+
+| Ситуация | Действие |
+|----------|----------|
+| Судья недоступен | Confidence-weighted average 9 моделей |
+| Все OVH недоступны | DeepSeek только |
+| Council полностью отключён | `COUNCIL_DISABLED=1` → пропускается |
+
+### Интеграция
+
+- **Single path** (`signal_scorer.py`): `council_single_consensus()` — merge с LLM оценкой
+- **Batch path** (`signal_pipeline.py`): `council_batch_consensus()` — batch оценка для всех рынков
+
+---
+
+## 5. External Oracles — 5 бесплатных источников
+
+**Модуль:** `src/external_oracles.py` (801 строка)
+
+Каждый оракул добавляет **бонусные очки** к signal_score. Все вызовы в `try/except` — сбой одного не ломает остальные.
+
+### 5.1. Alternative.me Fear & Greed Index (+5)
+
+| Параметр | Значение |
+|----------|----------|
+| Endpoint | `GET https://api.alternative.me/fng/` |
+| Ключ | Не требуется |
+| Cache | 12 часов (file-based, atomic writes) |
+| Trigger | cluster ∈ {crypto, ai_tech, tech} AND index < 30 |
+
+**Логика:** Extreme Fear (индекс < 30) → толпа пессимистична → DOTM Yes контракты дешевле, чем должны быть → контрарианский buy сигнал.
+
+### 5.2. Manifold Markets Arbitrage (+15)
+
+| Параметр | Значение |
+|----------|----------|
+| Endpoint | `GET https://api.manifold.markets/v0/search-markets` |
+| Ключ | Не требуется |
+| Cache | 1 час per market slug (in-memory + RLock) |
+| Trigger | Manifold prob ≥ Polymarket price + 15% (strict) |
+
+**Логика:** Keyword extraction из вопроса (стоп-слова, месяцы, годы удаляются) → поиск на Manifold → если найден market с probability ≥ 15% выше цены Polymarket → кросс-платформенный арбитраж.
+
+### 5.3. DBnomics Macroeconomic Data (+10)
+
+| Параметр | Значение |
+|----------|----------|
+| Endpoint | `GET https://api.db.nomics.world/v22/series/FRED/...` |
+| Ключ | Не требуется |
+| Cache | 24 часа (file-based) |
+| Trigger | cluster ∈ {fed_fomc, us_economic} AND macro alignment |
+
+**Серии:** Fed Funds Rate (FRED/FEDFUNDS), CPI (FRED/CPIAUCSL)
+
+**Alignment heuristics:**
+
+| Вопрос содержит | Условие | Логика |
+|-----------------|---------|--------|
+| "rate cut", "rate decrease" | Fed rate ≥ 4.0% | Rate cuts likely |
+| "rate hike", "rate increase" | Fed rate ≤ 2.0% | Rate hikes possible |
+| "inflation", "CPI" | CPI > 300 | High inflation |
+| "recession" | Fed rate ≥ 4.5% | High rates → recession |
+
+### 5.4. Yahoo Finance (+8)
+
+| Параметр | Значение |
+|----------|----------|
+| Библиотека | `yfinance` (скрапит Yahoo Finance) |
+| Ключ | Не требуется |
+| Cache | 1 час per ticker (in-memory) |
+| Trigger | Тикер найден в вопросе AND цена в пределах 10% от target |
+
+**Тикер маппинг (25+ тикеров):**
+
+| Ключевые слова | Тикер | Что отслеживает |
+|----------------|-------|-----------------|
+| "s&p 500", "s&p", "sp500" | SPY | S&P 500 ETF |
+| "nasdaq" | QQQ | NASDAQ 100 ETF |
+| "dow jones", "dow" | DIA | Dow Jones ETF |
+| "bitcoin", "btc" | BTC-USD | Bitcoin |
+| "ethereum", "eth" | ETH-USD | Ethereum |
+| "tesla" | TSLA | Tesla stock |
+| "nvidia" | NVDA | Nvidia stock |
+| "apple" | AAPL | Apple stock |
+| "gold" | GLD | Gold ETF |
+| "oil", "crude" | CL=F | Crude oil futures |
+| "vix" | ^VIX | Volatility index |
+
+**Логика:** Regex извлекает целевую цену из вопроса ("below 5000", "under $200") → yfinance получает текущую цену → если proximity ≤ 10% → контракт "live" → +8.
+
+### 5.5. Wikipedia Pageviews Spike (+7)
+
+| Параметр | Значение |
+|----------|----------|
+| Endpoint | `https://wikimedia.org/api/rest_v1/metrics/pageviews/...` |
+| Ключ | Не требуется |
+| Cache | 6 часов per article (in-memory + RLock) |
+| Trigger | Pageviews за 3 дня > 2× от 20-дневного baseline median |
+
+**Логика:**
+1. `_extract_entities()` — извлечение имён из вопроса (заглавные фразы)
+2. `_search_wikipedia()` — поиск статьи через Wikipedia search API
+3. `_fetch_pageviews()` — 23 дня метрик через Wikimedia REST API
+4. `_detect_wiki_spike()` — recent median > 2× baseline median
+
+**Пример:** Вопрос «Will Donald Trump win?» → article "Donald_Trump" → pageviews 5000/day baseline → spike to 15000/day → +7.
+
+### Сводка оракулов
+
+| # | Источник | Bonus | Бесплатно | Кэш |
+|---|----------|-------|-----------|-----|
+| 1 | Fear & Greed | +5 | ✅ | 12h file |
+| 2 | Manifold Arbitrage | +15 | ✅ | 1h in-mem |
+| 3 | DBnomics Macro | +10 | ✅ | 24h file |
+| 4 | Yahoo Finance | +8 | ✅ | 1h in-mem |
+| 5 | Wikipedia Spike | +7 | ✅ | 6h in-mem |
+| | **Максимум** | **+45** | | |
+
+---
+
+## 6. Стратегия выхода (когда продаём)
 
 ### Лесенка продаж (TP Ladder)
-
-Когда мы покупаем контракт за 10 центов, мы заранее планируем продажу:
 
 ```
 Цена растёт...
     │
-    ├── entry × 2 ($0.20) ── Продать 50% позиции
-    │                         (получили гарантированную прибыль)
+    ├── entry × 2 ── Продать 50% позиции
+    │                 (гарантированная прибыль)
     │
-    └── entry × 3 ($0.30) ── Продать остаток позиции
-                              (зафиксировали основную прибыль)
+    └── entry × 3 ── Продать остаток
+                      (основная прибыль)
 ```
 
-- Автообновление лесенки: если нет pending ордеров и цена < $0.70
-- Пропуск ступеней: если стоимость ступени < $5
-- Отмена TP ордеров перед market sell (предотвращает race condition)
-- Tracking allocated shares между ступенями (последняя = остаток)
-
-### Конвергентный Take-Profit
-
-Если `current_price / metaculus_prob ≥ 0.60` → продажа (лесенка не активна).
+- Автообновление: если нет pending ордеров и цена < $0.70
+- Пропуск ступеней: если стоимость < $5
+- Отмена TP перед market sell (предотвращает race condition)
 
 ### Защитные механизмы
 
 | Триггер | Действие | Зачем |
 |---------|----------|-------|
-| Цена упала до entry × 0.50 | Продать всё | Hard stop-loss −50% |
-| Цена упала до entry − 2.5 × ATR(7д) | Продать всё | ATR-стоп-лосс |
-| Цена выросла >30%, потом откатилась | Трейлинг-стоп | max(ATR_trail, high × 0.75) |
-| Трейлинг сработал → ждём 5 мин → подтверждаем | Продать всё | Двойное подтверждение |
-| Возраст > 60% TTL, цена < entry × 1.5 | Продать всё | Time-decay exit |
+| Цена ≤ entry × 0.50 | Продать всё | Hard stop-loss −50% |
+| Цена ≤ entry − 2.5×ATR(7д) | Продать всё | ATR-стоп-лосс |
+| Цена выросла >30%, откатилась | Трейлинг-стоп | max(ATR, high×0.75) |
+| Трейлинг сработал → 5 мин → подтверждение | Продать всё | Двойное подтверждение |
+| Age > 60% TTL, price < entry×1.5 | Продать всё | Time-decay exit |
 | Новости опровергают ставку | Продать немедленно | Экстренный выход |
-| Портфельная просадка > 10% | Прекратить новые покупки | Drawdown stop |
-| entry_price = 0 | Использовать current_price | Не отключает стопы |
+| Drawdown > 10% | Прекратить новые покупки | Drawdown stop |
+| current_price/metaculus ≥ 0.60 | Продать | Конвергентный TP |
 
-### Fallback для неликвидных позиций (новое)
+### Fallback для неликвидных позиций
 
 | Ситуация | Действие |
 |----------|----------|
-| Market sell не удался | Aggressive limit order по best_bid |
-| Slippage guard блокирует 5 раз подряд | Force market sell (игнорировать spread) |
-| Failed sell | Recheck через 15 минут (не 3 часа) |
-| Position missing из portfolio API | _miss_count ≥ 3 перед удалением |
+| Market sell не удался | Aggressive limit at best_bid |
+| Slippage guard 5 раз подряд | Force market sell |
+| Failed sell | Recheck через 15 минут |
+| Position missing из API | _miss_count ≥ 3 перед удалением |
 
 ---
 
-## 6. Система уровней (Tiers)
+## 7. Система уровней (Tiers)
 
-Размер ставок зависит от баланса. Чем больше денег — тем агрессивнее (но контролируемо):
+| Уровень | Баланс | Kelly | Базовый % | Макс. % | Позиций | Кластер | Макс. цена |
+|---------|--------|-------|-----------|---------|---------|---------|------------|
+| Микро | до $2,000 | 40% | 5% | 10% | 15 | 35% | $0.40 |
+| Рост | $2K–$10K | 30% | 3% | 12% | 20 | 35% | $0.40 |
+| Установившийся | $10K–$50K | 35% | 3.5% | 15% | 25 | 40% | $0.50 |
+| Масштаб | $50K+ | 40% | 4% | 15% | 30 | 45% | $0.50 |
 
-| Уровень | Баланс | Доля Келли | Базовый % | Other % | Макс. % | Макс. позиций | Макс. кластер | Макс. цена |
-|---------|--------|------------|-----------|---------|---------|---------------|---------------|------------|
-| Микро | до $2,000 | 40% | 5% | 5% | 10% | 15 | 35% | $0.40 |
-| Рост | $2,000–$10,000 | 30% | 3% | 4.5% | 12% | 20 | 35% | $0.40 |
-| Установившийся | $10,000–$50,000 | 35% | 3.5% | 5% | 15% | 25 | 40% | $0.50 |
-| Масштаб | $50,000+ | 40% | 4% | 6% | 15% | 30 | 45% | $0.50 |
+### Bayesian Kelly
 
-**Зачем:** На маленьком балансе мы осторожны (40% от формулы Келли, но 5% базовый), чтобы не потерять всё. С ростом капитала увеличиваем ставки.
+```
+kelly_full = (b × p − q) / b
+  где b = (1−price)/price, p = p_model, q = 1−p
 
-**Minimum trade:** $20 для DOTM с хорошим edge (ratio≥2x), иначе skip.
+Интегрирование по Beta(p_mean, p_std):
+  uncertainty_penalty = 1/(1 + risk_aversion × std/mean)
 
-**Conviction adjustment:** позиция масштабируется по conviction сигнала: ≥1.5x threshold → 100%, ≥1.2x → 60%, rest → 30%.
+kelly_fraction = kelly_full × tier_kelly × uncertainty × conviction
+```
 
-**Bayesian Kelly** — `kelly_full = (b × p − q) / b` интегрируется по Beta(p_mean, p_std) распределению вместо точечной оценки. uncertainty_penalty = 1/(1 + risk_aversion × std/mean). Мы используем дробную долю (30-40%), умноженную на uncertainty × conviction, с потолком effective_cap и абсолютным максимумом max_pct.
+При conf=0.72: −25% размер ставки. При conf=0.55: −33%.
 
 ---
 
-## 7. Дополнительные сигналы
+## 8. Дополнительные сигналы в signal_score
 
-### Социальный Buzz (до +20 баллов)
+### Social Buzz (до +20 баллов)
 
-Модуль `social_buzz.py`. Кэш 1 час (BUZZ_CACHE_TTL = 3600).
+**Модуль:** `src/social_buzz.py` (321 строка). Кэш 1 час.
 
 | Источник | Вес | Статус |
 |----------|-----|--------|
-| GDELT DOC API v2 | 40% | 10мин кулдаун при rate limit (reset на успех) |
-| Google News RSS | 30% | Работает |
-| Reddit JSON API | 10% | Работает |
+| GDELT DOC API v2 | **60%** | ✅ Работает (10мин кулдаун при rate limit) |
+| Google News RSS | **40%** | ✅ Работает |
+
+Reddit удалён: 403 Forbidden с 2023 (требует OAuth2). Заменён Wikipedia oracle.
 
 ### Order Book Depth (до +15 баллов)
 
-Модуль `orderbook_analyzer.py` — CLOB API, bid/ask imbalance. Кэш 5 мин.
+**Модуль:** `src/orderbook_analyzer.py` — CLOB API, bid/ask imbalance. Кэш 5 мин.
 - Imbalance > 0.4 → +15
 - Bid wall ($5k+) → +12
 
 ### Smart Money Tracking (до +20 баллов)
 
-Модуль `smart_money.py` — Polygonscan CTF Exchange ERC1155 events. Кэш 10 мин.
-- Требует POLYGONSCAN_API_KEY (без ключа — модуль отключён)
+**Модуль:** `src/smart_money.py` — Polygonscan CTF Exchange ERC1155 events. Кэш 10 мин.
+- Требует POLYGONSCAN_API_KEY
 - Wallet discovery + activity tracking
 
 ### Cascade Detector (до +10 баллов)
 
-Модуль `cascade_detector.py` — price movement tracking.
+**Модуль:** `src/cascade_detector.py` — price movement tracking.
 - ≥2 рынка одного кластера двинулись ≥15% за 60 мин = cascade
-- Laggard markets (не двинулись) в каскаде → +10 score
+- Laggard markets → +10
 - 2-часовой decay
 
 ### Cross-Market Graph
 
-Модуль `market_graph.py` — networkx граф корреляций.
-- Shared clusters (0.5), entity overlap (0.3), entity relationships (0.4)
+**Модуль:** `src/market_graph.py` — networkx граф корреляций.
+- Shared clusters (0.5), entity overlap (0.3), relationships (0.4)
 - Корреляция > 0.4 → размер позиции × 0.5
-- Information cascade detection (BFS, 0.7^depth decay)
 - Louvain community detection
-- Portfolio diversification score
 
 ---
 
-## 8. Калибровка и экстремизация
+## 9. Калибровка и экстремизация
 
 Пайплайн `calibrate_prediction()` в `signal_scorer.py`:
 
 ```
-1. Platt scaling
-   ├── Иерархический per-cluster (если ≥30 сэмплов)
-   │
-2. Isotonic regression
-   ├── Если ≥50 сэмплов (иначе skip)
-   │
-3. Calibration multiplier
-   ├── multiplier = 1.05 (консервативный)
-   ├── cap = 0.35 (не раздувать оптимизм)
-   │
-4. Extremizing (компенсация регрессии к среднему)
-   ├── price < $0.03 → d = 1.8
-   ├── price < $0.07 → d = 1.6
-   ├── price < $0.15 → d = 1.4
-   ├── else          → d = 1.2
-   │
-   Формула: p_ext = p^d / (p^d + (1-p)^d)
+1. Platt scaling (per-cluster, ≥30 сэмплов)
+   └── calibration_tracker.py: get_platt_calibrated()
+
+2. Isotonic regression (≥50 сэмплов)
+   └── calibration.py: IsotonicCalibrator
+
+3. soft_extremize (fallback, <50 resolved)
+   └── p × 1.05, cap 0.50
+
+4. MAX_P_MODEL_RATIO = 2.0
+   └── p_model не может быть > 2× цену
 ```
 
-**Ограничения:** MAX_P_MODEL_RATIO = 2.0 (p_model не может быть > 2× цену).
+**Прогресс:** 0 properly resolved predictions → ждёт закрытия рынков → Platt/isotonic начнут работать автоматически.
 
 ---
 
-## 9. Категории рынков и наши предпочтения
+## 10. Машинное обучение
 
-Корректировки кластеров задаются в settings (cluster_score_adjustments):
+### LightGBM (`src/ml_predictor.py`, 256 строк)
 
-| Кластер | Корректировка | Комментарий |
-|---------|---------------|-------------|
+- Walk-forward validation
+- Нужно 50+ resolved samples для обучения
+- Веса: 0.3 (SGD) + 0.3 (LGBM) + 0.4 (LLM)
+- Автоматическое обучение при достижении порога
+
+### SGD Online Learner (`src/online_learner.py`, 256 строк)
+
+- Работает с 1-го sample
+- Drift detection
+- Incremental partial_fit
+- Persistence: `data/ml_models/sgd_model.joblib`
+
+**Текущий статус:** 1 resolved sample — LightGBM отключён, SGD инициализирован.
+
+---
+
+## 11. Категории рынков
+
+### Разрешённые кластеры
+
+| Кластер | Описание |
+|---------|----------|
+| ai_tech | ИИ, технологии |
+| russia_ukraine | Геополитика |
+| usa_politics | Политика США |
+| fed_fomc | Экономика, ФРС |
+| sports_nba | Баскетбол |
+| sports_ufc | Единоборства |
+
+**BANNED:** `crypto` (слишком волатильно, неэффективно оценивается)
+
+### Корректировки кластеров
+
+| Кластер | Корректировка | Причина |
+|---------|---------------|---------|
 | other | +15 | Бонус за нестандартность |
 | sports_nba | −15 | Слишком эффективно оценивается |
+| crypto | −25 | BANNED, но штраф остался |
 
 ### Коррелированные группы (MAX_CORRELATED_GROUP_PCT = 25%)
 
@@ -400,261 +666,382 @@ HTTP на `127.0.0.1:8765`:
 
 ---
 
-## 10. Управление рисками
+## 12. Управление рисками
 
 ### Многоуровневая защита
 
 | Уровень | Правило | Значение |
 |---------|---------|----------|
-| Market | Price-aware slippage: DOTM (<$0.10) tolerate ask до 10× price | Блокирует 44× (BoJ) |
-| Signal | Liquidity pre-check: ask > 10× price → SKIP до LLM | Экономит токены |
-| Signal | DOTM_PRICE_FLOOR: не покупаем дешевле $0.05 | Измеримая вероятность |
-| Signal | MIN_P_MODEL: p_model ≥ 10% | Только значимый edge |
-| Signal | ratio_score: min(ratio/5, 1) × 25 | Harder to max out |
-| Position | Hard stop-loss per position | −50% |
-| Position | Time-decay exit: age > 60% TTL + price < entry×1.5 | Авто |
-| Position | Stale cleanup: 3 consecutive misses before delete | Защита от API глюков |
-| Portfolio | Drawdown stop | −10% |
-| Portfolio | LLM circuit breaker | 60 calls/hour |
-| Portfolio | Graph correlation: r > 0.4 → размер × 0.5 | Диверсификация |
-| Advisor | Override: advisor_p ≥ 0.5 × p_model | Не > price |
-| Advisor | High-conviction skip: ≥1.5× threshold → auto-approve | Без LLM |
-| Sizing | Minimum trade $20 (DOTM с ratio≥2x) | Не $5 |
-| Sizing | Bid liquidity cap: max bid_liquidity × 0.20 | Не более 20% книги |
-| Sizing | Bayesian Kelly uncertainty penalty | Меньше при низкой confidence |
-| Sell | Cancel TP before market sell | Нет race condition |
-| Sell | Market sell fail → aggressive limit at bid | Fallback для неликвида |
-| Sell | 5 safety failures → force market | Нет бесконечного цикла |
+| Market | Price-aware slippage (DOTM: ask до 10× price) | Блокирует экстремальный спред |
+| Signal | Liquidity pre-check (ask > 10× price → SKIP) | Экономит LLM токены |
+| Signal | DOTM_PRICE_FLOOR: $0.05 | Измеримая вероятность |
+| Signal | MIN_P_MODEL: 10% | Значимый edge |
+| Position | Hard stop-loss: −50% | Ограничение убытка |
+| Position | Time-decay exit (age > 60% TTL) | Авто |
+| Portfolio | Drawdown stop: −10% | Прекратить новые покупки |
+| Portfolio | LLM circuit breaker: 60 calls/hour | Защита от перерасхода |
+| Portfolio | Graph correlation: r > 0.4 → ×0.5 | Диверсификация |
+| Advisor | Override: advisor_p ≥ 0.5 × p_model | Не выше реальной вероятности |
+| Sizing | Minimum trade $20 (ratio≥2x) | Не копеечные сделки |
+| Sizing | Bid liquidity cap: × 0.20 | Не более 20% книги |
 
-### Байесовский обновитель
+### Байесовский обновитель (`src/bayesian_updater.py`)
 
-7 категорий новостей с likelihood ratios (LR cap ±1.5 за шаг):
+7 категорий новостей с likelihood ratios (LR cap ±1.5):
 
 | Категория | p_yes | LR |
 |-----------|-------|-----|
-| confirms_impossible | 0.02 | −3.9 (capped −1.5) |
-| strongly_contradicts | 0.10 | −2.2 (capped −1.5) |
+| confirms_impossible | 0.02 | −1.5 (capped) |
+| strongly_contradicts | 0.10 | −1.5 (capped) |
 | moderately_contradicts | 0.40 | −0.41 |
-| neutral | 0.50 | 0.0 (no change) |
+| neutral | 0.50 | 0.0 |
 | moderately_supports | 0.65 | +0.62 |
-| strongly_supports | 0.85 | +1.7 (capped +1.5) |
-| confirms_inevitable | 0.95 | +2.9 (capped +1.5) |
+| strongly_supports | 0.85 | +1.5 (capped) |
+| confirms_inevitable | 0.95 | +1.5 (capped) |
 
 Log-odds posterior по каждой позиции, инициализируется при покупке, обновляется при новостях.
 
-### Техническая защита
-
-- **SQLite WAL mode** — ACID, кросс-процессная безопасность, BEGIN IMMEDIATE на writes
-- **Atomic file writes** — tempfile + os.replace + fcntl.flock + fsync
-- **PID управление** — lock files, нет race conditions
-- **Graceful shutdown** — SIGTERM/SIGINT, 180×10s loop, WAL checkpoint
-- **Crash safety** — pending_fill → active после fill; cleanup pending_fill при неудаче
-- **Oversell protection** — _execute_sell() перечитывает фактические shares; TP ladder tracks allocated
-- **Thread safety** — threading.RLock() во всех модулях
-- **NaN/Inf guards** — order book prices валидируются
-- **No production asserts** — все assert заменены на explicit guards
-
 ---
 
-## 11. Архитектура
+## 13. Инфраструктура и данные
 
-### Модули (48 файлов, ~14,400 строк)
+### Systemd сервисы
 
-| Модуль | Строк | Ответственность |
-|--------|-------|-----------------|
-| dotm_sniper.py | 624 | Оркестрация, main loop, graceful shutdown, WAL checkpoint |
-| signal_pipeline.py | 670 | Рынки, scoring, batch анализ (re-exports) |
-| signal_scorer.py | 471 | `_compute_signal_score()`, calibration, full analysis, cascade |
-| market_fetcher.py | 259 | fetch_markets, Gamma API, pre-filter |
-| metaculus.py | 374 | Metaculus API (30s timeout, 3 retry), gap detection, cache |
-| trade_executor.py | 210 | execute_trade, pending_fill cleanup, Bayesian init |
-| sell_executor.py | 670 | Продажи, стопы, ATR, trailing, time-decay, aggressive limit fallback |
-| position_manager.py | 352 | Bayesian Kelly, tier, кластерные лимиты, conviction sizing |
-| order_manager.py | 278 | pm-trader, ордера, TP ladder (allocated tracking), get_balance |
-| hermes_advisor.py | 414 | Hermes main loop, reconciliation, PID |
-| hermes_risk.py | 515 | Emergency exit, stop-loss, convergence, news |
-| hermes_resolution.py | 85 | Market resolution, resolved checks |
-| health_monitor.py | 365 | Health orchestrator, alerts, Telegram |
-| health_checks.py | 793 | 25 individual checks (system/trading/data) |
-| dotm_backtester.py | 334 | Backtest entry points, CLI |
-| backtest_simulator.py | 724 | Core simulation engine |
-| backtest_stats.py | 452 | Statistics, Brier, win rate, PnL |
-| db.py | 488 | SQLite WAL, BEGIN IMMEDIATE, migrations, WAL checkpoint |
-| config.py | 73 | 35+ path constants, trading params |
-| schema.py | 139 | 70+ JSON key constants |
-| bayesian_updater.py | 229 | init_posterior, update_posterior (LR cap ±1.5), should_exit |
-| cascade_detector.py | 282 | Price tracking, cascade detection, laggard opportunities |
-| market_graph.py | 295 | networkx graph, correlation, cascade, diversification |
-| orderbook_analyzer.py | 104 | CLOB API, bid/ask imbalance, bid wall detection |
-| smart_money.py | 186 | Polygonscan wallet tracking (API key guard) |
-| online_learner.py | 256 | SGD online learning, drift detection |
-| ml_predictor.py | 256 | LightGBM predictor, walk-forward validation |
-| news_scanner.py | 243 | Tavily + DuckDuckGo (duckduckgo-search library) |
-| social_buzz.py | 328 | GDELT + Google News + Reddit sentiment |
-| cluster_report.py | 77 | Per-cluster PnL stats, format_cluster_report |
-| dashboard.py | 131 | HTML dashboard generation |
-| metrics_server.py | 139 | HTTP :8765, Prometheus, health, dashboard |
+| Сервис | Описание | Интервал |
+|--------|----------|----------|
+| sniper | Главная программа | 30 мин цикл |
+| hermes | Риск-менеджер | 10-30 мин цикл |
+| metrics | HTTP сервер :8765 | Постоянно |
 
-### Данные
+### Cron задания
 
-| Хранилище | Формат | Использование |
-|-----------|--------|---------------|
-| `sniper.db` | SQLite WAL | Позиции, гипотезы, settings, kv_store, trade_history, миграции |
+| Расписание | Задача |
+|------------|--------|
+| */5 | Watchdog (проверка живности сервисов) |
+| */30 | Advisor cycle |
+| */30 | Equity snapshot |
+| Hourly | Health check + alerts |
+| 08:00 UTC | Daily report → Telegram |
+| 03:00 | SQLite backup (7-day retention) |
+
+### Хранилища данных
+
+| Хранилище | Формат | Назначение |
+|-----------|--------|------------|
+| `sniper.db` | SQLite WAL | Позиции, гипотезы, settings, trade_history |
 | `equity_curve.json` | JSON | История equity snapshots |
 | `price_tracking.json` | JSON | Кэш p_model по рынкам |
 | `calibration_model.json` | JSON | Per-cluster calibration |
 | `bayesian_state.json` | JSON | Log-odds posterior per position |
 | `market_graph.json` | JSON | Граф корреляций рынков |
-| `ml_models/` | Binary | LightGBM + SGD модели, cascade state |
-| `logs/` | Текст | RotatingFileHandler 10MB × 3, logrotate daily |
+| `metaforecast_index.json` | JSON | 6275 вопросов (24h cache) |
+| `oracle_*.json` | JSON | Оракул кэши (FNG, Fed rate, CPI) |
+| `ml_models/` | Binary | LightGBM + SGD модели |
+| `logs/` | Текст | RotatingFileHandler 10MB × 3 |
 
-### Инфраструктура
+### Переменные окружения (.env)
 
-| Компонент | Описание |
-|-----------|----------|
-| systemd | 3 сервиса: sniper, hermes, metrics — автозапуск при ребуте |
-| Cron | watchdog */5, reports, advisor */30, equity */30, health hourly, backup 3am |
-| logrotate | daily rotation, 7-day retention, 50MB max |
-| SQLite backups | Daily at 3am, 7-day retention, chmod 600 |
-| CI/CD | GitHub Actions: ruff + mypy --strict + pytest |
-| Telegram | Alert queue с file_lock, 429 Retry-After, token sanitization |
+| Переменная | Назначение |
+|------------|------------|
+| DEEPSEEK_API_KEY | LLM модель (основная) |
+| OVH_API_KEY | 8 моделей OVH + судья |
+| METACULUS_TOKEN | Metaculus API |
+| ALL_PROXY | socks5h://127.0.0.1:1080 (VLESS+Reality) |
+| NO_PROXY | localhost,127.0.0.1 |
+| POLYGONSCAN_API_KEY | Smart money tracking |
+| TAVILY_API_KEY | News search (оба ключа exhausted) |
+| TG_BOT_TOKEN | Telegram уведомления |
+| TG_CHAT_ID | Telegram чат |
 
 ---
 
-## 12. Качество кода
+## 14. Модули проекта (53 файла, ~17,400 строк)
+
+### Ядро системы
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| dotm_sniper.py | 631 | Оркестрация, main loop, shutdown |
+| signal_pipeline.py | 708 | Batch анализ, re-exports |
+| signal_scorer.py | 508 | _compute_signal_score, calibration, full analysis |
+| market_fetcher.py | 259 | fetch_markets, Gamma API, фильтры |
+| config.py | 73 | 35+ констант, путей |
+| schema.py | 139 | 70+ JSON ключей |
+
+### Forecast cascade
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| manifold.py | 302 | Manifold Markets API, fuzzy match |
+| metaculus.py | 550 | Metaculus two-step bridge |
+| metaforecast.py | 466 | Cross-platform GraphQL, 6275 вопросов |
+
+### Внешние оракулы
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| external_oracles.py | 801 | 5 источников: FNG, Manifold arb, DBnomics, YFinance, Wiki |
+
+### Model council
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| model_council.py | 742 | 9 советников + судья Qwen3.5-397B |
+
+### Исполнение и риски
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| trade_executor.py | 211 | execute_trade, pending_fill |
+| sell_executor.py | 670 | Продажи, стопы, ATR, trailing, fallback |
+| position_manager.py | 352 | Bayesian Kelly, tiers, conviction |
+| order_manager.py | 287 | pm-trader CLI, ордера, TP ladder |
+| hermes_advisor.py | 414 | Hermes main loop, reconciliation |
+| hermes_risk.py | 515 | Emergency exit, stop-loss, news |
+| hermes_resolution.py | 85 | Market resolution |
+| hermes_memory.py | 375 | Self-learning memory |
+
+### Сигналы
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| social_buzz.py | 321 | GDELT(60%)+Google(40%) |
+| orderbook_analyzer.py | 104 | CLOB bid/ask imbalance |
+| smart_money.py | 189 | Polygon on-chain tracking |
+| cascade_detector.py | 282 | Price cascade detection |
+| market_graph.py | 295 | networkx корреляции |
+| news_scanner.py | 253 | Tavily + DuckDuckGo |
+
+### ML / Калибровка
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| ml_predictor.py | 256 | LightGBM, walk-forward |
+| online_learner.py | 256 | SGD online learning |
+| calibration.py | 131 | Isotonic regression |
+| calibration_tracker.py | 384 | Platt scaling |
+| bayesian_updater.py | 231 | Log-odds posterior |
+| probability_calibrator.py | 223 | Probability calibration utilities |
+
+### Данные и инфраструктура
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| db.py | 499 | SQLite WAL, migrations |
+| hypotheses_db.py | 83 | Hypothesis storage |
+| positions_db.py | 64 | Position storage |
+| contracts.py | 76 | TypedDict contracts |
+| health_checks.py | 945 | 25 checks |
+| health_monitor.py | 370 | Health orchestrator |
+| metrics_server.py | 139 | HTTP :8765, Prometheus |
+| dashboard.py | 131 | HTML dashboard |
+| equity_tracker.py | 252 | Equity snapshots |
+| cluster_report.py | 77 | Per-cluster PnL |
+| log_formatter.py | 44 | JSON + human log format |
+| tg_sender.py | 180 | Telegram queue + retry |
+| utils.py | 321 | JSON load/save, env, LLM parse |
+
+### Бэктестинг
+
+| Модуль | Строк | Ответственность |
+|--------|-------|-----------------|
+| backtest_simulator.py | 730 | Core simulation engine |
+| backtest_stats.py | 452 | Stats, Brier, win rate |
+| dotm_backtester.py | 334 | CLI entry points |
+| dotm_optimizer.py | 441 | Parameter optimization |
+| dotm_report.py | 270 | Report generation |
+| stress_test.py | 280 | Stress testing |
+| resolution.py | 446 | Market resolution logic |
+
+---
+
+## 15. Качество кода
 
 ### Тестирование
 
-**1035 тестов** в 34 файлах, все проходящие:
+**1192 теста** в 47 файлах, все проходящие:
 
 | Категория | Тестов | Покрытие |
 |-----------|--------|----------|
-| db (core, migration, contract) | ~80 | SQLite, WAL, migrations, key consistency |
-| position_manager | ~49 | Bayesian Kelly sizing, tiers, cluster limits, conviction |
-| sell_executor | ~35 | Trailing stop, hard stop, time-decay, convergence, stale cleanup |
-| signal_pipeline | ~130 | Scoring, calibration, full analysis, batch, constants |
-| bayesian_updater | ~29 | Log-odds, posterior, LR cap, exit thresholds |
-| health_monitor | ~33 | 25 checks, error spike, false positives |
-| cascade_detector | ~15 | Price tracking, cascade detection, laggard signals |
-| market_graph | ~34 | Graph building, correlation, cascade, diversification |
-| smart_money | ~20 | Wallet discovery, activity tracking, API key guard |
-| e2e integration | ~15 | Full lifecycle с real SQLite |
-| config | ~19 | Constants, paths, sanitize() |
+| external_oracles | 106 | 5 источников, caching, fault injection |
+| signal_pipeline | ~130 | Scoring, calibration, batch, full analysis |
 | backtester | ~217 | Simulation, stats, P&L |
-| Прочие | ~359 | utils, order_manager, equity_tracker, tg_sender, etc. |
+| position_manager | ~49 | Kelly, tiers, cluster limits |
+| sell_executor | ~35 | Trailing, hard stop, time-decay |
+| bayesian_updater | ~29 | Log-odds, posterior, LR cap |
+| health_monitor | ~33 | 25 checks, alerts |
+| market_graph | ~34 | Graph, correlation, cascade |
+| contracts | 14 | Dict shapes, key access, cascade order |
+| fault_injection | 13 | Timeout, 500, 429, council crash |
+| e2e integration | ~10 | Full lifecycle с real SQLite |
+| invariants | 13 | Property-based boundary tests |
+| Прочие | ~513 | db, utils, config, order_manager, etc. |
 
 ### Статический анализ
 
 - **ruff**: 0 violations (правила E/F/W/B/SIM/UP)
-- **mypy --strict**: 0 errors в 46 source files
-- **Type annotations**: 96% coverage (337/351 функций)
+- **Pre-commit hook**: ruff + 14 contract tests + smoke import
+- **TypedDict contracts**: `src/contracts.py` — GapCheckResult, ForecastResult
 
-### Аудиты
+### Контракт-тесты (`tests/test_contracts.py`)
 
-| Проход | Багов | Ключевые находки |
-|--------|-------|------------------|
-| Аудит 1 (initial) | 76 | estimated_size NameError, look-ahead bias, TP ladder double-counting |
-| Аудит 2 (deep) | 40+ | Сломанные стоп-лоссы, selling_in_progress зависает, inter-process race, двойной hermes |
-| Стабилизация (7 коммитов) | ~160 | 274→867 тестов, schema.py, RLock везде |
-| Log audit (15h) | 3 | signal.signal в non-main thread, duplicate log handlers, calibration false positive |
-| Full audit (48 модулей) | 27 | 6 CRITICAL (money loss), 4 HIGH (security), 12 MEDIUM |
-| Post-audit fixes | 13 | P0-P2: ghost pending_fill, TP oversell, SQLite race, entry_price=0, Bayesian LR, stale cleanup |
-| Log audit (48h) | 1 | Stuck position exit — aggressive limit fallback + safety_failures counter |
+14 тестов проверяют межмодульные контракты:
+- Dict shapes (наличие всех ключей)
+- Cascade order (Manifold → Metaculus → Metaforecast)
+- try/except wrapping (council calls)
+- Forecast source key access
 
 ---
 
-## 13. Текущие результаты
+## 16. Текущие результаты
 
-### Бэктест (проверка на исторических данных)
+### Бэктест
 
 | Метрика | Значение |
 |---------|----------|
 | Период | Июнь 2024 — Май 2026 (24 месяца) |
-| Количество рынков | 1,903 DOTM контракта |
-| Количество сделок (walk-forward) | 246 |
-| Доля прибыльных сделок | 28.9% |
-| Совокупная доходность | +403% |
+| Рынков | 1,903 DOTM контракта |
+| Сделок (walk-forward) | 246 |
+| Winrate | 28.9% |
+| Доходность | +403% |
 | Комиссии | 2% за сделку |
 
 ### Живые результаты (июнь 2026)
 
 | Метрика | Значение |
 |---------|----------|
-| Баланс | ~$1,430 equity, $1,280 cash |
-| Открытые позиции | 10-11 |
+| Баланс | ~$1,430 equity, ~$1,311 cash |
+| Открытые позиции | 11 |
 | Разрешённые рынки | 19 resolved, 0% winrate |
-| Нереализованный P&L | −$10 to −$15 unrealized |
-| Сигналов за всё время | 800+ |
-| Заблокировано advisor | 109+ |
-| Выполнено сделок | Несколько (бот консервативен) |
-| Коммитов | 15+ в production chain |
+| Коммитов сегодня | d4f55a8, 08a2c2c, 90fe0ae |
 
-### Уроки первых 6 недель
+### Уроки и исправления
 
-**0% winrate (0/19 resolved)** — главная проблема. Причины:
-1. Покупали sub-5-cent контракты с p_model 2-5%, которые почти никогда не разрешаются YES
-2. p_model систематически завышался: prompt bias + soft extremize + пустая калибровка
-3. ratio_score всегда maxed out для DOTM (min(ratio/3, 1) × 30)
-
-**Исправления (коммит `1c379e6`):**
+**0% winrate (0/19 resolved)** — исправлено:
 - MIN_P_MODEL: 3% → 10%
 - MAX_P_MODEL_RATIO: 3.0 → 2.0
 - DOTM_PRICE_FLOOR: $0.05
-- ratio_score: min(ratio/3, 1) × 30 → min(ratio/5, 1) × 25
+- ratio_score: min(ratio/5, 1) × 25 (harder to max out)
+- Prompt bias reduction: contrary-evidence search, pessimistic framing
+- 4 audit bugs fixed (manifold found flag, metaculus_prob_val, council try/except, backtest imports)
 
 ---
 
-## 14. План роста
+## 17. План роста
 
-### От $1,500 к $5,000/месяц дохода
-
-Основано на консервативной оценке 7% в месяц (из бэктеста):
+### От $1,500 к $5,000/месяц
 
 ```
-Сейчас:      $1,500 + $500/мес → micro tier
-Месяц 6:     $1,500 + $500/мес → ~$5,800
-Месяц 12:    $1,500 + $500/мес → ~$12,100 ← переход на «Рост»
-Месяц 18:    $1,500 + $500/мес → ~$21,200 ← переход на «Установившийся»
-Месяц 24:    $1,500 + $500/мес → ~$35,400
-Месяц 33:    $1,500 + $500/мес → ~$78,600
-
-$78,600 × 7% = $5,500/месяц дохода
+Месяц 6:     ~$5,800
+Месяц 12:    ~$12,100 ← переход «Рост»
+Месяц 18:    ~$21,200 ← «Установившийся»
+Месяц 24:    ~$35,400
+Месяц 33:    ~$78,600 ← $5,500/мес дохода (при 7%/мес)
 ```
 
-### Что нужно для успеха
+### Условия успеха
 
-1. **Дисциплина** — не менять параметры вручную, доверять системе
-2. **Пополнения** — $500/месяц значительно ускоряют рост
-3. **Время** — минимум 12-18 месяцев для значимого результата
-4. **50+ resolved сделок** — включить isotonic calibration
-5. **50+ resolved** — LightGBM начнёт обучаться автоматически
-6. **Мониторинг** — следить за health checks и dashboard
-7. **POLYGONSCAN_API_KEY** — включить smart money tracking
+1. 50+ resolved сделок → isotonic calibration
+2. 50+ resolved → LightGBM начнёт обучаться
+3. POLYGONSCAN_API_KEY → smart money tracking
+4. Мониторинг health checks и dashboard
+5. Пополнения $500/мес значительно ускоряют рост
 
 ---
 
-## 15. Риски
+## 18. Полная карта взаимосвязей
 
-| Риск | Вероятность | Последствия | Защита |
-|------|-------------|-------------|--------|
-| Серия убытков | Высокая (70% сделок в минусе) | Временное снижение баланса | Дробная ставка, стоп-лосс, drawdown stop |
-| Ошибка ИИ в оценке | Средняя | Убыток на отдельной сделке | Двойная проверка, advisor veto |
-| Polymarket закроется | Низкая | Потеря всех позиций | Диверсификация вне системы |
-| Баг в коде | Низкая | Неправильная покупка/продажа | 1035 тестов, mypy --strict, ruff, 25 health checks |
-| Нет ликвидности | Высокая | Бот не делает сделки | Liquidity pre-check, slippage guard, aggressive limit fallback |
-| Слишком оптимистичный бэктест | Средняя | Реальные результаты ниже | Walk-forward, консервативные параметры, calibration cap |
-| Stuck position (неликвид) | Средняя | Position не продаётся | Force market после 5 неудач, aggressive limit at bid |
+```
+                              ┌──────────────────┐
+                              │  market_fetcher   │
+                              │  (Gamma API)      │
+                              └────────┬──────────┘
+                                       │
+                                       ▼
+┌──────────────┐    ┌──────────────────────────────────┐
+│  manifold.py │───▶│     signal_scorer.py              │
+│  (cascade 1) │    │     full_market_analysis()        │
+└──────────────┘    │                                   │
+                    │  ┌── liquidity check (order_mgr)  │
+┌──────────────┐    │  ├── forecast cascade ────────────│──▶ manifold.py
+│  metaculus   │───▶│  │   (Manifold→Metaculus→Meta)   │──▶ metaculus.py
+│  (cascade 2) │    │  │                               │──▶ metaforecast.py
+└──────────────┘    │  ├── DeepSeek LLM analysis        │
+                    │  ├── Model Council (9+1) ─────────│──▶ model_council.py
+┌──────────────┐    │  │                               │
+│ metaforecast │───▶│  ├── p_model blending             │
+│  (cascade 3) │    │  │   (cascade override / blend)   │
+└──────────────┘    │  │                               │
+                    │  ├── calibration ─────────────────│──▶ calibration.py
+┌──────────────┐    │  │   (Platt/isotonic/extremize)  │──▶ calibration_tracker.py
+│model_council │───▶│  │                               │
+│  (9+judge)   │    │  ├── ML blend ───────────────────│──▶ ml_predictor.py
+└──────────────┘    │  │   (LightGBM + SGD)            │──▶ online_learner.py
+                    │  │                               │
+                    │  ├── _compute_signal_score:       │
+                    │  │   ratio + factors + vol + time │
+                    │  │   + metaculus_align + cluster  │
+                    │  │   + buzz ──────────────────────│──▶ social_buzz.py
+                    │  │   + orderbook ─────────────────│──▶ orderbook_analyzer.py
+                    │  │   + smart_money ───────────────│──▶ smart_money.py
+                    │  │   + cascade ───────────────────│──▶ cascade_detector.py
+                    │  │   + oracle_bonus ──────────────│──▶ external_oracles.py
+                    │  │     (FNG/Manifold/DBnomics/    │
+                    │  │      YFinance/Wikipedia)       │
+                    │  │                               │
+                    │  ├── BUY/SKIP decision            │
+                    │  └── signal_score output          │
+                    └──────────────┬────────────────────┘
+                                   │
+                    ┌──────────────▼────────────────────┐
+                    │     position_manager.py            │
+                    │  Bayesian Kelly, tiers, limits     │──▶ bayesian_updater.py
+                    │  Graph correlation ────────────────│──▶ market_graph.py
+                    └──────────────┬────────────────────┘
+                                   │
+                    ┌──────────────▼────────────────────┐
+                    │  Advisor check (DeepSeek Reasoner) │──▶ news_scanner.py
+                    │  High-conviction → auto-approve    │
+                    └──────────────┬────────────────────┘
+                                   │
+                    ┌──────────────▼────────────────────┐
+                    │     trade_executor.py              │
+                    │  execute_trade → pm-trader CLI     │
+                    │  Bayesian init_posterior()         │──▶ bayesian_updater.py
+                    │  TP ladder → order_manager.py      │──▶ order_manager.py
+                    └──────────────┬────────────────────┘
+                                   │
+                                   ▼
+                    ┌──────────────────────────────────┐
+                    │      hermes_advisor.py             │
+                    │  (параллельный сервис, 10 мин)     │
+                    │                                   │
+                    │  Сверка позиций ──────────────────│──▶ positions_db.py
+                    │  Новости → экстренный выход ──────│──▶ hermes_risk.py
+                    │  Стоп-лоссы ──────────────────────│──▶ sell_executor.py
+                    │  Разрешение рынков ───────────────│──▶ hermes_resolution.py
+                    │  Байесовское обновление ──────────│──▶ bayesian_updater.py
+                    │  Self-learning ───────────────────│──▶ hermes_memory.py
+                    └──────────────────────────────────┘
+```
 
 ---
 
-## 16. Краткое резюме
+## 19. Резюме
 
-**Стратегия:** Покупать дешёвые контракты ($0.05–$0.40) на маловероятные события, которые рынок недооценивает. Продавать по лестнице (entry×2, entry×3) при росте цены.
+**Стратегия:** Покупать дешёвые контракты ($0.05–$0.40) на маловероятные события, которые рынок недооценивает. Продавать по лесенке (entry×2, entry×3) при росте цены.
 
-**Преимущество:** Для прибыли не нужно, чтобы событие произошло — достаточно, чтобы рынок пересмотрел оценку вероятности.
+**Преимущество:** Для прибыли не нужно, чтобы событие произошло — достаточно, чтобы рынок пересмотрел оценку.
 
-**Ожидание:** При 28.9% прибыльных сделок и среднем выигрыше в 5-10 раз больше среднего убытка, система математически прибыльна на дистанции.
-
-**Цель:** Вырастить портфель с $1,500 до $70,000+ за 2.5-3 года с пополнениями $500/мес, что даст $5,000/мес пассивного дохода.
-
-**Техническая зрелость:** 48 модулей, 1035 тестов, mypy --strict 0 errors, 25 health checks, systemd, Prometheus, CI/CD, Bayesian Kelly, ML blending, graph correlation, cascade detection.
+**Технологический стек:**
+- **53 модуля**, ~17,400 строк Python
+- **1192 теста**, все проходящие
+- **3 forecast cascade** источника (Manifold + Metaculus + Metaforecast)
+- **5 external oracles** (FNG + Manifold arb + DBnomics + YFinance + Wikipedia)
+- **9+1 model council** (DeepSeek + 8 OVH + Qwen3.5 судья)
+- **Bayesian Kelly** position sizing с uncertainty penalty
+- **ML blending** (LightGBM + SGD online learner)
+- **Graph correlation** для диверсификации
+- **25 health checks** + Prometheus + dashboard
+- **systemd** + cron + SQLite WAL + atomic writes
+- **ruff** + TypedDict contracts + pre-commit hook
