@@ -86,7 +86,7 @@ def _tavily_search(api_key: str, query: str, max_results: int, max_age_days: int
                 "query": query,
                 "found": len(headlines) > 0
             }
-        elif response.status_code in (401, 403, 429):
+        elif response.status_code in (401, 403, 429, 432):
             logger.warning(f"[news_scanner] Tavily quota/auth error HTTP {response.status_code}, tripping circuit breaker")
             _tavily_trip_breaker()
             return None
