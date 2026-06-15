@@ -501,8 +501,8 @@ def run_advisory_cycle():
         verdict = hermes.get('verdict', 'UNKNOWN')
         p_diff = abs(hermes.get('p_estimate', 0) - current_price)
         pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
-        if _should_notify(slug, verdict, p_diff, pnl_pct):
-            send_telegram(alert)
+        # Telegram notifications disabled — analysis runs for Hermes only
+        _should_notify(slug, verdict, p_diff, pnl_pct)
 
         print(alert)
         print("---")
