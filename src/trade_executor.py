@@ -49,7 +49,7 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
         return False
 
     from signal_pipeline import advisor_pre_check
-    from order_manager import get_best_ask, buy, _place_tp_ladder, get_actual_fill_price, log_slippage
+    from order_manager import get_best_ask, buy, _place_tp_ladder, get_actual_fill_price, log_slippage, _cancel_pending_orders
     load_hypothesis_db, save_hypothesis_db, _tr = _get_sniper_deps()
 
     if not isinstance(estimated_size, (int, float)) or estimated_size <= 0:
@@ -111,15 +111,21 @@ def execute_trade(market: dict[str, Any], estimated_size: float, factors: list[s
 
     time.sleep(10)
     fill_data = get_actual_fill_price(slug)
-    if fill_data:
-        log_slippage(slug, market["price"], fill_data)
 
-    shares = round(float(fill_data.get("shares", 0))) if fill_data and fill_data.get("shares", 0) > 0 else round(estimated_size / market["price"]) if market["price"] > 0 else 0
-
-    if shares <= 0:
+    if not fill_data or fill_data.get("shares", 0) <= 0:
+        # Order was accepted but NOT filled within 10s
+        cancelled = _cancel_pending_orders(slug)
+        positions_db.delete(slug)
+        logger.warning(
+            f"[TRADE] No fill for {slug[:60]} after 10s, "
+            f"cancelled {cancelled} orders, cleaned up pending_fill"
+        )
         return False
 
-    actual_price = fill_data.get("avg_price", market["price"]) if fill_data else market["price"]
+    log_slippage(slug, market["price"], fill_data)
+
+    shares = round(float(fill_data["shares"]))
+    actual_price = fill_data.get("avg_price", market["price"])
 
     positions_db.update(slug, {
         "status": "active",

@@ -232,6 +232,32 @@ def _cancel_all_tp_orders(slug: str) -> None:
         logger.warning(f"[TP-CANCEL] Failed for {slug}: {e}")
 
 
+def _cancel_pending_orders(slug: str) -> int:
+    """Cancel ALL pending orders (buy and sell) for a slug. Returns count cancelled."""
+    cancelled = 0
+    try:
+        res = subprocess.run(
+            ["pm-trader", "orders", "list"],
+            capture_output=True, text=True, timeout=30, start_new_session=True,
+        )
+        data = json.loads(res.stdout) if res.stdout else {}
+        orders = data.get("data", []) if isinstance(data.get("data"), list) else []
+        for o in orders:
+            o_slug = o.get("market_slug") or o.get("slug", "")
+            if o_slug == slug and o.get("status") == "pending":
+                order_id = o.get("id")
+                if order_id:
+                    subprocess.run(
+                        ["pm-trader", "orders", "cancel", str(order_id)],
+                        capture_output=True, text=True, timeout=15, start_new_session=True,
+                    )
+                    cancelled += 1
+                    logger.info(f"[ORDER-CANCEL] Cancelled order {order_id} for {slug[:40]}...")
+    except Exception as e:
+        logger.warning(f"[ORDER-CANCEL] Failed for {slug}: {e}")
+    return cancelled
+
+
 def get_actual_fill_price(slug: str) -> dict[str, Any] | None:
     try:
         res = subprocess.run(
