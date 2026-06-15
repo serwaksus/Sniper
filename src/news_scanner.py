@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 import logging
 import requests
 
@@ -19,6 +20,30 @@ TAVILY_API_URL = "https://api.tavily.com/search"
 
 NEWS_TIME_WINDOW_HOURS = 48
 MAX_NEWS_AGE_DAYS_DEFAULT = 30
+
+# ── Circuit breaker: skip Tavily for 6h after quota/auth errors ──
+_TAVILY_COOLDOWN_SECONDS = 6 * 3600
+_tavily_trip_time: float = 0.0  # monotonic timestamp when breaker tripped
+
+
+def _tavily_circuit_open() -> bool:
+    """True if circuit breaker is open (Tavily should be skipped)."""
+    if _tavily_trip_time == 0.0:
+        return False
+    elapsed = time.monotonic() - _tavily_trip_time
+    # Half-open: allow next attempt through after cooldown
+    return elapsed < _TAVILY_COOLDOWN_SECONDS
+
+
+def _tavily_trip_breaker() -> None:
+    """Trip the circuit breaker after quota/auth failure."""
+    global _tavily_trip_time
+    if _tavily_trip_time == 0.0:
+        logger.info(
+            f"[news_scanner] Tavily circuit breaker TRIPPED — "
+            f"skipping for {_TAVILY_COOLDOWN_SECONDS // 3600}h to save VPN bandwidth"
+        )
+    _tavily_trip_time = time.monotonic()
 
 def load_env() -> None:
     from config import ENV_FILE
@@ -35,7 +60,8 @@ def load_env() -> None:
 load_env()
 
 def _tavily_search(api_key: str, query: str, max_results: int, max_age_days: int) -> dict | None:
-    """Try a single Tavily API key. Returns result dict on success, None on failure/quota."""
+    """Try a single Tavily API key. Returns result dict on success, None on failure/quota.
+    Trips circuit breaker on 401/429 to stop wasting VPN connections."""
     params = {
         "api_key": api_key,
         "query": query,
@@ -60,6 +86,10 @@ def _tavily_search(api_key: str, query: str, max_results: int, max_age_days: int
                 "query": query,
                 "found": len(headlines) > 0
             }
+        elif response.status_code in (401, 403, 429):
+            logger.warning(f"[news_scanner] Tavily quota/auth error HTTP {response.status_code}, tripping circuit breaker")
+            _tavily_trip_breaker()
+            return None
         else:
             logger.warning(f"[news_scanner] Tavily HTTP {response.status_code}: {response.text[:100]}")
             return None
@@ -72,22 +102,31 @@ def fetch_recent_news(market_keywords: list[str], max_results: int = 5, max_age_
     """
     Search for recent news headlines based on market keywords.
     Chain: Tavily (primary) -> Tavily (backup) -> DuckDuckGo fallback.
+    Circuit breaker skips Tavily entirely for 6h after quota/auth errors.
     """
     if max_age_days is None:
         max_age_days = MAX_NEWS_AGE_DAYS_DEFAULT
 
     query = " ".join(market_keywords[:5])
 
-    tavily_primary = os.environ.get("TAVILY_API_KEY", "")
-    tavily_backup = os.environ.get("TAVILY_API_KEY_BACKUP", "")
+    # Circuit breaker: skip Tavily if recently tripped
+    if not _tavily_circuit_open():
+        tavily_primary = os.environ.get("TAVILY_API_KEY", "")
+        tavily_backup = os.environ.get("TAVILY_API_KEY_BACKUP", "")
 
-    for label, key in [("primary", tavily_primary), ("backup", tavily_backup)]:
-        if not key or key == "your_tavily_key_here":
-            continue
-        result = _tavily_search(key, query, max_results, max_age_days)
-        if result is not None:
-            return result
-        logger.info(f"[news_scanner] Tavily {label} exhausted, trying next source...")
+        for label, key in [("primary", tavily_primary), ("backup", tavily_backup)]:
+            if not key or key == "your_tavily_key_here":
+                continue
+            result = _tavily_search(key, query, max_results, max_age_days)
+            if result is not None:
+                return result
+            # If breaker tripped during this call, stop trying more keys
+            if _tavily_circuit_open():
+                logger.info("[news_scanner] Tavily circuit open, going straight to DDG fallback")
+                break
+            logger.info(f"[news_scanner] Tavily {label} exhausted, trying next source...")
+    else:
+        logger.debug("[news_scanner] Tavily circuit breaker open, using DDG directly")
 
     return _fetch_ddg_news_fallback(market_keywords, max_results, max_age_days)
 

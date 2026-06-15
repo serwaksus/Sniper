@@ -152,3 +152,62 @@ class TestCheckMarketNews:
         market = {"question": "Will X happen?", "clusters": ["other"]}
         passed, _reason = ns.check_market_news(market)
         assert passed is True
+
+
+class TestCircuitBreaker:
+    """Tavily circuit breaker — stops wasting VPN connections after quota errors."""
+
+    def test_breaker_starts_closed(self):
+        ns._tavily_trip_time = 0.0
+        assert ns._tavily_circuit_open() is False
+
+    @patch("news_scanner.requests.post")
+    def test_429_trips_breaker(self, mock_post):
+        ns._tavily_trip_time = 0.0
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 429
+        mock_resp.text = "quota exceeded"
+        mock_post.return_value = mock_resp
+        os.environ["TAVILY_API_KEY"] = "test-key"
+        ns._tavily_search("test-key", "query", 5, 30)
+        assert ns._tavily_circuit_open() is True
+
+    @patch("news_scanner.requests.post")
+    def test_401_trips_breaker(self, mock_post):
+        ns._tavily_trip_time = 0.0
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 401
+        mock_resp.text = "unauthorized"
+        mock_post.return_value = mock_resp
+        ns._tavily_search("test-key", "query", 5, 30)
+        assert ns._tavily_circuit_open() is True
+
+    @patch("news_scanner._fetch_ddg_news_fallback")
+    def test_open_breaker_skips_tavily(self, mock_fallback):
+        """When breaker is open, fetch_recent_news goes straight to DDG."""
+        import time as _time
+        ns._tavily_trip_time = _time.monotonic()  # Tripped just now
+        mock_fallback.return_value = {"headlines": [], "sources": [], "query": "", "found": False}
+        os.environ["TAVILY_API_KEY"] = "test-key"
+        with patch("news_scanner.requests.post") as mock_post:
+            ns.fetch_recent_news(["test"])
+            mock_post.assert_not_called()  # No Tavily connection at all
+        mock_fallback.assert_called_once()
+        ns._tavily_trip_time = 0.0  # Reset
+
+    @patch("news_scanner.requests.post")
+    @patch("news_scanner._fetch_ddg_news_fallback")
+    def test_500_does_not_trip_breaker(self, mock_fallback, mock_post):
+        """Server errors (500) should NOT trip the breaker — only quota/auth."""
+        ns._tavily_trip_time = 0.0
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 500
+        mock_resp.text = "server error"
+        mock_post.return_value = mock_resp
+        mock_fallback.return_value = {"headlines": [], "sources": [], "query": "", "found": False}
+        os.environ["TAVILY_API_KEY"] = "test-key"
+        ns.fetch_recent_news(["test"])
+        assert ns._tavily_circuit_open() is False  # Still closed

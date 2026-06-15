@@ -863,27 +863,31 @@ def _check_external_apis(state: dict) -> tuple[str, str] | None:
             issues.append(f"Metaculus: {str(e)[:60]}")
 
     # --- Tavily (both keys) ---
-    for key_name in ("TAVILY_API_KEY", "TAVILY_API_KEY_BACKUP"):
-        tavily_key = os.environ.get(key_name, "")
-        if not tavily_key:
-            issues.append(f"Tavily: {key_name} missing")
-            continue
-        try:
-            resp = requests.post(
-                "https://api.tavily.com/search",
-                json={"api_key": tavily_key, "query": "test", "max_results": 1},
-                timeout=15,
-            )
-            if resp.status_code in (401, 403):
-                issues.append(f"Tavily {key_name}: {resp.status_code} (key invalid)")
-            elif resp.status_code in (429, 432):
-                issues.append(f"Tavily {key_name}: {resp.status_code} (quota exhausted)")
-            elif not resp.ok:
-                issues.append(f"Tavily {key_name}: HTTP {resp.status_code}")
-        except requests.exceptions.Timeout:
-            issues.append(f"Tavily {key_name}: timeout (15s)")
-        except Exception as e:
-            issues.append(f"Tavily {key_name}: {str(e)[:50]}")
+    from news_scanner import _tavily_circuit_open
+    if _tavily_circuit_open():
+        issues.append("Tavily: circuit breaker open (quota exhausted, retry in 6h)")
+    else:
+        for key_name in ("TAVILY_API_KEY", "TAVILY_API_KEY_BACKUP"):
+            tavily_key = os.environ.get(key_name, "")
+            if not tavily_key:
+                issues.append(f"Tavily: {key_name} missing")
+                continue
+            try:
+                resp = requests.post(
+                    "https://api.tavily.com/search",
+                    json={"api_key": tavily_key, "query": "test", "max_results": 1},
+                    timeout=15,
+                )
+                if resp.status_code in (401, 403):
+                    issues.append(f"Tavily {key_name}: {resp.status_code} (key invalid)")
+                elif resp.status_code in (429, 432):
+                    issues.append(f"Tavily {key_name}: {resp.status_code} (quota exhausted)")
+                elif not resp.ok:
+                    issues.append(f"Tavily {key_name}: HTTP {resp.status_code}")
+            except requests.exceptions.Timeout:
+                issues.append(f"Tavily {key_name}: timeout (15s)")
+            except Exception as e:
+                issues.append(f"Tavily {key_name}: {str(e)[:50]}")
 
     # --- Polygonscan (Etherscan v2 API) ---
     poly_key = os.environ.get("POLYGONSCAN_API_KEY", "")
