@@ -256,25 +256,25 @@ DBNOMICS_CACHE_TTL = 86400  # 24 hours
 DBNOMICS_CLUSTERS = {"fed_fomc", "us_economic", "usa_politics"}
 DBNOMICS_BONUS = 10
 
-# Fed Funds Rate: FRED, series FEDFUNDS (monthly, %)
-FED_FUNDS_PROVIDER = "FRED"
-FED_FUNDS_DATASET = "FEDFUNDS"
-FED_FUNDS_SERIES = "FEDFUNDS"
+# Fed Funds Rate: FED, dataset H15, series RIFSPFF_N.M (monthly, %)
+FED_FUNDS_PROVIDER = "FED"
+FED_FUNDS_DATASET = "H15"
+FED_FUNDS_SERIES = "RIFSPFF_N.M"
 
-# US CPI: FRED, series CPIAUCSL (Consumer Price Index for All Urban Consumers, monthly)
-CPI_PROVIDER = "FRED"
-CPI_DATASET = "CPIAUCSL"
-CPI_SERIES = "CPIAUCSL"
+# US CPI: BLS, dataset cu, series CUSR0000SA0 (monthly, All Urban Consumers All Items)
+CPI_PROVIDER = "BLS"
+CPI_DATASET = "cu"
+CPI_SERIES = "CUSR0000SA0"
 
-# US Unemployment Rate: FRED, series UNRATE (monthly, %)
-UNEMP_PROVIDER = "FRED"
-UNEMP_DATASET = "UNRATE"
-UNEMP_SERIES = "UNRATE"
+# US Unemployment Rate: BLS, dataset ln, series LNS14000000 (monthly, %)
+UNEMP_PROVIDER = "BLS"
+UNEMP_DATASET = "ln"
+UNEMP_SERIES = "LNS14000000"
 
-# US GDP Growth: FRED, series A191RL1Q225SBEA (quarterly, % annualized rate)
-GDP_PROVIDER = "FRED"
-GDP_DATASET = "A191RL1Q225SBEA"
-GDP_SERIES = "A191RL1Q225SBEA"
+# US GDP Growth: BEA, NIPA Table 1.1.1, series A191RL-Q (quarterly, % annualized)
+GDP_PROVIDER = "BEA"
+GDP_DATASET = "NIPA-T10101"
+GDP_SERIES = "A191RL-Q"
 
 
 def _fetch_dbnomics_series(provider: str, dataset: str, series: str, cache_file: str) -> dict[str, Any] | None:
